@@ -1,0 +1,2222 @@
+[
+  {
+    "bookmakerName": "188BET",
+    "cloneOf": null,
+    "liveOdds": false,
+    "slug": "188bet"
+  },
+  {
+    "bookmakerName": "198Bet",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "198bet"
+  },
+  {
+    "bookmakerName": "1Red",
+    "cloneOf": "n1bet",
+    "liveOdds": null,
+    "slug": "1red"
+  },
+  {
+    "bookmakerName": "1xBet",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "1xbet"
+  },
+  {
+    "bookmakerName": "1xBit",
+    "cloneOf": "22bet",
+    "liveOdds": true,
+    "slug": "1xbit"
+  },
+  {
+    "bookmakerName": "20Bet",
+    "cloneOf": "vave",
+    "liveOdds": true,
+    "slug": "20bet"
+  },
+  {
+    "bookmakerName": "22Bet",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "22bet"
+  },
+  {
+    "bookmakerName": "31Bet",
+    "cloneOf": "mystake",
+    "liveOdds": true,
+    "slug": "31bet"
+  },
+  {
+    "bookmakerName": "32Red",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "32red"
+  },
+  {
+    "bookmakerName": "3et",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "3et"
+  },
+  {
+    "bookmakerName": "3et (Prod)",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "3et2"
+  },
+  {
+    "bookmakerName": "3et (Pre Prod)",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "3etpp"
+  },
+  {
+    "bookmakerName": "3et (Pre Prod)",
+    "cloneOf": null,
+    "liveOdds": false,
+    "slug": "3et-preprod"
+  },
+  {
+    "bookmakerName": "4casters Exchange",
+    "cloneOf": null,
+    "liveOdds": false,
+    "slug": "4casters"
+  },
+  {
+    "bookmakerName": "500 Casino",
+    "cloneOf": "bcgame",
+    "liveOdds": true,
+    "slug": "500.casino"
+  },
+  {
+    "bookmakerName": "7bet UK",
+    "cloneOf": "lottoland",
+    "liveOdds": null,
+    "slug": "7bet.co.uk"
+  },
+  {
+    "bookmakerName": "7Bet LT",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "7bet.lt"
+  },
+  {
+    "bookmakerName": "888Sport",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "888sport"
+  },
+  {
+    "bookmakerName": "888Sport CA",
+    "cloneOf": "888sport",
+    "liveOdds": true,
+    "slug": "888sport.ca"
+  },
+  {
+    "bookmakerName": "888Sport DE",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "888sport.de"
+  },
+  {
+    "bookmakerName": "888Sport DK",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "888sport.dk"
+  },
+  {
+    "bookmakerName": "888Sport ES",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "888sport.es"
+  },
+  {
+    "bookmakerName": "888Sport IT",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "888sport.it"
+  },
+  {
+    "bookmakerName": "888Sport RO",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "888sport.ro"
+  },
+  {
+    "bookmakerName": "Admiral AT",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "admiral"
+  },
+  {
+    "bookmakerName": "AdmiralBet BA",
+    "cloneOf": "admiralbet.rs",
+    "liveOdds": true,
+    "slug": "admiralbet.ba"
+  },
+  {
+    "bookmakerName": "AdmiralBet DE",
+    "cloneOf": "admiral",
+    "liveOdds": true,
+    "slug": "admiralbet.de"
+  },
+  {
+    "bookmakerName": "AdmiralBet IT",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "admiralbet.it"
+  },
+  {
+    "bookmakerName": "AdmiralBet ME",
+    "cloneOf": "admiralbet.rs",
+    "liveOdds": true,
+    "slug": "admiralbet.me"
+  },
+  {
+    "bookmakerName": "AdmiralBet RS",
+    "cloneOf": null,
+    "liveOdds": false,
+    "slug": "admiralbet.rs"
+  },
+  {
+    "bookmakerName": "All British Casino",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "allbritishcasino"
+  },
+  {
+    "bookmakerName": "AlphaWin",
+    "cloneOf": "7bet.lt",
+    "liveOdds": true,
+    "slug": "alphawin"
+  },
+  {
+    "bookmakerName": "Apuesta Total",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "apuestatotal"
+  },
+  {
+    "bookmakerName": "Asports Bet",
+    "cloneOf": "pinnacle",
+    "liveOdds": true,
+    "slug": "asports.bet"
+  },
+  {
+    "bookmakerName": "ATG SE",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "atg.se"
+  },
+  {
+    "bookmakerName": "Balkan Bet RS",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "balkanbet.rs"
+  },
+  {
+    "bookmakerName": "Bally Bet",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "ballybet"
+  },
+  {
+    "bookmakerName": "BC.Game",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "bcgame"
+  },
+  {
+    "bookmakerName": "bet105",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "bet105.ag"
+  },
+  {
+    "bookmakerName": "bet365",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "bet365"
+  },
+  {
+    "bookmakerName": "bet365 DE",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "bet365.de"
+  },
+  {
+    "bookmakerName": "bet365 NJ",
+    "cloneOf": "bet365",
+    "liveOdds": null,
+    "slug": "bet365-nj"
+  },
+  {
+    "bookmakerName": "Bet487",
+    "cloneOf": "pinnacle",
+    "liveOdds": true,
+    "slug": "bet487"
+  },
+  {
+    "bookmakerName": "Bet99",
+    "cloneOf": null,
+    "liveOdds": false,
+    "slug": "bet99"
+  },
+  {
+    "bookmakerName": "BetAmapola",
+    "cloneOf": null,
+    "liveOdds": false,
+    "slug": "betamapola"
+  },
+  {
+    "bookmakerName": "Betano",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "betano"
+  },
+  {
+    "bookmakerName": "Betano BR",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "betano.bet.br"
+  },
+  {
+    "bookmakerName": "Betano BG",
+    "cloneOf": "betano",
+    "liveOdds": true,
+    "slug": "betano.bg"
+  },
+  {
+    "bookmakerName": "Betano CA",
+    "cloneOf": "betano",
+    "liveOdds": true,
+    "slug": "betano.ca"
+  },
+  {
+    "bookmakerName": "Betano UK",
+    "cloneOf": "betvictor",
+    "liveOdds": false,
+    "slug": "betano.co.uk"
+  },
+  {
+    "bookmakerName": "Betano DE",
+    "cloneOf": "betano",
+    "liveOdds": true,
+    "slug": "betano.de"
+  },
+  {
+    "bookmakerName": "Betano DK",
+    "cloneOf": "betano",
+    "liveOdds": true,
+    "slug": "betano.dk"
+  },
+  {
+    "bookmakerName": "Betano MX",
+    "cloneOf": "betano",
+    "liveOdds": true,
+    "slug": "betano.mx"
+  },
+  {
+    "bookmakerName": "Betano PE",
+    "cloneOf": "betano",
+    "liveOdds": true,
+    "slug": "betano.pe"
+  },
+  {
+    "bookmakerName": "BetAnything",
+    "cloneOf": null,
+    "liveOdds": null,
+    "slug": "betanything"
+  },
+  {
+    "bookmakerName": "Bet-At-Home",
+    "cloneOf": null,
+    "liveOdds": null,
+    "slug": "betathome"
+  },
+  {
+    "bookmakerName": "betboo BR",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "betboo.bet.br"
+  },
+  {
+    "bookmakerName": "Betcenter BE",
+    "cloneOf": "cashpoint",
+    "liveOdds": true,
+    "slug": "betcenter.be"
+  },
+  {
+    "bookmakerName": "Betcity NL",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "betcity.nl"
+  },
+  {
+    "bookmakerName": "Betcris",
+    "cloneOf": "bookmaker.eu",
+    "liveOdds": true,
+    "slug": "betcris"
+  },
+  {
+    "bookmakerName": "BetDSI",
+    "cloneOf": null,
+    "liveOdds": false,
+    "slug": "betdsi"
+  },
+  {
+    "bookmakerName": "Betfair ES",
+    "cloneOf": "betfair-spb",
+    "liveOdds": true,
+    "slug": "betfair.es"
+  },
+  {
+    "bookmakerName": "BetFair Exchange",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "betfair-ex"
+  },
+  {
+    "bookmakerName": "Betfair Exchange Test",
+    "cloneOf": null,
+    "liveOdds": false,
+    "slug": "betfair-ex2"
+  },
+  {
+    "bookmakerName": "Betfair IT",
+    "cloneOf": "betfair-spb",
+    "liveOdds": true,
+    "slug": "betfair.it"
+  },
+  {
+    "bookmakerName": "BetFair Sportsbook",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "betfair-spb"
+  },
+  {
+    "bookmakerName": "Betfinal",
+    "cloneOf": "betathome",
+    "liveOdds": null,
+    "slug": "betfinal"
+  },
+  {
+    "bookmakerName": "betFIRST BE",
+    "cloneOf": null,
+    "liveOdds": null,
+    "slug": "betfirst.be"
+  },
+  {
+    "bookmakerName": "BetFlag IT",
+    "cloneOf": "goldbet.it",
+    "liveOdds": true,
+    "slug": "betflag.it"
+  },
+  {
+    "bookmakerName": "Betfred",
+    "cloneOf": null,
+    "liveOdds": null,
+    "slug": "betfred"
+  },
+  {
+    "bookmakerName": "Betfury",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "betfury"
+  },
+  {
+    "bookmakerName": "Betify",
+    "cloneOf": "roobet",
+    "liveOdds": true,
+    "slug": "betify"
+  },
+  {
+    "bookmakerName": "Betika KE",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "betika"
+  },
+  {
+    "bookmakerName": "Betinia DK",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "betinia.dk"
+  },
+  {
+    "bookmakerName": "BetJack",
+    "cloneOf": null,
+    "liveOdds": null,
+    "slug": "betjack"
+  },
+  {
+    "bookmakerName": "BetMGM",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "betmgm"
+  },
+  {
+    "bookmakerName": "BetMGM UK",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "betmgm.co.uk"
+  },
+  {
+    "bookmakerName": "Betnacional",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "betnacional"
+  },
+  {
+    "bookmakerName": "Betnation NL",
+    "cloneOf": null,
+    "liveOdds": null,
+    "slug": "betnation.nl"
+  },
+  {
+    "bookmakerName": "BetOnline AG",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "betonline.ag"
+  },
+  {
+    "bookmakerName": "BetOnRed",
+    "cloneOf": "bcgame",
+    "liveOdds": true,
+    "slug": "betonred"
+  },
+  {
+    "bookmakerName": "BetParx",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "betparx"
+  },
+  {
+    "bookmakerName": "BetPlay",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "betplay"
+  },
+  {
+    "bookmakerName": "Betplay",
+    "cloneOf": "roobet",
+    "liveOdds": true,
+    "slug": "betplay.io"
+  },
+  {
+    "bookmakerName": "BetRivers",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "betrivers"
+  },
+  {
+    "bookmakerName": "Betsafe",
+    "cloneOf": "betsson",
+    "liveOdds": false,
+    "slug": "betsafe"
+  },
+  {
+    "bookmakerName": "Betsson",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "betsson"
+  },
+  {
+    "bookmakerName": "Betsson IT",
+    "cloneOf": null,
+    "liveOdds": null,
+    "slug": "betsson.it"
+  },
+  {
+    "bookmakerName": "BetUK",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "betuk"
+  },
+  {
+    "bookmakerName": "BetUS",
+    "cloneOf": null,
+    "liveOdds": false,
+    "slug": "betus"
+  },
+  {
+    "bookmakerName": "Betway",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "betway"
+  },
+  {
+    "bookmakerName": "Betway DE",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "betway.de"
+  },
+  {
+    "bookmakerName": "Betway ES",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "betway.es"
+  },
+  {
+    "bookmakerName": "Betway IT",
+    "cloneOf": null,
+    "liveOdds": null,
+    "slug": "betway.it"
+  },
+  {
+    "bookmakerName": "BetWhale AG",
+    "cloneOf": "betfury",
+    "liveOdds": true,
+    "slug": "betwhale.ag"
+  },
+  {
+    "bookmakerName": "BetWinner",
+    "cloneOf": "22bet",
+    "liveOdds": true,
+    "slug": "betwinner"
+  },
+  {
+    "bookmakerName": "BFB247",
+    "cloneOf": "pb77",
+    "liveOdds": true,
+    "slug": "bfb247"
+  },
+  {
+    "bookmakerName": "Bingoal BE",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "bingoal.be"
+  },
+  {
+    "bookmakerName": "Blaze",
+    "cloneOf": "betfury",
+    "liveOdds": true,
+    "slug": "blaze"
+  },
+  {
+    "bookmakerName": "Blaze BR",
+    "cloneOf": "blaze",
+    "liveOdds": true,
+    "slug": "blaze.bet.br"
+  },
+  {
+    "bookmakerName": "Bodog",
+    "cloneOf": "bovada.lv",
+    "liveOdds": true,
+    "slug": "bodog.eu"
+  },
+  {
+    "bookmakerName": "Bolsa de Aposta Sportsbook",
+    "cloneOf": "pinnacle",
+    "liveOdds": true,
+    "slug": "bolsadeaposta-spb"
+  },
+  {
+    "bookmakerName": "Bookmaker EU",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "bookmaker.eu"
+  },
+  {
+    "bookmakerName": "Borgata Online Sports",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "borgata"
+  },
+  {
+    "bookmakerName": "Bovada",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "bovada.lv"
+  },
+  {
+    "bookmakerName": "BoyleSports",
+    "cloneOf": null,
+    "liveOdds": false,
+    "slug": "boylesports"
+  },
+  {
+    "bookmakerName": "Bpremium",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "bpremium"
+  },
+  {
+    "bookmakerName": "Brazino777 BR",
+    "cloneOf": null,
+    "liveOdds": null,
+    "slug": "brazino777.bet.br"
+  },
+  {
+    "bookmakerName": "Bwin",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "bwin"
+  },
+  {
+    "bookmakerName": "Bwin BE",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "bwin.be"
+  },
+  {
+    "bookmakerName": "Bwin DE",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "bwin.de"
+  },
+  {
+    "bookmakerName": "Bwin DK",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "bwin.dk"
+  },
+  {
+    "bookmakerName": "Bwin ES",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "bwin.es"
+  },
+  {
+    "bookmakerName": "Bwin FR",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "bwin.fr"
+  },
+  {
+    "bookmakerName": "Bwin PT",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "bwin.pt"
+  },
+  {
+    "bookmakerName": "Caesars Sportsbook",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "caesars"
+  },
+  {
+    "bookmakerName": "Caliente MX",
+    "cloneOf": "marcaapuestas",
+    "liveOdds": false,
+    "slug": "caliente"
+  },
+  {
+    "bookmakerName": "CampoBet DK",
+    "cloneOf": "betinia.dk",
+    "liveOdds": true,
+    "slug": "campobet.dk"
+  },
+  {
+    "bookmakerName": "Casa Pariurilor Bet RO",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "casapariurilor.ro"
+  },
+  {
+    "bookmakerName": "CASHPOINT",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "cashpoint"
+  },
+  {
+    "bookmakerName": "CASHPOINT DK",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "cashpoint.dk"
+  },
+  {
+    "bookmakerName": "Casumo",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "casumo"
+  },
+  {
+    "bookmakerName": "Circa Sports",
+    "cloneOf": null,
+    "liveOdds": false,
+    "slug": "circasports"
+  },
+  {
+    "bookmakerName": "CircusBet FR",
+    "cloneOf": "vbet.fr",
+    "liveOdds": null,
+    "slug": "circusbet.fr"
+  },
+  {
+    "bookmakerName": "Cloudbet",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "cloudbet"
+  },
+  {
+    "bookmakerName": "Codere ES",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "codere.es"
+  },
+  {
+    "bookmakerName": "Coolbet",
+    "cloneOf": null,
+    "liveOdds": false,
+    "slug": "coolbet"
+  },
+  {
+    "bookmakerName": "Coolzino",
+    "cloneOf": "bcgame",
+    "liveOdds": true,
+    "slug": "coolzino"
+  },
+  {
+    "bookmakerName": "Copybet",
+    "cloneOf": null,
+    "liveOdds": null,
+    "slug": "copybet"
+  },
+  {
+    "bookmakerName": "Coral",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "coral"
+  },
+  {
+    "bookmakerName": "CryptoLeo",
+    "cloneOf": "bcgame",
+    "liveOdds": true,
+    "slug": "cryptoleo"
+  },
+  {
+    "bookmakerName": "DACHBET",
+    "cloneOf": "18bet",
+    "liveOdds": false,
+    "slug": "dachbet"
+  },
+  {
+    "bookmakerName": "Dafabet",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "dafabet"
+  },
+  {
+    "bookmakerName": "Desert Diamond Sport",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "desertdiamond"
+  },
+  {
+    "bookmakerName": "Donbet CO",
+    "cloneOf": null,
+    "liveOdds": null,
+    "slug": "donbet.co"
+  },
+  {
+    "bookmakerName": "Draftkings",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "draftkings"
+  },
+  {
+    "bookmakerName": "Duel",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "duel"
+  },
+  {
+    "bookmakerName": "Duelbits",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "duelbits"
+  },
+  {
+    "bookmakerName": "Fortuna RO",
+    "cloneOf": null,
+    "liveOdds": null,
+    "slug": "efortuna.ro"
+  },
+  {
+    "bookmakerName": "Eplay24 IT",
+    "cloneOf": null,
+    "liveOdds": false,
+    "slug": "eplay24.it"
+  },
+  {
+    "bookmakerName": "ESPN Bet",
+    "cloneOf": "thescore",
+    "liveOdds": null,
+    "slug": "espnbet"
+  },
+  {
+    "bookmakerName": "Esportiva Bet",
+    "cloneOf": "bcgame",
+    "liveOdds": true,
+    "slug": "esportivabet"
+  },
+  {
+    "bookmakerName": "Estrela Bet",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "estrelabet"
+  },
+  {
+    "bookmakerName": "EstrelaBet BR",
+    "cloneOf": "estrelabet",
+    "liveOdds": null,
+    "slug": "estrelabet.bet.br"
+  },
+  {
+    "bookmakerName": "Eurobet IT",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "eurobet.it"
+  },
+  {
+    "bookmakerName": "Expekt DK",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "expekt.dk"
+  },
+  {
+    "bookmakerName": "Expekt SE",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "expekt.se"
+  },
+  {
+    "bookmakerName": "Fair999 Exchange",
+    "cloneOf": "betfair-ex",
+    "liveOdds": true,
+    "slug": "fair999-ex"
+  },
+  {
+    "bookmakerName": "FairPari",
+    "cloneOf": "22bet",
+    "liveOdds": true,
+    "slug": "fairpari"
+  },
+  {
+    "bookmakerName": "Fanatics",
+    "cloneOf": "pointsbet.com.au",
+    "liveOdds": true,
+    "slug": "fanatics"
+  },
+  {
+    "bookmakerName": "FanDuel",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "fanduel"
+  },
+  {
+    "bookmakerName": "FB Sports",
+    "cloneOf": null,
+    "liveOdds": null,
+    "slug": "fbsports"
+  },
+  {
+    "bookmakerName": "FDJ",
+    "cloneOf": "unibet.fr",
+    "liveOdds": true,
+    "slug": "fdj"
+  },
+  {
+    "bookmakerName": "Feelingbet.fr",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "feelingbet.fr"
+  },
+  {
+    "bookmakerName": "FEZbet",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "fezbet"
+  },
+  {
+    "bookmakerName": "Fliff Sportsbook",
+    "cloneOf": null,
+    "liveOdds": false,
+    "slug": "fliff"
+  },
+  {
+    "bookmakerName": "Fortebet UG",
+    "cloneOf": null,
+    "liveOdds": null,
+    "slug": "fortebet.ug"
+  },
+  {
+    "bookmakerName": "FortuneJack",
+    "cloneOf": "bcgame",
+    "liveOdds": true,
+    "slug": "fortunejack"
+  },
+  {
+    "bookmakerName": "Four Winds Sportsbook",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "fourwinds"
+  },
+  {
+    "bookmakerName": "FreshBet",
+    "cloneOf": "mystake",
+    "liveOdds": true,
+    "slug": "freshbet"
+  },
+  {
+    "bookmakerName": "Fun88 UK",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "fun88.co.uk"
+  },
+  {
+    "bookmakerName": "Gamdom",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "gamdom"
+  },
+  {
+    "bookmakerName": "Gamebookers",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "gamebookers"
+  },
+  {
+    "bookmakerName": "Genybet FR",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "genybet.fr"
+  },
+  {
+    "bookmakerName": "Goldbet IT",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "goldbet.it"
+  },
+  {
+    "bookmakerName": "GoldenBet",
+    "cloneOf": "mystake",
+    "liveOdds": true,
+    "slug": "goldenbet"
+  },
+  {
+    "bookmakerName": "Golden Palace Sports BE",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "goldenpalacesports.be"
+  },
+  {
+    "bookmakerName": "GoldenPark ES",
+    "cloneOf": null,
+    "liveOdds": null,
+    "slug": "goldenpark.es"
+  },
+  {
+    "bookmakerName": "GreatWin",
+    "cloneOf": "fezbet",
+    "liveOdds": true,
+    "slug": "greatwin"
+  },
+  {
+    "bookmakerName": "Grosvenor",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "grosvenor"
+  },
+  {
+    "bookmakerName": "Hard Rock Bet",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "hardrockbet"
+  },
+  {
+    "bookmakerName": "HighBet UK",
+    "cloneOf": null,
+    "liveOdds": null,
+    "slug": "highbet.co.uk"
+  },
+  {
+    "bookmakerName": "HTH (Hua Ti Hui)",
+    "cloneOf": "kaiyun",
+    "liveOdds": null,
+    "slug": "hth"
+  },
+  {
+    "bookmakerName": "ForBet PL",
+    "cloneOf": null,
+    "liveOdds": null,
+    "slug": "iforbet.pl"
+  },
+  {
+    "bookmakerName": "inbet BG",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "inbet"
+  },
+  {
+    "bookmakerName": "Inbet",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "inbetsport"
+  },
+  {
+    "bookmakerName": "INDIBET",
+    "cloneOf": "pb77",
+    "liveOdds": true,
+    "slug": "indibet"
+  },
+  {
+    "bookmakerName": "Inkabet",
+    "cloneOf": "betsson",
+    "liveOdds": false,
+    "slug": "inkabet"
+  },
+  {
+    "bookmakerName": "Interwetten",
+    "cloneOf": null,
+    "liveOdds": false,
+    "slug": "interwetten"
+  },
+  {
+    "bookmakerName": "IviBet",
+    "cloneOf": "vave",
+    "liveOdds": true,
+    "slug": "ivibet"
+  },
+  {
+    "bookmakerName": "JackBit",
+    "cloneOf": "mystake",
+    "liveOdds": true,
+    "slug": "jackbit"
+  },
+  {
+    "bookmakerName": "Jacks NL",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "jacks.nl"
+  },
+  {
+    "bookmakerName": "Jazz Sports",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "jazzsports"
+  },
+  {
+    "bookmakerName": "JustBet",
+    "cloneOf": "bookmaker.eu",
+    "liveOdds": true,
+    "slug": "justbet"
+  },
+  {
+    "bookmakerName": "Kaiyun Sports",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "kaiyun"
+  },
+  {
+    "bookmakerName": "Kalshi",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "kalshi"
+  },
+  {
+    "bookmakerName": "KTO",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "kto"
+  },
+  {
+    "bookmakerName": "KTO BR",
+    "cloneOf": "kto",
+    "liveOdds": null,
+    "slug": "kto.bet.br"
+  },
+  {
+    "bookmakerName": "Ladbrokes",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "ladbrokes"
+  },
+  {
+    "bookmakerName": "Ladbrokes BE",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "ladbrokes.be"
+  },
+  {
+    "bookmakerName": "Ladbrokes DE",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "ladbrokes.de"
+  },
+  {
+    "bookmakerName": "LeoVegas",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "leovegas"
+  },
+  {
+    "bookmakerName": "LeoVegas DK",
+    "cloneOf": "expekt.dk",
+    "liveOdds": true,
+    "slug": "leovegas.dk"
+  },
+  {
+    "bookmakerName": "LeoVegas ES",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "leovegas.es"
+  },
+  {
+    "bookmakerName": "LeoVegas IT",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "leovegas.it"
+  },
+  {
+    "bookmakerName": "LeoVegas UK",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "leovegas.uk"
+  },
+  {
+    "bookmakerName": "Leyu Sports",
+    "cloneOf": "kaiyun",
+    "liveOdds": false,
+    "slug": "leyusports"
+  },
+  {
+    "bookmakerName": "LibraBet",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "librabet"
+  },
+  {
+    "bookmakerName": "Limitless Exchange",
+    "cloneOf": null,
+    "liveOdds": null,
+    "slug": "limitless-ex"
+  },
+  {
+    "bookmakerName": "LiveScoreBet",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "livescorebet"
+  },
+  {
+    "bookmakerName": "Lottoland",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "lottoland"
+  },
+  {
+    "bookmakerName": "Lottomatica IT",
+    "cloneOf": "goldbet.it",
+    "liveOdds": true,
+    "slug": "lottomatica.it"
+  },
+  {
+    "bookmakerName": "LowVig AG",
+    "cloneOf": "betonline.ag",
+    "liveOdds": true,
+    "slug": "lowvig.ag"
+  },
+  {
+    "bookmakerName": "Mansion 88",
+    "cloneOf": null,
+    "liveOdds": null,
+    "slug": "mansion88"
+  },
+  {
+    "bookmakerName": "MARCAapuestas",
+    "cloneOf": "caliente",
+    "liveOdds": false,
+    "slug": "marcaapuestas"
+  },
+  {
+    "bookmakerName": "Matchbook Exchange",
+    "cloneOf": null,
+    "liveOdds": null,
+    "slug": "matchbook"
+  },
+  {
+    "bookmakerName": "MaxBet RO",
+    "cloneOf": null,
+    "liveOdds": null,
+    "slug": "maxbet.ro"
+  },
+  {
+    "bookmakerName": "MaxBet RS",
+    "cloneOf": null,
+    "liveOdds": false,
+    "slug": "maxbet.rs"
+  },
+  {
+    "bookmakerName": "Mega Dice",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "megadice"
+  },
+  {
+    "bookmakerName": "MegaPari",
+    "cloneOf": "22bet",
+    "liveOdds": true,
+    "slug": "megapari"
+  },
+  {
+    "bookmakerName": "MelBet",
+    "cloneOf": "22bet",
+    "liveOdds": true,
+    "slug": "melbet"
+  },
+  {
+    "bookmakerName": "Meridianbet BA",
+    "cloneOf": null,
+    "liveOdds": null,
+    "slug": "meridianbet.ba"
+  },
+  {
+    "bookmakerName": "Meridianbet ME",
+    "cloneOf": null,
+    "liveOdds": null,
+    "slug": "meridianbet.me"
+  },
+  {
+    "bookmakerName": "Meridianbet RS",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "meridianbet.rs"
+  },
+  {
+    "bookmakerName": "Merkur Bets",
+    "cloneOf": "cashpoint",
+    "liveOdds": true,
+    "slug": "merkurbets"
+  },
+  {
+    "bookmakerName": "MerkurXtip CZ",
+    "cloneOf": "allbritishcasino",
+    "liveOdds": true,
+    "slug": "merkurxtip.cz"
+  },
+  {
+    "bookmakerName": "Midnite",
+    "cloneOf": null,
+    "liveOdds": false,
+    "slug": "midnite"
+  },
+  {
+    "bookmakerName": "Mozzart Bet",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "mozzartbet"
+  },
+  {
+    "bookmakerName": "MrBit RO",
+    "cloneOf": "allbritishcasino",
+    "liveOdds": true,
+    "slug": "mrbit.ro"
+  },
+  {
+    "bookmakerName": "MrGreen",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "mrgreen"
+  },
+  {
+    "bookmakerName": "Mr Green DK",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "mrgreen.dk"
+  },
+  {
+    "bookmakerName": "Mr. Jack",
+    "cloneOf": "betnacional",
+    "liveOdds": false,
+    "slug": "mrjack.bet"
+  },
+  {
+    "bookmakerName": "MSPORT NG",
+    "cloneOf": null,
+    "liveOdds": null,
+    "slug": "msport"
+  },
+  {
+    "bookmakerName": "MyBookie AG",
+    "cloneOf": null,
+    "liveOdds": null,
+    "slug": "mybookie.ag"
+  },
+  {
+    "bookmakerName": "Myriad Markets",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "myriad"
+  },
+  {
+    "bookmakerName": "MyStake",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "mystake"
+  },
+  {
+    "bookmakerName": "N1Bet",
+    "cloneOf": null,
+    "liveOdds": null,
+    "slug": "n1bet"
+  },
+  {
+    "bookmakerName": "Napoleon Sports BE",
+    "cloneOf": null,
+    "liveOdds": null,
+    "slug": "napoleonsports.be"
+  },
+  {
+    "bookmakerName": "Neds AU",
+    "cloneOf": null,
+    "liveOdds": false,
+    "slug": "neds.com.au"
+  },
+  {
+    "bookmakerName": "Net88 UK",
+    "cloneOf": null,
+    "liveOdds": null,
+    "slug": "net88.co.uk"
+  },
+  {
+    "bookmakerName": "NetBet",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "netbet"
+  },
+  {
+    "bookmakerName": "NetBet FR",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "netbet.fr"
+  },
+  {
+    "bookmakerName": "NetBet IT",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "netbet.it"
+  },
+  {
+    "bookmakerName": "Nextbet",
+    "cloneOf": "dafabet",
+    "liveOdds": true,
+    "slug": "nextbet"
+  },
+  {
+    "bookmakerName": "Ninecasino",
+    "cloneOf": "bcgame",
+    "liveOdds": true,
+    "slug": "ninecasino"
+  },
+  {
+    "bookmakerName": "NordicBet",
+    "cloneOf": "betsson",
+    "liveOdds": false,
+    "slug": "nordicbet"
+  },
+  {
+    "bookmakerName": "Novig US",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "novig.us"
+  },
+  {
+    "bookmakerName": "OddSet",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "oddset"
+  },
+  {
+    "bookmakerName": "OdiBets",
+    "cloneOf": null,
+    "liveOdds": null,
+    "slug": "odibets"
+  },
+  {
+    "bookmakerName": "OktagonBet",
+    "cloneOf": null,
+    "liveOdds": null,
+    "slug": "oktagonbet"
+  },
+  {
+    "bookmakerName": "OLE777",
+    "cloneOf": "pinnacle",
+    "liveOdds": true,
+    "slug": "ole777"
+  },
+  {
+    "bookmakerName": "Orbit Exchange",
+    "cloneOf": "betfair-ex",
+    "liveOdds": true,
+    "slug": "orbitx"
+  },
+  {
+    "bookmakerName": "Overtime Exchange",
+    "cloneOf": null,
+    "liveOdds": null,
+    "slug": "overtime.io"
+  },
+  {
+    "bookmakerName": "Paddy Power",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "paddypower"
+  },
+  {
+    "bookmakerName": "PAF",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "paf"
+  },
+  {
+    "bookmakerName": "paf ES",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "paf.es"
+  },
+  {
+    "bookmakerName": "PAGBET",
+    "cloneOf": "betnacional",
+    "liveOdds": false,
+    "slug": "pagbet"
+  },
+  {
+    "bookmakerName": "Pamestoixima GR",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "pamestoixima.gr"
+  },
+  {
+    "bookmakerName": "Paradise Wager",
+    "cloneOf": null,
+    "liveOdds": false,
+    "slug": "paradisewager"
+  },
+  {
+    "bookmakerName": "Parimatch UK",
+    "cloneOf": "betvictor",
+    "liveOdds": false,
+    "slug": "parimatch.co.uk"
+  },
+  {
+    "bookmakerName": "Partycasino",
+    "cloneOf": null,
+    "liveOdds": null,
+    "slug": "partycasino"
+  },
+  {
+    "bookmakerName": "PartyPoker Sports",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "partypoker"
+  },
+  {
+    "bookmakerName": "PremiumBet77",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "pb77"
+  },
+  {
+    "bookmakerName": "Pin88",
+    "cloneOf": "pinnacle",
+    "liveOdds": true,
+    "slug": "pin88"
+  },
+  {
+    "bookmakerName": "Pinnacle Sports",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "pinnacle"
+  },
+  {
+    "bookmakerName": "PinnBet RS",
+    "cloneOf": null,
+    "liveOdds": null,
+    "slug": "pinnbet.rs"
+  },
+  {
+    "bookmakerName": "Piwi247 Exchange",
+    "cloneOf": "betfair-ex",
+    "liveOdds": true,
+    "slug": "piwi247-ex"
+  },
+  {
+    "bookmakerName": "Piwi247 Sportsbook",
+    "cloneOf": "pinnacle",
+    "liveOdds": true,
+    "slug": "piwi247-spb"
+  },
+  {
+    "bookmakerName": "Pix Bet",
+    "cloneOf": "bcgame",
+    "liveOdds": true,
+    "slug": "pixbet"
+  },
+  {
+    "bookmakerName": "Planetwin365 IT",
+    "cloneOf": "goldbet.it",
+    "liveOdds": true,
+    "slug": "planetwin365.it"
+  },
+  {
+    "bookmakerName": "PlayNow",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "playnow"
+  },
+  {
+    "bookmakerName": "PlayPix",
+    "cloneOf": null,
+    "liveOdds": null,
+    "slug": "playpix"
+  },
+  {
+    "bookmakerName": "PMU",
+    "cloneOf": null,
+    "liveOdds": false,
+    "slug": "pmu"
+  },
+  {
+    "bookmakerName": "PointsBet AU",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "pointsbet.com.au"
+  },
+  {
+    "bookmakerName": "PokerStars",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "pokerstars"
+  },
+  {
+    "bookmakerName": "PokerStars ES",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "pokerstars.es"
+  },
+  {
+    "bookmakerName": "PokerStars FR",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "pokerstars.fr"
+  },
+  {
+    "bookmakerName": "PokerStars IT",
+    "cloneOf": "sisal.it",
+    "liveOdds": true,
+    "slug": "pokerstars.it"
+  },
+  {
+    "bookmakerName": "PokerStars RO",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "pokerstars.ro"
+  },
+  {
+    "bookmakerName": "PokerStars UK",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "pokerstars.uk"
+  },
+  {
+    "bookmakerName": "Polymarket",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "polymarket"
+  },
+  {
+    "bookmakerName": "Powbet",
+    "cloneOf": "allbritishcasino",
+    "liveOdds": true,
+    "slug": "powbet"
+  },
+  {
+    "bookmakerName": "PowerPlay",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "powerplay"
+  },
+  {
+    "bookmakerName": "PrizePicks",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "prizepicks"
+  },
+  {
+    "bookmakerName": "Proline +",
+    "cloneOf": null,
+    "liveOdds": null,
+    "slug": "prolineplus"
+  },
+  {
+    "bookmakerName": "Prophet Exchange",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "prophetx"
+  },
+  {
+    "bookmakerName": "PS3838",
+    "cloneOf": "pinnacle",
+    "liveOdds": true,
+    "slug": "ps3838"
+  },
+  {
+    "bookmakerName": "Punter.io",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "punter.io"
+  },
+  {
+    "bookmakerName": "QuickWin",
+    "cloneOf": "allbritishcasino",
+    "liveOdds": true,
+    "slug": "quickwin"
+  },
+  {
+    "bookmakerName": "Quigioco IT",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "quigioco.it"
+  },
+  {
+    "bookmakerName": "Rabona",
+    "cloneOf": "allbritishcasino",
+    "liveOdds": true,
+    "slug": "rabona"
+  },
+  {
+    "bookmakerName": "Rainbet",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "rainbet"
+  },
+  {
+    "bookmakerName": "RajBet",
+    "cloneOf": "betfury",
+    "liveOdds": true,
+    "slug": "rajbets"
+  },
+  {
+    "bookmakerName": "Razed",
+    "cloneOf": "betfury",
+    "liveOdds": true,
+    "slug": "razed"
+  },
+  {
+    "bookmakerName": "Rebet",
+    "cloneOf": null,
+    "liveOdds": null,
+    "slug": "rebet.app"
+  },
+  {
+    "bookmakerName": "Rollbit",
+    "cloneOf": "betfury",
+    "liveOdds": true,
+    "slug": "rollbit"
+  },
+  {
+    "bookmakerName": "Rolletto",
+    "cloneOf": "mystake",
+    "liveOdds": true,
+    "slug": "rolletto"
+  },
+  {
+    "bookmakerName": "Roobet",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "roobet"
+  },
+  {
+    "bookmakerName": "RoosterBet",
+    "cloneOf": "n1bet",
+    "liveOdds": null,
+    "slug": "rooster.bet"
+  },
+  {
+    "bookmakerName": "Rushbet CO",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "rushbet.co"
+  },
+  {
+    "bookmakerName": "SABA Sports",
+    "cloneOf": null,
+    "liveOdds": null,
+    "slug": "sabasports"
+  },
+  {
+    "bookmakerName": "SBOBET",
+    "cloneOf": null,
+    "liveOdds": false,
+    "slug": "sbobet"
+  },
+  {
+    "bookmakerName": "Scooore BE",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "scooore.be"
+  },
+  {
+    "bookmakerName": "Sesame Sport BG",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "sesamesport.bg"
+  },
+  {
+    "bookmakerName": "Sharp",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "sharp.ag"
+  },
+  {
+    "bookmakerName": "SharpBet",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "sharpbet"
+  },
+  {
+    "bookmakerName": "Sharp Exchange",
+    "cloneOf": "betfair-ex",
+    "liveOdds": true,
+    "slug": "sharpxch"
+  },
+  {
+    "bookmakerName": "Shiba AG",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "shiba.ag"
+  },
+  {
+    "bookmakerName": "SingBet",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "singbet"
+  },
+  {
+    "bookmakerName": "Sisal IT",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "sisal.it"
+  },
+  {
+    "bookmakerName": "SkyBet",
+    "cloneOf": null,
+    "liveOdds": null,
+    "slug": "skybet"
+  },
+  {
+    "bookmakerName": "Snai IT",
+    "cloneOf": "sisal.it",
+    "liveOdds": true,
+    "slug": "snai.it"
+  },
+  {
+    "bookmakerName": "SoccerBet RS",
+    "cloneOf": null,
+    "liveOdds": null,
+    "slug": "soccerbet.rs"
+  },
+  {
+    "bookmakerName": "Solabet",
+    "cloneOf": "198bet",
+    "liveOdds": true,
+    "slug": "solabet"
+  },
+  {
+    "bookmakerName": "Spelet LV",
+    "cloneOf": "22bet",
+    "liveOdds": true,
+    "slug": "spelet.lv"
+  },
+  {
+    "bookmakerName": "Sportaza",
+    "cloneOf": "7bet.lt",
+    "liveOdds": true,
+    "slug": "sportaza"
+  },
+  {
+    "bookmakerName": "SportingBet",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "sportingbet"
+  },
+  {
+    "bookmakerName": "Sportingbet BR",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "sportingbet.bet.br"
+  },
+  {
+    "bookmakerName": "SportingBet ZA",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "sportingbet.co.za"
+  },
+  {
+    "bookmakerName": "Sports411",
+    "cloneOf": "bookmaker.eu",
+    "liveOdds": true,
+    "slug": "sports411.ag"
+  },
+  {
+    "bookmakerName": "SportBetting AG",
+    "cloneOf": "betonline.ag",
+    "liveOdds": true,
+    "slug": "sportsbetting.ag"
+  },
+  {
+    "bookmakerName": "Sports Interaction",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "sportsinteraction"
+  },
+  {
+    "bookmakerName": "Sporttip",
+    "cloneOf": null,
+    "liveOdds": null,
+    "slug": "sporttip"
+  },
+  {
+    "bookmakerName": "Sportuna",
+    "cloneOf": "7bet.lt",
+    "liveOdds": true,
+    "slug": "sportuna"
+  },
+  {
+    "bookmakerName": "sportwetten.de",
+    "cloneOf": null,
+    "liveOdds": null,
+    "slug": "sportwetten.de"
+  },
+  {
+    "bookmakerName": "SportyBet",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "sportybet"
+  },
+  {
+    "bookmakerName": "Stake.com",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "stake"
+  },
+  {
+    "bookmakerName": "Stake BR",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "stake.bet.br"
+  },
+  {
+    "bookmakerName": "Stanleybet IT",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "stanleybet.info"
+  },
+  {
+    "bookmakerName": "Starcasino BE",
+    "cloneOf": "7bet.lt",
+    "liveOdds": true,
+    "slug": "starcasino.be"
+  },
+  {
+    "bookmakerName": "Stoiximan",
+    "cloneOf": null,
+    "liveOdds": null,
+    "slug": "stoiximan"
+  },
+  {
+    "bookmakerName": "SugarHouse",
+    "cloneOf": "betrivers",
+    "liveOdds": true,
+    "slug": "sugarhouse"
+  },
+  {
+    "bookmakerName": "Sunbet ZA",
+    "cloneOf": null,
+    "liveOdds": null,
+    "slug": "sunbet.co.za"
+  },
+  {
+    "bookmakerName": "Superbet",
+    "cloneOf": "superbet.ro",
+    "liveOdds": null,
+    "slug": "superbet"
+  },
+  {
+    "bookmakerName": "Superbet BR",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "superbet.bet.br"
+  },
+  {
+    "bookmakerName": "Superbet PL",
+    "cloneOf": null,
+    "liveOdds": null,
+    "slug": "superbet.pl"
+  },
+  {
+    "bookmakerName": "Superbet RO",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "superbet.ro"
+  },
+  {
+    "bookmakerName": "Superbet RS",
+    "cloneOf": null,
+    "liveOdds": null,
+    "slug": "superbet.rs"
+  },
+  {
+    "bookmakerName": "Svenska Spel",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "svenskaspel"
+  },
+  {
+    "bookmakerName": "SX Bet",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "sx.bet"
+  },
+  {
+    "bookmakerName": "TAB AU",
+    "cloneOf": null,
+    "liveOdds": false,
+    "slug": "tab.com.au"
+  },
+  {
+    "bookmakerName": "TABtouch AU",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "tabtouch"
+  },
+  {
+    "bookmakerName": "theScore",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "thescore"
+  },
+  {
+    "bookmakerName": "Tiger Gaming",
+    "cloneOf": "betonline.ag",
+    "liveOdds": true,
+    "slug": "tigergaming"
+  },
+  {
+    "bookmakerName": "Tipico DE",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "tipico"
+  },
+  {
+    "bookmakerName": "tippmixPRO",
+    "cloneOf": null,
+    "liveOdds": null,
+    "slug": "tippmixpro"
+  },
+  {
+    "bookmakerName": "TipTorro",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "tiptorro"
+  },
+  {
+    "bookmakerName": "TonyBet",
+    "cloneOf": "vave",
+    "liveOdds": true,
+    "slug": "tonybet"
+  },
+  {
+    "bookmakerName": "Unibet",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "unibet"
+  },
+  {
+    "bookmakerName": "Unibet BE",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "unibet.be"
+  },
+  {
+    "bookmakerName": "Unibet AU",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "unibet.com.au"
+  },
+  {
+    "bookmakerName": "Unibet DK",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "unibet.dk"
+  },
+  {
+    "bookmakerName": "Unibet FR",
+    "cloneOf": null,
+    "liveOdds": null,
+    "slug": "unibet.fr"
+  },
+  {
+    "bookmakerName": "Unibet IE",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "unibet.ie"
+  },
+  {
+    "bookmakerName": "Unibet NL",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "unibet.nl"
+  },
+  {
+    "bookmakerName": "Unibet SE",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "unibet.se"
+  },
+  {
+    "bookmakerName": "Vave",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "vave"
+  },
+  {
+    "bookmakerName": "Vbet",
+    "cloneOf": null,
+    "liveOdds": false,
+    "slug": "vbet"
+  },
+  {
+    "bookmakerName": "Vbet UK",
+    "cloneOf": null,
+    "liveOdds": null,
+    "slug": "vbet.co.uk"
+  },
+  {
+    "bookmakerName": "Vbet DK",
+    "cloneOf": null,
+    "liveOdds": null,
+    "slug": "vbet.dk"
+  },
+  {
+    "bookmakerName": "Vbet FR",
+    "cloneOf": null,
+    "liveOdds": null,
+    "slug": "vbet.fr"
+  },
+  {
+    "bookmakerName": "Vbet UA",
+    "cloneOf": null,
+    "liveOdds": null,
+    "slug": "vbet.ua"
+  },
+  {
+    "bookmakerName": "VeloBet",
+    "cloneOf": "mystake",
+    "liveOdds": true,
+    "slug": "velobet"
+  },
+  {
+    "bookmakerName": "Vertex",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "vertex"
+  },
+  {
+    "bookmakerName": "Virginbet",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "virginbet"
+  },
+  {
+    "bookmakerName": "Vistabet",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "vistabet"
+  },
+  {
+    "bookmakerName": "Wazamba",
+    "cloneOf": "7bet.lt",
+    "liveOdds": true,
+    "slug": "wazamba"
+  },
+  {
+    "bookmakerName": "Wettarena",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "wettarena"
+  },
+  {
+    "bookmakerName": "WilliamHill",
+    "cloneOf": null,
+    "liveOdds": false,
+    "slug": "williamhill"
+  },
+  {
+    "bookmakerName": "WilliamHill NJ",
+    "cloneOf": "caesars",
+    "liveOdds": true,
+    "slug": "williamhill-nj"
+  },
+  {
+    "bookmakerName": "Winamax DE",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "winamax.de"
+  },
+  {
+    "bookmakerName": "Winamax ES",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "winamax.es"
+  },
+  {
+    "bookmakerName": "Winamax FR",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "winamax.fr"
+  },
+  {
+    "bookmakerName": "WinBet BG",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "winbet.bg"
+  },
+  {
+    "bookmakerName": "WinBet RO",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "winbet.ro"
+  },
+  {
+    "bookmakerName": "Winpot MX",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "winpot.mx"
+  },
+  {
+    "bookmakerName": "WPlay CO",
+    "cloneOf": "caliente",
+    "liveOdds": null,
+    "slug": "wplay.co"
+  },
+  {
+    "bookmakerName": "XBet.ag",
+    "cloneOf": null,
+    "liveOdds": null,
+    "slug": "xbet.ag"
+  },
+  {
+    "bookmakerName": "YesPlay",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "yesplay"
+  },
+  {
+    "bookmakerName": "ZEbet FR",
+    "cloneOf": "unibet.fr",
+    "liveOdds": true,
+    "slug": "zebet.fr"
+  }
+]

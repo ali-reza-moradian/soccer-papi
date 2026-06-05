@@ -1,0 +1,347 @@
+[
+  {
+    "slug": "soccer",
+    "sportId": 10,
+    "sportName": "Soccer"
+  },
+  {
+    "slug": "basketball",
+    "sportId": 11,
+    "sportName": "Basketball"
+  },
+  {
+    "slug": "tennis",
+    "sportId": 12,
+    "sportName": "Tennis"
+  },
+  {
+    "slug": "baseball",
+    "sportId": 13,
+    "sportName": "Baseball"
+  },
+  {
+    "slug": "american-football",
+    "sportId": 14,
+    "sportName": "American Football"
+  },
+  {
+    "slug": "ice-hockey",
+    "sportId": 15,
+    "sportName": "Ice Hockey"
+  },
+  {
+    "slug": "esport-dota",
+    "sportId": 16,
+    "sportName": "ESport Dota"
+  },
+  {
+    "slug": "esport-counter-strike",
+    "sportId": 17,
+    "sportName": "ESport Counter-Strike"
+  },
+  {
+    "slug": "esport-league-of-legends",
+    "sportId": 18,
+    "sportName": "ESport League of Legends"
+  },
+  {
+    "slug": "darts",
+    "sportId": 19,
+    "sportName": "Darts"
+  },
+  {
+    "slug": "mma",
+    "sportId": 20,
+    "sportName": "MMA"
+  },
+  {
+    "slug": "boxing",
+    "sportId": 21,
+    "sportName": "Boxing"
+  },
+  {
+    "slug": "handball",
+    "sportId": 22,
+    "sportName": "Handball"
+  },
+  {
+    "slug": "volleyball",
+    "sportId": 23,
+    "sportName": "Volleyball"
+  },
+  {
+    "slug": "snooker",
+    "sportId": 24,
+    "sportName": "Snooker"
+  },
+  {
+    "slug": "table-tennis",
+    "sportId": 25,
+    "sportName": "Table Tennis"
+  },
+  {
+    "slug": "rugby",
+    "sportId": 26,
+    "sportName": "Rugby"
+  },
+  {
+    "slug": "cricket",
+    "sportId": 27,
+    "sportName": "Cricket"
+  },
+  {
+    "slug": "waterpolo",
+    "sportId": 28,
+    "sportName": "Waterpolo"
+  },
+  {
+    "slug": "futsal",
+    "sportId": 29,
+    "sportName": "Futsal"
+  },
+  {
+    "slug": "beach-volley",
+    "sportId": 30,
+    "sportName": "Beach Volley"
+  },
+  {
+    "slug": "aussie-rules",
+    "sportId": 31,
+    "sportName": "Aussie Rules"
+  },
+  {
+    "slug": "field-hockey",
+    "sportId": 32,
+    "sportName": "Field hockey"
+  },
+  {
+    "slug": "floorball",
+    "sportId": 33,
+    "sportName": "Floorball"
+  },
+  {
+    "slug": "squash",
+    "sportId": 34,
+    "sportName": "Squash"
+  },
+  {
+    "slug": "basketball-3x3",
+    "sportId": 35,
+    "sportName": "Basketball 3x3"
+  },
+  {
+    "slug": "beach-soccer",
+    "sportId": 36,
+    "sportName": "Beach Soccer"
+  },
+  {
+    "slug": "pesapallo",
+    "sportId": 37,
+    "sportName": "Pesapallo"
+  },
+  {
+    "slug": "lacrosse",
+    "sportId": 38,
+    "sportName": "Lacrosse"
+  },
+  {
+    "slug": "curling",
+    "sportId": 39,
+    "sportName": "Curling"
+  },
+  {
+    "slug": "padel",
+    "sportId": 40,
+    "sportName": "Padel"
+  },
+  {
+    "slug": "bandy",
+    "sportId": 41,
+    "sportName": "Bandy"
+  },
+  {
+    "slug": "kabaddi",
+    "sportId": 42,
+    "sportName": "Kabaddi"
+  },
+  {
+    "slug": "rink-hockey",
+    "sportId": 43,
+    "sportName": "Rink Hockey"
+  },
+  {
+    "slug": "soccer-specials",
+    "sportId": 44,
+    "sportName": "Soccer Specials"
+  },
+  {
+    "slug": "gaelic-football",
+    "sportId": 45,
+    "sportName": "Gaelic Football"
+  },
+  {
+    "slug": "netball",
+    "sportId": 46,
+    "sportName": "Netball"
+  },
+  {
+    "slug": "beach-handball",
+    "sportId": 47,
+    "sportName": "Beach Handball"
+  },
+  {
+    "slug": "athletics",
+    "sportId": 48,
+    "sportName": "Athletics"
+  },
+  {
+    "slug": "badminton",
+    "sportId": 49,
+    "sportName": "Badminton"
+  },
+  {
+    "slug": "bowls",
+    "sportId": 50,
+    "sportName": "Bowls"
+  },
+  {
+    "slug": "cross-country",
+    "sportId": 51,
+    "sportName": "Cross-Country"
+  },
+  {
+    "slug": "gaelic-hurling",
+    "sportId": 52,
+    "sportName": "Gaelic Hurling"
+  },
+  {
+    "slug": "softball",
+    "sportId": 53,
+    "sportName": "Softball"
+  },
+  {
+    "slug": "esoccer",
+    "sportId": 54,
+    "sportName": "eSoccer"
+  },
+  {
+    "slug": "ebasketball",
+    "sportId": 55,
+    "sportName": "eBasketball"
+  },
+  {
+    "slug": "esport-call-of-duty",
+    "sportId": 56,
+    "sportName": "ESport Call of Duty"
+  },
+  {
+    "slug": "esport-overwatch",
+    "sportId": 57,
+    "sportName": "ESport Overwatch"
+  },
+  {
+    "slug": "esport-rainbow-six",
+    "sportId": 58,
+    "sportName": "ESport Rainbow Six"
+  },
+  {
+    "slug": "esport-rocket-league",
+    "sportId": 59,
+    "sportName": "ESport Rocket League"
+  },
+  {
+    "slug": "esport-starcraft",
+    "sportId": 60,
+    "sportName": "ESport StarCraft"
+  },
+  {
+    "slug": "esport-valorant",
+    "sportId": 61,
+    "sportName": "ESport Valorant"
+  },
+  {
+    "slug": "esport-arena-of-valor",
+    "sportId": 62,
+    "sportName": "ESport Arena of Valor"
+  },
+  {
+    "slug": "esport-king-of-glory",
+    "sportId": 63,
+    "sportName": "ESport King of Glory"
+  },
+  {
+    "slug": "judo",
+    "sportId": 64,
+    "sportName": "Judo"
+  },
+  {
+    "slug": "esport-honor-of-kings",
+    "sportId": 65,
+    "sportName": "ESport Honor of Kings"
+  },
+  {
+    "slug": "speedway",
+    "sportId": 66,
+    "sportName": "Speedway"
+  },
+  {
+    "slug": "golf",
+    "sportId": 67,
+    "sportName": "Golf"
+  },
+  {
+    "slug": "cycling",
+    "sportId": 68,
+    "sportName": "Cycling"
+  },
+  {
+    "slug": "politics",
+    "sportId": 69,
+    "sportName": "Politics"
+  },
+  {
+    "slug": "elections",
+    "sportId": 70,
+    "sportName": "Elections"
+  },
+  {
+    "slug": "economics",
+    "sportId": 71,
+    "sportName": "Economics"
+  },
+  {
+    "slug": "finance",
+    "sportId": 72,
+    "sportName": "Finance"
+  },
+  {
+    "slug": "technology",
+    "sportId": 73,
+    "sportName": "Technology"
+  },
+  {
+    "slug": "health",
+    "sportId": 74,
+    "sportName": "Health"
+  },
+  {
+    "slug": "science",
+    "sportId": 75,
+    "sportName": "Science"
+  },
+  {
+    "slug": "cryptocurrency",
+    "sportId": 76,
+    "sportName": "Cryptocurrency"
+  },
+  {
+    "slug": "weather",
+    "sportId": 77,
+    "sportName": "Weather"
+  },
+  {
+    "slug": "culture",
+    "sportId": 78,
+    "sportName": "Culture"
+  }
+]
