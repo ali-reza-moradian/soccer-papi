@@ -12,21 +12,27 @@ target_window:
 
 tournaments:
   match_name_regex: "friendl"        # used to discover friendlies via /v4/tournaments
-  pinned_ids: []                     # pin the resolved tournamentId(s) here to skip discovery
-  national_teams_only: true          # prefer "International Friendlies" over club/women's variants
+  # Resolved 2026-06-05 from the cached catalog (senior national-team internationals):
+  #   851 = "Int. Friendly Games"    (men's senior,   International)   <- primary
+  #   852 = "Int. Friendly Games W"  (women's senior, International)
+  # Youth (U21/U20/... ids 854,855,...), club, and simulated (SRL) leagues are excluded.
+  # Drop 852 if you only want men's; clear this list to fall back to regex discovery.
+  pinned_ids: [851, 852]
+  national_teams_only: true          # prefer national-team friendlies over club/simulated variants
 
 bookmakers:
   # Books I can actually bet right now (funded accounts). Real arbs use only these.
   actionable: [pinnacle, 1xbet, kalshi, polymarket]
   # Everything we want stats on. Shadow arbs may use any of these.
-  tracked:    [pinnacle, 1xbet, kalshi, polymarket, stake, cloudbet, bcgame, roobet, sx-bet]
+  tracked:    [pinnacle, 1xbet, kalshi, polymarket, stake, cloudbet, bcgame, roobet, sx.bet]
   # Treated as betting exchanges: liquidity from exchangeMeta/limit, may charge commission.
-  exchanges:  [kalshi, polymarket, sx-bet, betfair, smarkets, matchbook, prophetx, limitless-ex]
+  # (Confirmed slugs from the cached bookmakers catalog.)
+  exchanges:  [kalshi, polymarket, sx.bet, betfair-ex, matchbook, prophetx, limitless-ex, orbitx, overtime.io]
   # Commission charged on net winnings (decimal). Sportsbooks default to 0.
   commission:
     kalshi: 0.0
     polymarket: 0.0
-    sx-bet: 0.0
+    sx.bet: 0.0
 
 markets:
   exclude: [double_chance]           # market families to never scan (overlap 1x2 → bad for arbing)

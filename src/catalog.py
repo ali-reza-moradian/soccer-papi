@@ -245,14 +245,19 @@ def resolve_tournament_ids(
         slug = t.get("tournamentSlug") or ""
         if not (pat.search(name) or pat.search(slug)):
             continue
+
+        cat = (t.get("categoryName") or "").lower()
+        blob = f"{name} {slug} {cat}".lower()
+
+        # Simulated / virtual leagues (SRL = Simulated Reality League, esoccer, etc.) are
+        # AI-generated matches, never real arb targets — always exclude them.
+        if any(tag in blob for tag in ("srl", "simulated", "esoccer", "e-soccer", "virtual")):
+            continue
+
         if national_teams_only:
-            # Drop obvious club-level friendlies; keep international/national-team ones.
-            cat = (t.get("categoryName") or "").lower()
-            cslug = (t.get("categorySlug") or "").lower()
-            blob = f"{name} {slug}".lower()
+            # Drop club-level friendlies; keep international/national-team ones (incl. youth/women).
             if "club" in blob:
                 continue
-            # Prefer international category, but don't hard-require it (slug naming varies).
         matches.append(t)
     return matches
 
