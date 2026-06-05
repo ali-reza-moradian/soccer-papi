@@ -170,6 +170,14 @@ def _log_arb_calc(log, opp: Opportunity, now: datetime) -> None:
 # --------------------------------------------------------------------------- #
 # Record building (CSV + Telegram share these dicts)                            #
 # --------------------------------------------------------------------------- #
+def _stake_per_book(legs) -> dict[str, float]:
+    """Total stake to place at each book — summed, since one account can back >1 leg."""
+    out: dict[str, float] = {}
+    for leg in legs:
+        out[leg.book] = round(out.get(leg.book, 0.0) + leg.stake, 2)
+    return out
+
+
 def _legs_payload(opp: Opportunity) -> list[dict[str, Any]]:
     return [
         {
@@ -209,7 +217,7 @@ def _csv_row(opp: Opportunity, now: datetime) -> dict[str, Any]:
         "arb_sum_S": round(res.arb_sum_S, 6),
         "roi_decimal": round(res.roi_decimal, 6),
         "total_stake_max": round(res.t_max, 2),
-        "stake_split_json": {leg.book: leg.stake for leg in res.legs},
+        "stake_split_json": _stake_per_book(opp.res.legs),
         "max_profit": round(res.max_profit, 2),
         "binding_book": res.binding_book,
         "min_leg_limit": res.min_leg_limit,

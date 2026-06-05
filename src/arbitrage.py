@@ -15,7 +15,6 @@ Commission on net winnings: o_eff = 1 + (o - 1) * (1 - c).
 from __future__ import annotations
 
 import hashlib
-import itertools
 from dataclasses import dataclass, field
 from typing import Iterable, Optional
 
@@ -101,40 +100,33 @@ def _reps_per_clone_group(cands: list[Candidate]) -> list[Candidate]:
     return list(best.values())
 
 
-def select_legs(
-    outcomes: dict[int, list[Candidate]],
-    top_k: int = 4,
-) -> Optional[list[Candidate]]:
-    """Pick one Candidate per outcome that MINIMISES S, subject to all legs coming
-    from DISTINCT clone groups (a book and its clone may never be two legs of one arb).
+def select_legs(outcomes: dict[int, list[Candidate]]) -> Optional[list[Candidate]]:
+    """Pick the best-priced Candidate for each outcome (clone-aware), MINIMISING S.
 
-    Returns the chosen candidates (even if S >= 1 — the caller decides), or None if
-    any outcome has no eligible candidate.
+    The SAME account may back more than one leg of an arb: e.g. place the Home win on
+    Polymarket and BOTH the Draw and the Away win on 1xBet. Each outcome is therefore
+    chosen independently — best effective odds, then highest limit — with no requirement
+    that legs come from distinct books. (Clones of one book are still collapsed per
+    outcome so a single outcome is never priced from the same liquidity pool twice.)
+
+    Because the legs are independent, picking the best price for every outcome yields the
+    global minimum S directly. Returns the chosen candidates (even if S >= 1 — the caller
+    decides), or None if any outcome has no eligible candidate.
     """
     if not outcomes:
         return None
 
-    per_outcome: list[list[Candidate]] = []
+    chosen: list[Candidate] = []
     for cands in outcomes.values():
         reps = _reps_per_clone_group(cands)
         if not reps:
             return None
-        reps.sort(key=lambda c: c.eff_odds, reverse=True)
-        # Keeping a few alternates per outcome is enough to resolve clone conflicts.
-        per_outcome.append(reps[: max(top_k, len(outcomes) + 1)])
-
-    best_combo: Optional[tuple[Candidate, ...]] = None
-    best_S: Optional[float] = None
-    for combo in itertools.product(*per_outcome):
-        groups = [c.clone_group for c in combo]
-        if len(set(groups)) != len(groups):
-            continue  # two legs share a clone group — invalid
-        S = sum(1.0 / c.eff_odds for c in combo)
-        if best_S is None or S < best_S:
-            best_S = S
-            best_combo = combo
-
-    return list(best_combo) if best_combo is not None else None
+        best = reps[0]
+        for c in reps[1:]:
+            if _better_candidate(c, best):
+                best = c
+        chosen.append(best)
+    return chosen
 
 
 # --------------------------------------------------------------------------- #

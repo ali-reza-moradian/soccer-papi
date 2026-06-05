@@ -83,35 +83,53 @@ def test_commission_reduces_effective_odds():
     assert math.isclose(res.arb_sum_S, expected_S, abs_tol=1e-9)
 
 
-def test_select_legs_rejects_clone_pairing():
-    """A book and its clone must never form two legs of the same arb."""
+def test_select_legs_allows_same_account_for_multiple_legs():
+    """One account may back more than one leg of the same arb (user bets this way)."""
     outcomes = {
         1: [
             _cand(1, "Over", "stake", 2.20, limit=1000, group="stake-group"),
         ],
         2: [
-            # The only Under price is on a clone of stake -> no valid 2-source arb.
+            # Best Under is on the same operator — allowed, not rejected.
             _cand(2, "Under", "stake-clone", 2.20, limit=1000, group="stake-group"),
         ],
     }
     chosen = select_legs(outcomes)
-    assert chosen is None
+    assert chosen is not None
+    assert [c.outcome_name for c in chosen] == ["Over", "Under"]
 
 
-def test_select_legs_prefers_non_clone_combo():
+def test_select_legs_picks_best_price_per_outcome():
     outcomes = {
         1: [
             _cand(1, "Over", "stake", 2.30, limit=1000, group="g1"),
         ],
         2: [
-            _cand(2, "Under", "stake-clone", 2.40, limit=1000, group="g1"),   # clone of leg 1
-            _cand(2, "Under", "pinnacle", 2.05, limit=1000, group="pinnacle"),  # worse but valid
+            _cand(2, "Under", "stake-clone", 2.40, limit=1000, group="g1"),   # same operator, better price
+            _cand(2, "Under", "pinnacle", 2.05, limit=1000, group="pinnacle"),  # worse
         ],
     }
     chosen = select_legs(outcomes)
     assert chosen is not None
-    books = {c.book for c in chosen}
-    assert books == {"stake", "pinnacle"}  # forced to skip the clone
+    by_outcome = {c.outcome_id: c.book for c in chosen}
+    assert by_outcome[2] == "stake-clone"  # best price wins; same-operator pairing is fine
+
+
+def test_select_then_compute_two_legs_on_one_account():
+    """User's case: Home on Polymarket, Draw AND Away both on 1xBet -> still a valid arb."""
+    outcomes = {
+        1: [_cand(1, "1", "polymarket", 2.90, limit=1000, group="polymarket")],
+        2: [_cand(2, "X", "1xbet", 3.70, limit=1000, group="1xbet")],
+        3: [_cand(3, "2", "1xbet", 3.80, limit=1000, group="1xbet")],
+    }
+    chosen = select_legs(outcomes)
+    assert chosen is not None
+    assert [c.book for c in chosen] == ["polymarket", "1xbet", "1xbet"]
+    res = compute_arb(chosen)
+    assert res.is_arb  # 1/2.9 + 1/3.7 + 1/3.8 < 1
+    # Two legs share the 1xbet account; payouts still equalise across all three.
+    payouts = [leg.stake * leg.eff_odds for leg in res.legs]
+    assert max(payouts) - min(payouts) < 1.0
 
 
 def test_unknown_limit_marks_low_confidence():

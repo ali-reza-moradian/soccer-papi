@@ -22,7 +22,9 @@ tournaments:
 
 bookmakers:
   # Books I can actually bet right now (funded accounts). Real arbs use only these.
-  actionable: [pinnacle, 1xbet, kalshi, polymarket]
+  # kalshi temporarily removed (no funds) — still TRACKED so shadow arbs show what it
+  # would add; re-add it here to start placing real bets on it again.
+  actionable: [pinnacle, 1xbet, polymarket]
   # Everything we want stats on. Shadow arbs may use any of these.
   tracked:    [pinnacle, 1xbet, kalshi, polymarket, stake, cloudbet, bcgame, roobet, sx.bet]
   # Treated as betting exchanges: liquidity from exchangeMeta/limit, may charge commission.
