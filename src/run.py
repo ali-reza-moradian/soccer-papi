@@ -9,9 +9,10 @@ import sys
 from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from decimal import Decimal
 from typing import Any, Optional
 
-from . import catalog, normalize
+from . import catalog, formatting as fmt, normalize
 from .arbitrage import ArbResult, Candidate, compute_arb, make_signature, select_legs
 from .config import Config, load_config
 from .csv_store import append_opportunities
@@ -55,6 +56,8 @@ class EngineCtx:
 class Opportunity:
     fixture_id: str
     match: str
+    home_team: str
+    away_team: str
     tournament: str
     kickoff_utc: Optional[str]
     spec: catalog.MarketSpec
@@ -133,29 +136,35 @@ def _arb_for_universe(
 # --------------------------------------------------------------------------- #
 # Logging the full calculation                                                  #
 # --------------------------------------------------------------------------- #
+def _outcome(opp: Opportunity, name: str) -> str:
+    return fmt.outcome_label(name, opp.home_team, opp.away_team, opp.spec.family, opp.spec.line)
+
+
 def _log_arb_calc(log, opp: Opportunity, now: datetime) -> None:
     res = opp.res
-    line_lbl = f" ({opp.spec.family}, {opp.spec.period})"
-    log.info("[ARB] %s | %s%s", opp.match, opp.spec.label, line_lbl)
+    market = fmt.market_label(opp.spec.label, opp.spec.family, opp.spec.line)
+    log.info("[ARB] %s | %s (%s, %s)", opp.match, market, opp.spec.family, opp.spec.period)
     for leg in res.legs:
         age = _leg_age_minutes(leg.changed_at, now)
         age_s = f"changed {age:.0f}m ago" if age is not None else "age n/a"
-        lim_s = f"limit {leg.limit:g}" if leg.limit else "limit n/a"
-        log.info("    %-10s: %.3f @ %-12s (%s, %s)",
-                 leg.outcome_name, leg.decimal_odds, leg.book, lim_s, age_s)
+        lim_s = f"limit {fmt.money(leg.limit)}" if leg.limit else "limit n/a"
+        log.info("    %-14s: %s @ %-12s (%s, %s)",
+                 _outcome(opp, leg.outcome_name), fmt.num2(leg.decimal_odds), leg.book, lim_s, age_s)
     terms = " + ".join(f"1/{leg.eff_odds:.3f}" for leg in res.legs)
     vals = " + ".join(f"{1.0/leg.eff_odds:.4f}" for leg in res.legs)
     verdict = "ARB (S<1)" if res.is_arb else "no arb (S>=1)"
     log.info("    S = %s = %s = %.4f  -> %s", terms, vals, res.arb_sum_S, verdict)
-    log.info("    ROI = 1/S - 1 = %.2f%%", res.roi_pct)
+    log.info("    ROI = 1/S - 1 = %s%%", fmt.num2(res.roi_pct))
     tmax_terms = ", ".join(
-        f"{leg.limit:g}*{leg.eff_odds:.3f}*{res.arb_sum_S:.4f}" for leg in res.legs if leg.limit
+        f"{fmt.money(leg.limit)}*{leg.eff_odds:.3f}*{res.arb_sum_S:.4f}" for leg in res.legs if leg.limit
     )
-    log.info("    T_max = min(%s) = %.1f  (binding: %s)", tmax_terms or "n/a", res.t_max, res.binding_book)
-    stakes = " | ".join(f"{leg.outcome_name} {leg.stake:g} @ {leg.book}" for leg in res.legs)
+    log.info("    T_max = min(%s) = %s  (binding: %s)", tmax_terms or "n/a", fmt.money(res.t_max), res.binding_book)
+    stakes = " | ".join(f"{_outcome(opp, leg.outcome_name)} {fmt.money(leg.stake)} @ {leg.book}" for leg in res.legs)
     log.info("    Stakes @ T_max: %s", stakes)
-    log.info("    Guaranteed profit @ T_max = %.2f (%.2f%%)  [actionable=%s, suspicious=%s, low_conf=%s]",
-             res.max_profit, res.roi_pct, opp.actionable, opp.suspicious, res.low_confidence)
+    total_inv = sum((fmt.dec2(leg.stake) for leg in res.legs), Decimal("0"))
+    log.info("    Total Investment = %s", fmt.money(total_inv))
+    log.info("    Guaranteed profit @ T_max = %s (%s%%)  [actionable=%s, suspicious=%s, low_conf=%s]",
+             fmt.money(res.max_profit), fmt.num2(res.roi_pct), opp.actionable, opp.suspicious, res.low_confidence)
 
 
 # --------------------------------------------------------------------------- #
@@ -164,13 +173,13 @@ def _log_arb_calc(log, opp: Opportunity, now: datetime) -> None:
 def _legs_payload(opp: Opportunity) -> list[dict[str, Any]]:
     return [
         {
-            "outcome": leg.outcome_name,
+            "outcome": _outcome(opp, leg.outcome_name),
             "book": leg.book,
-            "decimal_odds": round(leg.decimal_odds, 4),
+            "decimal_odds": round(leg.decimal_odds, 2),
             "american_odds": leg.american_odds,
-            "limit": leg.limit,
-            "stake": leg.stake,
-            "changed_at": leg.changed_at,
+            "limit": None if leg.limit is None else round(leg.limit, 2),
+            "stake": round(leg.stake, 2),
+            "changed_at": fmt.iso_local(leg.changed_at),
         }
         for leg in opp.res.legs
     ]
@@ -178,21 +187,20 @@ def _legs_payload(opp: Opportunity) -> list[dict[str, Any]]:
 
 def _csv_row(opp: Opportunity, now: datetime) -> dict[str, Any]:
     res = opp.res
-    kickoff_dt = _parse_iso(opp.kickoff_utc)
     legs = _legs_payload(opp)
     return {
-        "detected_at_utc": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "detected_at_et": fmt.iso_local(now),
         "signature": opp.signature,
         "actionable": opp.actionable,
         "bookmakers": ", ".join(leg.book for leg in res.legs),
-        "market": opp.spec.label,
-        "event_date": kickoff_dt.strftime("%Y-%m-%d") if kickoff_dt else "",
-        "roi_pct": round(res.roi_pct, 4),
+        "market": fmt.market_label(opp.spec.label, opp.spec.family, opp.spec.line),
+        "event_date": fmt.date_local(opp.kickoff_utc),
+        "roi_pct": round(res.roi_pct, 2),
         "max_liquidity": round(res.t_max, 2),
         "match": opp.match,
         "fixture_id": opp.fixture_id,
         "tournament": opp.tournament,
-        "kickoff_utc": opp.kickoff_utc or "",
+        "kickoff_et": fmt.iso_local(opp.kickoff_utc),
         "market_id": opp.spec.market_id,
         "market_type": opp.spec.family,
         "period": opp.spec.period,
@@ -217,9 +225,13 @@ def _telegram_item(opp: Opportunity) -> dict[str, Any]:
     res = opp.res
     return {
         "match": opp.match,
+        "home_team": opp.home_team,
+        "away_team": opp.away_team,
         "tournament": opp.tournament,
         "kickoff_utc": opp.kickoff_utc,
         "market": opp.spec.label,
+        "market_family": opp.spec.family,
+        "market_line": opp.spec.line,
         "roi_pct": res.roi_pct,
         "max_liquidity": res.t_max,
         "max_profit": res.max_profit,
@@ -359,7 +371,8 @@ def _fetch_odds_per_book(client, cfg, tournament_ids, books, start_remaining, sa
 def run_cycle(cfg: Config, log) -> int:
     now = datetime.now(timezone.utc)
     log.info("=" * 78)
-    log.info("SCAN @ %s | window %s -> %s", now.strftime("%Y-%m-%dT%H:%M:%SZ"), cfg.from_utc, cfg.to_utc)
+    log.info("SCAN @ %s | window %s -> %s (Eastern Time)",
+             fmt.fmt_dt(now), fmt.fmt_dt(cfg.from_utc), fmt.fmt_dt(cfg.to_utc))
 
     if not cfg.secrets.odds_papi_key:
         log.error("ODDS_PAPI_KEY not set — cannot run.")
@@ -513,7 +526,8 @@ def _scan(feeds, specs, ctx, cfg, by_fixture, by_participant, now, log):
         if to_dt and start > to_dt:
             continue
 
-        match = _match_name(fx, by_fixture, by_participant)
+        home_team, away_team = _teams(fx, by_fixture, by_participant)
+        match = f"{home_team} vs {away_team}"
         info = by_fixture.get(fx.fixture_id, {})
         if info.get("status_id") in (2, 3):  # cancelled per the name map (e.g. struck-through fixture)
             stats["fixtures_skipped_status"] += 1
@@ -561,9 +575,10 @@ def _scan(feeds, specs, ctx, cfg, by_fixture, by_participant, now, log):
                 bet_links = {leg.book: fx.fixture_paths.get(leg.book, "") for leg in res.legs}
 
                 opp = Opportunity(
-                    fixture_id=fx.fixture_id, match=match, tournament=tournament,
-                    kickoff_utc=fx.start_time, spec=spec, res=res, actionable=actionable,
-                    shadow_books=shadow_books, suspicious=suspicious, bet_links=bet_links, signature=sig,
+                    fixture_id=fx.fixture_id, match=match, home_team=home_team, away_team=away_team,
+                    tournament=tournament, kickoff_utc=fx.start_time, spec=spec, res=res,
+                    actionable=actionable, shadow_books=shadow_books, suspicious=suspicious,
+                    bet_links=bet_links, signature=sig,
                 )
                 prev = opportunities.get(sig)
                 if prev is None or (actionable and not prev.actionable):
@@ -602,13 +617,19 @@ def _scan(feeds, specs, ctx, cfg, by_fixture, by_participant, now, log):
     return list(opportunities.values()), stats
 
 
-def _match_name(fx: FixtureFeed, by_fixture: dict, by_participant: dict) -> str:
+def _teams(fx: FixtureFeed, by_fixture: dict, by_participant: dict) -> tuple[str, str]:
+    """Return (home, away) team names — home is participant1, away is participant2."""
     info = by_fixture.get(fx.fixture_id)
     if info and info.get("p1") and info.get("p2"):
-        return f"{info['p1']} vs {info['p2']}"
-    p1 = by_participant.get(str(fx.participant1_id), f"Team {fx.participant1_id}")
-    p2 = by_participant.get(str(fx.participant2_id), f"Team {fx.participant2_id}")
-    return f"{p1} vs {p2}"
+        return str(info["p1"]), str(info["p2"])
+    home = by_participant.get(str(fx.participant1_id), f"Team {fx.participant1_id}")
+    away = by_participant.get(str(fx.participant2_id), f"Team {fx.participant2_id}")
+    return str(home), str(away)
+
+
+def _match_name(fx: FixtureFeed, by_fixture: dict, by_participant: dict) -> str:
+    home, away = _teams(fx, by_fixture, by_participant)
+    return f"{home} vs {away}"
 
 
 def _rank_key(cfg: Config):
@@ -638,7 +659,7 @@ def _emit(opportunities, stats, cfg: Config, now, client, log):
     sent = 0
     if top and not cfg.dry_run:
         if cfg.secrets.telegram_ready:
-            header = (f"⚽ <b>Arb scan</b> — {now.strftime('%Y-%m-%d %H:%M UTC')}\n"
+            header = (f"⚽ <b>Arb scan</b> — {fmt.fmt_dt(now)}\n"
                       f"{stats['real_arbs']} real · {stats['shadow_arbs']} shadow · "
                       f"top {len(top)} below")
             msg = build_message([_telegram_item(o) for o in top], header,
@@ -653,7 +674,7 @@ def _emit(opportunities, stats, cfg: Config, now, client, log):
         log.info("No opportunities to send to Telegram this cycle.")
         if cfg.telegram_opt("send_when_empty", False) and cfg.secrets.telegram_ready and not cfg.dry_run:
             send_message(cfg.secrets.telegram_bot_key, cfg.secrets.telegram_group_id,
-                         f"⚽ Arb scan {now.strftime('%H:%M UTC')}: no opportunities this cycle.", log)
+                         f"⚽ Arb scan {fmt.fmt_time(now)}: no opportunities this cycle.", log)
 
     # --- Summary ---
     log.info("-" * 78)

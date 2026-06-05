@@ -212,7 +212,7 @@ def test_fixture_list_handles_shapes():
 def test_csv_dedup_updates_within_window():
     with tempfile.TemporaryDirectory() as d:
         path = os.path.join(d, "arb.csv")
-        row = {"signature": "abc", "detected_at_utc": NOW.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        row = {"signature": "abc", "detected_at_et": NOW.strftime("%Y-%m-%dT%H:%M:%SZ"),
                "roi_pct": 3.7, "match": "USA vs Germany", "market": "O/U 2.5"}
         c1 = append_opportunities(path, [row], NOW, dedup_minutes=90)
         assert c1 == {"new": 1, "updated": 0}

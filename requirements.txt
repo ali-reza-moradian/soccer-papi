@@ -1,6 +1,9 @@
 requests>=2.31,<3
 tenacity>=8.2,<9
 PyYAML>=6.0,<7
+# IANA timezone database so zoneinfo can resolve America/Toronto on any host
+# (e.g. minimal CI images / Windows that ship no system tz database).
+tzdata>=2024.1
 
 # dev / test
 pytest>=7.4

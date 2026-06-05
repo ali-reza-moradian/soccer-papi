@@ -12,19 +12,19 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 COLUMNS = [
-    "detected_at_utc",
+    "detected_at_et",    # Eastern Time (America/Toronto), ISO-8601 with offset
     "status",            # NEW | UPDATED
     "signature",
     "actionable",
     "bookmakers",
     "market",
-    "event_date",
+    "event_date",        # Eastern calendar date of kickoff
     "roi_pct",
     "max_liquidity",
     "match",
     "fixture_id",
     "tournament",
-    "kickoff_utc",
+    "kickoff_et",        # Eastern Time (America/Toronto), ISO-8601 with offset
     "market_id",
     "market_type",
     "period",
@@ -100,7 +100,7 @@ def append_opportunities(
         prev_i = last_idx_by_sig.get(sig)
         fresh = False
         if prev_i is not None:
-            prev_dt = _parse_iso(existing[prev_i].get("detected_at_utc", ""))
+            prev_dt = _parse_iso(existing[prev_i].get("detected_at_et", ""))
             if prev_dt is not None:
                 age_min = (now - prev_dt).total_seconds() / 60.0
                 fresh = age_min <= dedup_minutes

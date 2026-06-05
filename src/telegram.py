@@ -6,16 +6,13 @@ from __future__ import annotations
 
 import html
 import logging
-from datetime import datetime, timezone
-from typing import Any, Optional
-
-try:
-    from zoneinfo import ZoneInfo
-except ImportError:  # pragma: no cover
-    ZoneInfo = None  # type: ignore
+from decimal import Decimal
+from typing import Any
 
 import requests
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_fixed
+
+from . import formatting as fmt
 
 TELEGRAM_API = "https://api.telegram.org/bot{token}/sendMessage"
 
@@ -24,24 +21,7 @@ def _esc(text: Any) -> str:
     return html.escape(str(text), quote=False)
 
 
-def _fmt_kickoff(kickoff_utc: Optional[str], local_tz: str) -> str:
-    if not kickoff_utc:
-        return "?"
-    try:
-        dt = datetime.fromisoformat(kickoff_utc.replace("Z", "+00:00"))
-    except ValueError:
-        return _esc(kickoff_utc)
-    utc_s = dt.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-    if ZoneInfo is not None:
-        try:
-            local = dt.astimezone(ZoneInfo(local_tz))
-            return f"{utc_s} / {local.strftime('%H:%M %Z')}"
-        except Exception:  # pragma: no cover - bad tz name
-            pass
-    return utc_s
-
-
-def format_opportunity(arb: dict[str, Any], local_tz: str) -> str:
+def format_opportunity(arb: dict[str, Any], local_tz: str = fmt.LOCAL_TZ_NAME) -> str:
     """Build an HTML message body for one opportunity from its CSV-row dict."""
     flags = []
     if arb.get("suspicious"):
@@ -54,30 +34,42 @@ def format_opportunity(arb: dict[str, Any], local_tz: str) -> str:
         flags.append("👀 shadow")
     flag_line = ("  " + " · ".join(flags)) if flags else ""
 
+    home = arb.get("home_team") or ""
+    away = arb.get("away_team") or ""
+    family = arb.get("market_family") or ""
+    line = arb.get("market_line")
+    market = fmt.market_label(arb.get("market", ""), family, line)
+
     lines = [
         f"<b>{_esc(arb.get('match', '?'))}</b>{flag_line}",
-        f"🕑 {_fmt_kickoff(arb.get('kickoff_utc'), local_tz)}",
+        f"🕑 {_esc(fmt.fmt_dt(arb.get('kickoff_utc'), local_tz))}",
         f"🏆 {_esc(arb.get('tournament', ''))}",
-        f"📊 <b>{_esc(arb.get('market', ''))}</b>",
+        f"📊 <b>{_esc(market)}</b>",
     ]
 
     legs = arb.get("legs", [])
+    total_investment = Decimal("0")
     for leg in legs:
+        outcome = fmt.outcome_label(leg.get("outcome", ""), home, away, family, line)
         limit = leg.get("limit")
-        limit_s = f"limit {limit:g}" if isinstance(limit, (int, float)) and limit else "limit n/a"
+        limit_s = f"limit {fmt.money(limit)}" if isinstance(limit, (int, float)) and limit else "limit n/a"
         stake = leg.get("stake")
-        stake_s = f" → stake {stake:g}" if isinstance(stake, (int, float)) else ""
+        stake_s = ""
+        if isinstance(stake, (int, float)):
+            stake_s = f" → stake {fmt.money(stake)}"
+            total_investment += fmt.dec2(stake)
         lines.append(
-            f"  • {_esc(leg.get('book'))} — {_esc(leg.get('outcome'))} "
-            f"@ <b>{leg.get('decimal_odds'):g}</b> ({_esc(limit_s)}){stake_s}"
+            f"  • {_esc(leg.get('book'))} — {_esc(outcome)} "
+            f"@ <b>{fmt.num2(leg.get('decimal_odds'))}</b> ({_esc(limit_s)}){stake_s}"
         )
 
     roi = arb.get("roi_pct")
     tmax = arb.get("max_liquidity")
     profit = arb.get("max_profit")
     lines.append(
-        f"💰 ROI <b>{roi:.2f}%</b> · T_max <b>{tmax:g}</b> · profit <b>{profit:g}</b>"
+        f"💰 ROI <b>{fmt.num2(roi)}%</b> · T_max <b>{fmt.money(tmax)}</b> · profit <b>{fmt.money(profit)}</b>"
     )
+    lines.append(f"💵 <b>Total Investment: {fmt.money(total_investment)}</b>")
 
     links = arb.get("bet_links", {})
     if links:

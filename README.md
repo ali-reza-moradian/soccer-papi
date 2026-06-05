@@ -145,10 +145,17 @@ keyed by a stable `signature` (fixture + market + line + sorted leg books + roun
 signature re-seen within `csv_dedup_minutes` (90) **updates in place** instead of duplicating.
 
 Columns include the required `bookmakers, market, event_date, roi_pct, max_liquidity` plus
-`detected_at_utc, status, signature, actionable, match, fixture_id, tournament, kickoff_utc,
+`detected_at_et, status, signature, actionable, match, fixture_id, tournament, kickoff_et,
 market_id, market_type, period, line, legs_json, arb_sum_S, roi_decimal, total_stake_max,
 stake_split_json, max_profit, binding_book, min_leg_limit, shadow_books, involves_exchange,
 low_confidence, suspicious, bet_links_json`.
+
+All timestamps everywhere — Telegram alerts, console logs, CSV (`detected_at_et`, `kickoff_et`,
+`event_date`) and the logged scan window — are converted to **Eastern Time (America/Toronto)** via
+`zoneinfo`, so UTC never surfaces. Money fields (stake, limit, T_max, profit, Total Investment) are
+shown as `$X.XX`, truncated to two decimals. In alerts the `1/X/2` symbols are replaced by the home
+team / `Draw` / away team, and a market's line is made explicit (e.g. `Asian Handicap (-1.5)`,
+`Total Goals (Over 2.5)`).
 
 ---
 
