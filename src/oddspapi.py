@@ -121,10 +121,14 @@ class OddsPapiClient:
         limit = active.get("request_limit")
         count = active.get("request_count")
         remaining = (limit - count) if (limit is not None and count is not None) else None
+        # The subscription's `bookmakers` map tells us which books this plan can query.
+        grant = active.get("bookmakers")
+        granted_books = sorted(grant.keys()) if isinstance(grant, dict) else None
         return {
             "limit": limit,
             "count": count,
             "remaining": remaining,
+            "bookmakers": granted_books,   # None if the plan doesn't enumerate them
             "subscription_id": active.get("subscription_id"),
             "valid_until": active.get("valid_until"),
         }
@@ -167,14 +171,17 @@ class OddsPapiClient:
     def odds_by_tournaments(
         self,
         tournament_ids: list[int] | str,
-        bookmakers: list[str] | None = None,
+        bookmaker: str | None = None,
         verbosity: int = 3,
         odds_format: str = "decimal",
         language: str = "en",
     ) -> Any:
-        """The workhorse: one billable call returns every book's odds for the leagues.
+        """Odds for all events in the given leagues, for ONE bookmaker, in one billable call.
 
-        Omitting `bookmakers` returns ALL bookmakers for the same cost — we always do that.
+        NOTE: although the public docs say `bookmakers` is optional (omit = all books), the
+        live free/standard subscription rejects that with 400 INVALID_PARAMETER and requires
+        EXACTLY ONE book via the singular `bookmaker` query param. So cross-book arbitrage
+        costs one request per book — the caller loops over the books it wants (budget-capped).
         """
         ids = tournament_ids if isinstance(tournament_ids, str) else ",".join(str(i) for i in tournament_ids)
         params: dict[str, Any] = {
@@ -183,8 +190,8 @@ class OddsPapiClient:
             "oddsFormat": odds_format,
             "language": language,
         }
-        if bookmakers:
-            params["bookmakers"] = ",".join(bookmakers)
+        if bookmaker:
+            params["bookmaker"] = bookmaker
         return self._get("/v4/odds-by-tournaments", params)
 
     def odds(self, fixture_id: str, verbosity: int = 3, odds_format: str = "decimal", language: str = "en") -> Any:

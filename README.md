@@ -26,9 +26,9 @@ the **FIFA World Cup** by changing config / tournament IDs only.
         │
 cached catalogs  ──►  markets (MECE classifier) · bookmakers (clone map) · tournaments (friendlies IDs)
         │
-/v4/fixtures (≤1, cached ≤6h)  ──►  fixtureId → human team names
+/v4/fixtures (≤1/tournament, cached ≤6h)  ──►  fixtureId → human team names
         │
-/v4/odds-by-tournaments (1 billable, ALL books)  ──►  every book's odds under one canonical fixtureId
+/v4/odds-by-tournaments × N books (1 billable PER book)  ──►  merged under one canonical fixtureId
         │
 normalize  ──►  per fixture / per marketId / per outcomeId  best-price table across books
         │
@@ -45,8 +45,15 @@ CSV append (signature dedup)  +  Telegram top 3  +  full-calc logs + summary
 git commit data/ back to main  ([skip ci])
 ```
 
-Because omitting `bookmakers` from `odds-by-tournaments` returns **all** books for the same
-1-request cost, every scan stores odds for every book and computes both real and shadow arbs.
+> **Important — free/standard tier reality.** The public docs say `bookmakers` is optional and
+> omitting it returns all books in one call. In practice the live free/standard subscription
+> **rejects that** (`400 INVALID_PARAMETER`) and returns **exactly one bookmaker per call** via a
+> singular `bookmaker` param — and only for the books your subscription grants. So cross-book
+> arbitrage costs **one request per book**: the scanner fetches up to `budget.max_books_per_cycle`
+> books (actionable first), merges them onto each canonical fixture, then computes real + shadow
+> arbs. The bot logs which books your plan grants (read for free from `/v4/account`) and **exits
+> without spending any odds requests if fewer than 2 usable books are available** (you can't arb
+> one book).
 
 ---
 
@@ -200,8 +207,15 @@ Key knobs (see the file for all defaults):
   (no billable calls, build not failed).
 - **Static catalogs are cached** in `data/cache/` and refreshed by the separate
   `refresh-catalog` workflow only — not on every scan.
-- **Each scan ≈ 1 billable request** (`odds-by-tournaments`, all books). The fixtures name map
-  costs at most 1 extra request every `names_cache_hours` (6).
+- **Each scan costs ~`max_books_per_cycle` requests** (one `odds-by-tournaments` call per book;
+  default 4). The fixtures name map costs 1 request **per pinned tournament**, at most once every
+  `names_cache_hours` (6) — so 2 pinned tournaments = 2 extra requests on a refresh cycle.
+- A run can never overspend: the fetch loop stops as soon as the per-run budget would hit the
+  safety margin, and the pre-flight guard skips the whole scan when the monthly quota is low.
+- **Cadence vs. longevity:** the budget guard prevents *overspend*, but cadence controls how long
+  250 requests last. At 4 books/cycle, the default 3-hour cron ≈ 32 req/day. Raise the cron
+  frequency for a live burst, or `max_books_per_cycle` for more coverage — both cost more/month.
+  *Upgrading the OddsPapi plan is what unlocks more books per call / a higher quota.*
 - Cooldowns are respected (1000 ms; 2000 ms for `/v4/fixtures`). A 429 stops the run immediately.
 
 ### Future upgrade

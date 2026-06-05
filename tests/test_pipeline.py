@@ -151,6 +151,64 @@ def test_stale_legs_are_skipped():
     assert stats["real_arbs"] == 0
 
 
+class _FakeOddsClient:
+    """Returns a different single-book payload per `bookmaker`, like the free tier does."""
+
+    def __init__(self, per_book):
+        self.per_book = per_book
+        self.billable_count = 0
+
+    def odds_by_tournaments(self, ids, bookmaker=None, verbosity=3, odds_format="decimal", language="en"):
+        self.billable_count += 1
+        return self.per_book.get(bookmaker, [])
+
+
+def _one_book_payload(book, over_price, under_price):
+    return [{
+        "fixtureId": "fx1", "participant1Id": 35, "participant2Id": 34, "tournamentId": 17,
+        "statusId": 0, "hasOdds": True, "startTime": KICKOFF, "updatedAt": RECENT,
+        "bookmakerOdds": {book: {"bookmakerIsActive": True, "suspended": False, "fixturePath": book,
+            "markets": {"106": {"marketActive": True, "outcomes": {
+                "1": {"players": _player(over_price, 1500)},
+                "2": {"players": _player(under_price, 5000)}}}}}},
+    }]
+
+
+def test_fetch_odds_per_book_merges_books_onto_one_fixture():
+    from src.run import _fetch_odds_per_book
+    client = _FakeOddsClient({
+        "pinnacle": _one_book_payload("pinnacle", 2.10, 1.55),
+        "1xbet": _one_book_payload("1xbet", 1.55, 2.05),
+    })
+    feeds, fetched, returning = _fetch_odds_per_book(
+        client, _cfg(), [17], ["pinnacle", "1xbet"], start_remaining=200, safety=15, log=get_logger("t"))
+    assert client.billable_count == 2
+    assert fetched == ["pinnacle", "1xbet"]
+    assert returning == ["pinnacle", "1xbet"]
+    assert len(feeds) == 1
+    # Both single-book calls merged onto the same canonical fixture.
+    assert feeds[0].books_present == {"pinnacle", "1xbet"}
+
+
+def test_fetch_stops_at_budget_margin():
+    from src.run import _fetch_odds_per_book
+    client = _FakeOddsClient({b: _one_book_payload(b, 2.0, 2.0) for b in ["a", "b", "c", "d"]})
+    # start_remaining 17, safety 15 -> can afford exactly 2 calls (17->16->stop at 15).
+    feeds, fetched, returning = _fetch_odds_per_book(
+        client, _cfg(), [17], ["a", "b", "c", "d"], start_remaining=17, safety=15, log=get_logger("t"))
+    assert client.billable_count == 2
+    assert fetched == ["a", "b"]
+
+
+def test_fixture_list_handles_shapes():
+    from src.run import _fixture_list
+    assert _fixture_list([{"fixtureId": "x"}]) == [{"fixtureId": "x"}]
+    assert _fixture_list({"fixtures": [{"fixtureId": "y"}]}) == [{"fixtureId": "y"}]
+    keyed = {"id1": {"fixtureId": "id1", "bookmakerOdds": {}}}
+    assert _fixture_list(keyed) == [{"fixtureId": "id1", "bookmakerOdds": {}}]
+    assert _fixture_list(None) == []
+
+
 def test_csv_dedup_updates_within_window():
     with tempfile.TemporaryDirectory() as d:
         path = os.path.join(d, "arb.csv")

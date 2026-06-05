@@ -17,7 +17,7 @@ from .config import Config, load_config
 from .csv_store import append_opportunities
 from .logsetup import setup_logging
 from .normalize import FixtureFeed, RawCandidate, exchange_liquidity
-from .oddspapi import OddsPapiClient, QuotaExceeded, check_budget
+from .oddspapi import OddsPapiClient, OddsPapiError, QuotaExceeded, check_budget
 from .telegram import build_message, send_message
 
 
@@ -281,6 +281,79 @@ def _resolve_tournaments(cfg: Config, tournaments_json, log) -> tuple[list[int],
 
 
 # --------------------------------------------------------------------------- #
+# Per-book odds fetch (free tier returns one bookmaker per call)                #
+# --------------------------------------------------------------------------- #
+def _fixture_list(payload: Any) -> list[dict[str, Any]]:
+    """Coerce an odds payload into a list of fixture dicts (handles list / wrapped / keyed)."""
+    if isinstance(payload, list):
+        return [f for f in payload if isinstance(f, dict)]
+    if isinstance(payload, dict):
+        inner = payload.get("fixtures") or payload.get("data")
+        if isinstance(inner, list):
+            return [f for f in inner if isinstance(f, dict)]
+        vals = list(payload.values())
+        if vals and all(isinstance(v, dict) for v in vals) and any(
+            ("bookmakerOdds" in v or "fixtureId" in v) for v in vals
+        ):
+            return vals
+    return []
+
+
+def _fetch_odds_per_book(client, cfg, tournament_ids, books, start_remaining, safety, log):
+    """One odds-by-tournaments call per book; merge each book's odds onto the shared fixture.
+
+    Returns (feeds, fetched_books, returning_books). Stops early if the per-run budget would
+    dip to the safety margin, so a single run can never blow the monthly quota.
+    """
+    verbosity = int(cfg.api_opt("odds_verbosity", 3))
+    odds_format = str(cfg.api_opt("odds_format", "decimal"))
+    raw_by_fixture: dict[str, dict[str, Any]] = {}
+    fetched: list[str] = []
+    returning: list[str] = []
+
+    for book in books:
+        if start_remaining is not None and (start_remaining - client.billable_count) <= safety:
+            log.warning("Budget safety margin reached after %s book(s); stopping odds fetch.", len(fetched))
+            break
+        try:
+            payload = client.odds_by_tournaments(tournament_ids, bookmaker=book,
+                                                 verbosity=verbosity, odds_format=odds_format)
+        except QuotaExceeded:
+            log.warning("Quota hit fetching %s — stopping odds fetch.", book)
+            break
+        except OddsPapiError as exc:
+            # e.g. a book outside the plan; count it as attempted and move on.
+            log.warning("Skipping %s: %s", book, exc)
+            fetched.append(book)
+            continue
+
+        fetched.append(book)
+        fixtures = _fixture_list(payload)
+        had_data = False
+        for fx in fixtures:
+            fid = fx.get("fixtureId")
+            if not fid:
+                continue
+            fid = str(fid)
+            book_odds = fx.get("bookmakerOdds") or {}
+            if fid not in raw_by_fixture:
+                merged = dict(fx)
+                merged["bookmakerOdds"] = dict(book_odds)
+                raw_by_fixture[fid] = merged
+            else:
+                raw_by_fixture[fid]["bookmakerOdds"].update(book_odds)
+            if book_odds:
+                had_data = True
+        if had_data:
+            returning.append(book)
+        log.info("  fetched %-14s -> %s fixture(s)%s", book, len(fixtures),
+                 "" if had_data else " (no odds for this book in window)")
+
+    feeds = normalize.parse_odds_payload(list(raw_by_fixture.values()))
+    return feeds, fetched, returning
+
+
+# --------------------------------------------------------------------------- #
 # Main cycle                                                                     #
 # --------------------------------------------------------------------------- #
 def run_cycle(cfg: Config, log) -> int:
@@ -325,36 +398,65 @@ def run_cycle(cfg: Config, log) -> int:
     if not tournament_ids:
         return 0
 
-    # 4) Names map (cached; refresh at most every names_cache_hours) -------------
+    # 3b) Which books can we query, and afford this cycle? -----------------------
+    # Free/standard plans return ONE bookmaker per odds call, so each book = 1 request.
+    granted = acct.get("bookmakers")
+    if granted:
+        log.info("Plan grants %s bookmaker(s): %s", len(granted), ", ".join(granted))
+    else:
+        log.info("Plan does not enumerate bookmakers; will try the configured ones.")
+    # Actionable books first (they drive real arbs), then any extra tracked books.
+    fetch_order = cfg.actionable_books + [b for b in cfg.tracked_books if b not in cfg.actionable_books]
+    if granted:
+        grant_set = set(granted)
+        usable = [b for b in fetch_order if b in grant_set]
+        blocked = [b for b in fetch_order if b not in grant_set]
+        if blocked:
+            log.info("Configured books NOT in your plan (skipped): %s", blocked)
+    else:
+        usable = list(fetch_order)
+    if len(usable) < 2:
+        log.warning("Only %s usable bookmaker(s): %s. Arbitrage needs >=2 distinct books, so there is "
+                    "nothing to compute. Upgrade the plan / enable more books, then re-run. "
+                    "Exiting now (0 billable odds requests spent).", len(usable), usable or "none")
+        return 0
+    max_books = int(cfg.budget_opt("max_books_per_cycle", 4))
+    to_fetch = usable[:max_books]
+    if len(usable) > len(to_fetch):
+        log.info("Budget cap max_books_per_cycle=%s -> fetching %s of %s usable books this cycle: %s",
+                 max_books, len(to_fetch), len(usable), to_fetch)
+
+    # 4) Names map (cached; refresh at most every names_cache_hours, budget permitting) --
     names = catalog.load_json(cfg.cache_dir, catalog.NAMES_FILE) or {}
     names_age = catalog.file_age_hours(cfg.cache_dir, catalog.NAMES_FILE, now.timestamp())
     names_ttl = float(cfg.budget_opt("names_cache_hours", 6))
+    remaining = acct.get("remaining")
     if names_age is None or names_age > names_ttl:
-        try:
-            log.info("Refreshing fixtures name map (cache age=%s, ttl=%sh).",
-                     f"{names_age:.1f}h" if names_age is not None else "missing", names_ttl)
-            names = catalog.refresh_names(client, cfg.cache_dir, cfg.sport_id, tournament_ids,
-                                          cfg.from_utc, cfg.to_utc, now.timestamp())
-        except QuotaExceeded:
-            log.warning("Quota hit while refreshing names — continuing with cached/empty names.")
+        if remaining is not None and (remaining - client.billable_count) <= safety + len(to_fetch):
+            log.warning("Skipping names refresh to preserve odds budget (remaining=%s).", remaining)
+        else:
+            try:
+                log.info("Refreshing fixtures name map (cache age=%s, ttl=%sh).",
+                         f"{names_age:.1f}h" if names_age is not None else "missing", names_ttl)
+                names = catalog.refresh_names(client, cfg.cache_dir, cfg.sport_id, tournament_ids,
+                                              cfg.from_utc, cfg.to_utc, now.timestamp())
+            except QuotaExceeded:
+                log.warning("Quota hit while refreshing names — continuing with cached/empty names.")
     by_fixture = names.get("by_fixture", {})
     by_participant = names.get("by_participant", {})
 
-    # 5) The one billable workhorse call -----------------------------------------
-    try:
-        payload = client.odds_by_tournaments(
-            tournament_ids,
-            verbosity=int(cfg.api_opt("odds_verbosity", 3)),
-            odds_format=str(cfg.api_opt("odds_format", "decimal")),
-        )
-    except QuotaExceeded:
-        log.warning("Quota hit on odds-by-tournaments. Exiting cleanly.")
-        return 0
+    # 5) Odds — ONE billable call per book, merged across books ------------------
+    start_remaining = acct.get("remaining")
+    feeds, fetched_books, returning_books = _fetch_odds_per_book(
+        client, cfg, tournament_ids, to_fetch, start_remaining, safety, log)
+    log.info("Odds fetch: %s book-call(s); %s returned odds (%s).",
+             len(fetched_books), len(returning_books), ", ".join(returning_books) or "none")
+    if len(returning_books) < 2:
+        log.warning("Fewer than 2 books returned odds this cycle (%s) -> no cross-book arbitrage possible.",
+                    returning_books or "none")
 
-    feeds = normalize.parse_odds_payload(payload)
     seen_mids = normalize.seen_market_ids(feeds)
-    log.info("Feed: %s fixtures returned. Distinct marketIds seen: %s",
-             len(feeds), sorted(seen_mids))
+    log.info("Feed: %s fixtures with odds. Distinct marketIds seen: %s", len(feeds), sorted(seen_mids))
     missing = [mid for mid in seen_mids if mid not in specs]
     if missing:
         log.info("marketIds seen but NOT scanned (player-prop/excluded/unclassified): %s", sorted(missing))
