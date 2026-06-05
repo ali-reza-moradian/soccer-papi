@@ -44,7 +44,8 @@ thresholds:
   roi_suspicious_pct: 8.0            # above this → flag suspicious (likely stale/error line)
   min_total_stake: 20                # ignore arbs whose T_max is below this (liquidity junk)
   max_leg_age_minutes: 20            # skip any leg whose price changedAt is older than this
-  near_miss_ceiling_S: 1.02          # log markets with 1.00 <= S <= this at debug (engine sanity)
+  near_miss_ceiling_S: 1.02          # count markets with 1.00 <= S <= this as near-misses
+  closest_report_count: 10           # how many "closest to an arb" markets to print each run
   csv_dedup_minutes: 90              # same signature seen within this window → UPDATE row, don't duplicate
   unknown_limit_fallback: 100        # T_max fallback when NO leg has a known limit (marks low_confidence)
 

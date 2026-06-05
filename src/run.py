@@ -488,13 +488,16 @@ def _scan(feeds, specs, ctx, cfg, by_fixture, by_participant, now, log):
     near_ceiling = float(cfg.threshold("near_miss_ceiling_S", 1.02))
 
     opportunities: dict[str, Opportunity] = {}
+    closest: list[tuple] = []  # (S, roi_pct, match, label, leg_summary, t_max, is_arb)
     stats = {
         "fixtures_in_window": 0,
         "fixtures_skipped_status": 0,
         "markets_scanned": 0,
+        "markets_complete": 0,
         "real_arbs": 0,
         "shadow_arbs": 0,
         "near_misses": 0,
+        "arbs_below_threshold": 0,
         "shadow_book_counter": Counter(),
     }
 
@@ -531,14 +534,22 @@ def _scan(feeds, specs, ctx, cfg, by_fixture, by_participant, now, log):
             real = _arb_for_universe(raw_market, spec, ctx.actionable, ctx, now)
             shadow = _arb_for_universe(raw_market, spec, ctx.tracked, ctx, now)
 
+            # The broadest complete result for this market — used for diagnostics so we can
+            # SEE how close the market got, even when nothing clears the arb threshold.
+            probe = shadow if shadow is not None else real
+            if probe is not None:
+                stats["markets_complete"] += 1
+                leg_summary = " | ".join(f"{lg.outcome_name} {lg.decimal_odds:g}@{lg.book}"
+                                         for lg in probe.legs)
+                closest.append((probe.arb_sum_S, probe.roi_pct, match, spec.label,
+                                leg_summary, probe.t_max, probe.is_arb))
+                if not probe.is_arb and probe.arb_sum_S <= near_ceiling:
+                    stats["near_misses"] += 1
+                if probe.is_arb and (probe.roi_pct < min_roi or probe.t_max < min_stake):
+                    stats["arbs_below_threshold"] += 1
+
             for res in (real, shadow):
-                if res is None:
-                    continue
-                if not res.is_arb:
-                    if res.arb_sum_S <= near_ceiling:
-                        stats["near_misses"] += 1
-                        log.debug("  near-miss %s %s: S=%.4f (ROI %.2f%%)",
-                                  match, spec.label, res.arb_sum_S, res.roi_pct)
+                if res is None or not res.is_arb:
                     continue
                 if res.roi_pct < min_roi or res.t_max < min_stake:
                     continue
@@ -570,6 +581,23 @@ def _scan(feeds, specs, ctx, cfg, by_fixture, by_participant, now, log):
     # Log the full calc for each (deduped) opportunity.
     for opp in sorted(opportunities.values(), key=lambda o: o.res.max_profit, reverse=True):
         _log_arb_calc(log, opp, now)
+
+    # Diagnostic: the markets that came CLOSEST to an arb (lowest S). This proves the engine
+    # is computing on live odds even when zero arbs clear, and reveals near-fair markets.
+    n_report = int(cfg.threshold("closest_report_count", 10))
+    if closest:
+        closest.sort(key=lambda c: c[0])  # ascending S — lowest first
+        log.info("-" * 78)
+        log.info("CLOSEST MARKETS to an arb (lowest implied-probability sum S; S<1 would be an arb):")
+        for S, roi, match, label, legs, t_max, is_arb in closest[:n_report]:
+            tag = ""
+            if is_arb:
+                tag = "  <-- ARB but below ROI/stake floor"
+            log.info("  S=%.4f (ROI %+.2f%%)%s | %s | %s | %s",
+                     S, roi, tag, match, label, legs)
+        best_S = closest[0][0]
+        log.info("Best market was S=%.4f -> overround %.2f%% (need S<1.0000 for a riskless arb).",
+                 best_S, (best_S - 1.0) * 100.0)
 
     return list(opportunities.values()), stats
 
@@ -629,10 +657,12 @@ def _emit(opportunities, stats, cfg: Config, now, client, log):
 
     # --- Summary ---
     log.info("-" * 78)
-    log.info("SUMMARY: %s fixtures in window | %s skipped(status) | %s markets scanned",
-             stats["fixtures_in_window"], stats["fixtures_skipped_status"], stats["markets_scanned"])
-    log.info("         %s real arbs | %s shadow arbs | %s near-misses | %s sent to Telegram",
-             stats["real_arbs"], stats["shadow_arbs"], stats["near_misses"], sent)
+    log.info("SUMMARY: %s fixtures in window | %s skipped(status) | %s markets scanned (%s complete)",
+             stats["fixtures_in_window"], stats["fixtures_skipped_status"],
+             stats["markets_scanned"], stats.get("markets_complete", 0))
+    log.info("         %s real arbs | %s shadow arbs | %s near-misses | %s arb(s) below ROI/stake floor | %s sent",
+             stats["real_arbs"], stats["shadow_arbs"], stats["near_misses"],
+             stats.get("arbs_below_threshold", 0), sent)
     if stats["shadow_book_counter"]:
         log.info("         Books by # of shadow arbs they appeared in (which to fund next):")
         for book, c in stats["shadow_book_counter"].most_common():
