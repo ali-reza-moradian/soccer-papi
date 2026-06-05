@@ -1,0 +1,61 @@
+name: refresh-catalog
+
+# Refresh the cached OddsPapi catalogs (sports/bookmakers/markets/tournaments) so that
+# each arb-scan run costs ~1 billable request. Spends ~4 requests. Manual + weekly.
+on:
+  workflow_dispatch:
+  schedule:
+    # Mondays 06:00 UTC.
+    - cron: "0 6 * * 1"
+
+concurrency:
+  group: refresh-catalog
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Refresh catalogs
+        env:
+          ODDS_PAPI_KEY: ${{ secrets.ODDS_PAPI_KEY }}
+        run: python -m src.refresh
+
+      - name: Commit catalogs back to main
+        if: always()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/cache/
+          if git diff --cached --quiet; then
+            echo "No catalog changes to commit."
+            exit 0
+          fi
+          git commit -m "refresh catalogs $(date -u +%Y-%m-%dT%H:%M:%SZ) [skip ci]"
+          for attempt in 1 2 3; do
+            git pull --rebase --autostash origin main || true
+            if git push origin HEAD:main; then
+              echo "Pushed on attempt $attempt."
+              break
+            fi
+            sleep 5
+          done

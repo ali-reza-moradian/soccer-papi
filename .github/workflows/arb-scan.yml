@@ -1,0 +1,94 @@
+name: arb-scan
+
+# Soccer arbitrage scanner. Runs entirely on GitHub Actions:
+#   budget guard -> 1 billable odds-by-tournaments call -> detect arbs ->
+#   append CSV -> Telegram top 3 -> commit data/ back to main.
+on:
+  schedule:
+    # Every 15 minutes. GitHub may delay/coalesce schedules on free runners.
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+    inputs:
+      from_date:
+        description: "Window start (ISO 8601 UTC). Default: config.yaml"
+        required: false
+        default: "2026-06-05T00:00:00Z"
+      to_date:
+        description: "Window end (ISO 8601 UTC). Default: config.yaml"
+        required: false
+        default: "2026-06-08T23:59:59Z"
+      min_roi_pct:
+        description: "Minimum ROI %% to record/report"
+        required: false
+        default: ""
+      tournament_ids:
+        description: "Comma-separated tournament IDs override (optional)"
+        required: false
+        default: ""
+      dry_run:
+        description: "Skip Telegram (still logs + writes CSV)"
+        required: false
+        type: boolean
+        default: false
+
+# Serialise runs so they never race the commit-back.
+concurrency:
+  group: arb-scan
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run scan cycle
+        env:
+          ODDS_PAPI_KEY: ${{ secrets.ODDS_PAPI_KEY }}
+          TELEGRAM_BOT_KEY: ${{ secrets.TELEGRAM_BOT_KEY }}
+          TELEGRAM_GROUP_ID: ${{ secrets.TELEGRAM_GROUP_ID }}
+          FROM_DATE: ${{ github.event.inputs.from_date }}
+          TO_DATE: ${{ github.event.inputs.to_date }}
+          MIN_ROI_PCT: ${{ github.event.inputs.min_roi_pct }}
+          TOURNAMENT_IDS: ${{ github.event.inputs.tournament_ids }}
+          DRY_RUN: ${{ github.event.inputs.dry_run }}
+        run: python -m src.run
+
+      - name: Commit CSV + cache back to main
+        if: always()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/
+          if git diff --cached --quiet; then
+            echo "No data changes to commit."
+            exit 0
+          fi
+          git commit -m "arb scan $(date -u +%Y-%m-%dT%H:%M:%SZ) [skip ci]"
+          # Re-sync in case a sibling run committed while we worked, then push (retry once).
+          for attempt in 1 2 3; do
+            git pull --rebase --autostash origin main || true
+            if git push origin HEAD:main; then
+              echo "Pushed on attempt $attempt."
+              break
+            fi
+            echo "Push failed (attempt $attempt), retrying..."
+            sleep 5
+          done

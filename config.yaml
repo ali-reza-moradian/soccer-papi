@@ -1,0 +1,57 @@
+# Soccer Arbitrage Sniper — configuration.
+# Everything the engine needs that is not a secret. Secrets (ODDS_PAPI_KEY,
+# TELEGRAM_BOT_KEY, TELEGRAM_GROUP_ID) come from the environment / GitHub Actions.
+
+sport_id: 10                         # OddsPapi soccer sportId (confirm via /v4/sports)
+
+# UTC window we care about. odds-by-tournaments returns ALL events for a league;
+# we filter to fixtures whose kickoff falls inside this window and is in the future.
+target_window:
+  from_utc: "2026-06-05T00:00:00Z"
+  to_utc:   "2026-06-08T23:59:59Z"
+
+tournaments:
+  match_name_regex: "friendl"        # used to discover friendlies via /v4/tournaments
+  pinned_ids: []                     # pin the resolved tournamentId(s) here to skip discovery
+  national_teams_only: true          # prefer "International Friendlies" over club/women's variants
+
+bookmakers:
+  # Books I can actually bet right now (funded accounts). Real arbs use only these.
+  actionable: [pinnacle, 1xbet, kalshi, polymarket]
+  # Everything we want stats on. Shadow arbs may use any of these.
+  tracked:    [pinnacle, 1xbet, kalshi, polymarket, stake, cloudbet, bcgame, roobet, sx-bet]
+  # Treated as betting exchanges: liquidity from exchangeMeta/limit, may charge commission.
+  exchanges:  [kalshi, polymarket, sx-bet, betfair, smarkets, matchbook, prophetx, limitless-ex]
+  # Commission charged on net winnings (decimal). Sportsbooks default to 0.
+  commission:
+    kalshi: 0.0
+    polymarket: 0.0
+    sx-bet: 0.0
+
+markets:
+  exclude: [double_chance]           # market families to never scan (overlap 1x2 → bad for arbing)
+  exclude_names: ["double chance"]   # case-insensitive substrings of marketName to drop
+  allow_quarter_lines: false         # Asian quarter lines (e.g. 2.75) are NOT clean 2-way arbs
+
+thresholds:
+  min_roi_pct: 0.5                   # ignore arbs below this ROI
+  roi_suspicious_pct: 8.0            # above this → flag suspicious (likely stale/error line)
+  min_total_stake: 20                # ignore arbs whose T_max is below this (liquidity junk)
+  max_leg_age_minutes: 20            # skip any leg whose price changedAt is older than this
+  near_miss_ceiling_S: 1.02          # log markets with 1.00 <= S <= this at debug (engine sanity)
+  csv_dedup_minutes: 90              # same signature seen within this window → UPDATE row, don't duplicate
+  unknown_limit_fallback: 100        # T_max fallback when NO leg has a known limit (marks low_confidence)
+
+telegram:
+  rank_by: profit                    # profit (= roi * T_max) | roi
+  send_when_empty: false             # stay quiet when zero arbs (avoid spam); always logged regardless
+  local_tz: "America/Toronto"
+
+budget:
+  safety_margin: 15                  # if (limit - count) <= this, refuse to run billable calls (exit 0)
+  names_cache_hours: 6               # refresh the fixtures name map at most this often
+  refresh_min_remaining: 24          # only auto-refresh missing catalogs if at least this many requests remain
+
+api:
+  odds_verbosity: 3                  # higher = more markets/lines; bump if markets are missing
+  odds_format: decimal

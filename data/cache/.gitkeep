@@ -1,0 +1,2 @@
+# Cached OddsPapi catalogs live here (sports/bookmakers/markets/tournaments/names).
+# Populated by the refresh-catalog workflow so scans cost ~1 request each.

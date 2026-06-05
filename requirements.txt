@@ -1,0 +1,6 @@
+requests>=2.31,<3
+tenacity>=8.2,<9
+PyYAML>=6.0,<7
+
+# dev / test
+pytest>=7.4
