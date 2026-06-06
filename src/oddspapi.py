@@ -31,11 +31,33 @@ _DEFAULT_COOLDOWN = 1.0
 
 
 class QuotaExceeded(Exception):
-    """Raised on HTTP 429 / REQUEST_LIMIT_EXCEEDED. Never retried — stop the run."""
+    """The API key can no longer be used.
+
+    Raised on HTTP 429 (REQUEST_LIMIT_EXCEEDED / rate-limit) or HTTP 403 (forbidden — key
+    exhausted/invalid). Never retried: the caller stops the run cleanly and tells the user to
+    replace the key (see ``log_key_exhausted``). A traceback would only obscure the real problem.
+    """
 
 
 class OddsPapiError(Exception):
-    """Non-recoverable API error (bad request, auth, etc.)."""
+    """Non-recoverable API error (bad request, etc.) for a single call — skip it and move on."""
+
+
+# Shown verbatim on the console when the key dies, per the operator's request.
+API_KEY_EXHAUSTED_MESSAGE = "API Key exhausted. Please replace the key in your .env/secrets"
+
+
+def log_key_exhausted(log: logging.Logger, exc: Exception | None = None) -> None:
+    """Print the standard, user-facing console warning when the OddsPapi key is dead.
+
+    Use this anywhere a :class:`QuotaExceeded` is caught so every entry point fails the same
+    clean way (clear message + exit 0), never a messy stack trace.
+    """
+    log.error("!" * 60)
+    log.error(API_KEY_EXHAUSTED_MESSAGE)
+    if exc is not None:
+        log.error("(OddsPapi rejected the key: %s)", exc)
+    log.error("!" * 60)
 
 
 class OddsPapiClient:
@@ -86,9 +108,13 @@ class OddsPapiClient:
     def _get(self, path: str, params: dict[str, Any] | None = None, *, billable: bool = True) -> Any:
         resp = self._request(path, params or {})
 
-        if resp.status_code == 429:
-            # Quota already gone. This request was rejected before doing work and is NOT counted.
-            raise QuotaExceeded(f"429 REQUEST_LIMIT_EXCEEDED on {path}")
+        if resp.status_code in (429, 403):
+            # 429 = quota/rate-limit exhausted; 403 = key forbidden/exhausted. Either way the key
+            # is unusable, so we stop the whole run with a clean message instead of a traceback.
+            # The request was rejected before doing work, so it is NOT counted as billable.
+            # (A book that is merely outside your plan returns 400 INVALID_PARAMETER, not 403/429,
+            # so it is still handled per-call below and simply skipped.)
+            raise QuotaExceeded(f"{resp.status_code} on {path}: {resp.text[:200]}")
 
         # A request that reaches the endpoint counts (1 request) regardless of 2xx/4xx.
         if billable:

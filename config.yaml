@@ -26,7 +26,7 @@ bookmakers:
   # would add; re-add it here to start placing real bets on it again.
   actionable: [pinnacle, 1xbet, polymarket]
   # Everything we want stats on. Shadow arbs may use any of these.
-  tracked:    [pinnacle, 1xbet, kalshi, polymarket, stake, cloudbet, bcgame, roobet, sx.bet]
+  tracked:    [pinnacle, 1xbet, kalshi, polymarket, stake, cloudbet, bcgame, rollbit, sx.bet]
   # Treated as betting exchanges: liquidity from exchangeMeta/limit, may charge commission.
   # (Confirmed slugs from the cached bookmakers catalog.)
   exchanges:  [kalshi, polymarket, sx.bet, betfair-ex, matchbook, prophetx, limitless-ex, orbitx, overtime.io]
@@ -57,13 +57,12 @@ telegram:
   local_tz: "America/Toronto"
 
 budget:
-  safety_margin: 15                  # if (limit - count) <= this, refuse to run billable calls (exit 0)
+  safety_margin: 15                  # pre-flight guard: if (limit - count) <= this, skip the scan (exit 0)
   names_cache_hours: 6               # refresh the fixtures name map at most this often
   refresh_min_remaining: 24          # only auto-refresh missing catalogs if at least this many requests remain
-  # The live free/standard plan returns ONE bookmaker per odds call, so each book = 1 request.
-  # Per scan we fetch up to this many books (actionable first, then extra tracked). With the
-  # 250/month free tier, every extra book per cycle multiplies monthly cost — tune with cadence.
-  max_books_per_cycle: 4
+  # NO per-cycle book cap: every scan fetches ALL usable books your plan grants (one billable
+  # request each), so any pair of books can form an arb. If the key runs out of credits or is
+  # rate-limited mid-fetch (HTTP 429/403), the run prints "API Key exhausted" and exits cleanly.
 
 api:
   odds_verbosity: 3                  # higher = more markets/lines; bump if markets are missing

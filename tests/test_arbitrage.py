@@ -50,6 +50,19 @@ def test_worked_example_over_under_2_5():
     assert math.isclose(payouts[0], res.t_max / res.arb_sum_S, rel_tol=1e-3)
 
 
+def test_pure_two_book_arb_between_sportsbooks():
+    """Any two books can form an arb on their own — here Stake vs Cloudbet, with no exchange
+    or crypto prediction market involved (change #3: universal bookmaker pairing)."""
+    over = _cand(106, "Over", "stake", 2.10, limit=3000)
+    under = _cand(107, "Under", "cloudbet", 2.05, limit=3000)
+    chosen = select_legs({106: [over], 107: [under]})
+    assert chosen is not None
+    res = compute_arb(chosen)
+    assert res.is_arb
+    assert not res.involves_exchange
+    assert {leg.book for leg in res.legs} == {"stake", "cloudbet"}
+
+
 def test_no_arb_when_S_at_least_one():
     a = _cand(1, "1", "x", 1.90, limit=1000)
     b = _cand(2, "2", "y", 1.90, limit=1000)

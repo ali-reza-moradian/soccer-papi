@@ -18,7 +18,7 @@ from .config import Config, load_config
 from .csv_store import append_opportunities
 from .logsetup import setup_logging
 from .normalize import FixtureFeed, RawCandidate, exchange_liquidity
-from .oddspapi import OddsPapiClient, OddsPapiError, QuotaExceeded, check_budget
+from .oddspapi import OddsPapiClient, OddsPapiError, QuotaExceeded, check_budget, log_key_exhausted
 from .telegram import build_message, send_message
 
 
@@ -319,11 +319,12 @@ def _fixture_list(payload: Any) -> list[dict[str, Any]]:
     return []
 
 
-def _fetch_odds_per_book(client, cfg, tournament_ids, books, start_remaining, safety, log):
+def _fetch_odds_per_book(client, cfg, tournament_ids, books, log):
     """One odds-by-tournaments call per book; merge each book's odds onto the shared fixture.
 
-    Returns (feeds, fetched_books, returning_books). Stops early if the per-run budget would
-    dip to the safety margin, so a single run can never blow the monthly quota.
+    Returns (feeds, fetched_books, returning_books). Fetches EVERY requested book — there is no
+    per-cycle cap, so any pair of books can form an arb. A quota/rate-limit error (HTTP 429/403)
+    raises QuotaExceeded, which is left to bubble up to main() for a clean "replace the key" exit.
     """
     verbosity = int(cfg.api_opt("odds_verbosity", 3))
     odds_format = str(cfg.api_opt("odds_format", "decimal"))
@@ -332,17 +333,11 @@ def _fetch_odds_per_book(client, cfg, tournament_ids, books, start_remaining, sa
     returning: list[str] = []
 
     for book in books:
-        if start_remaining is not None and (start_remaining - client.billable_count) <= safety:
-            log.warning("Budget safety margin reached after %s book(s); stopping odds fetch.", len(fetched))
-            break
         try:
             payload = client.odds_by_tournaments(tournament_ids, bookmaker=book,
                                                  verbosity=verbosity, odds_format=odds_format)
-        except QuotaExceeded:
-            log.warning("Quota hit fetching %s — stopping odds fetch.", book)
-            break
         except OddsPapiError as exc:
-            # e.g. a book outside the plan; count it as attempted and move on.
+            # e.g. a book outside the plan (400); count it as attempted and move on.
             log.warning("Skipping %s: %s", book, exc)
             fetched.append(book)
             continue
@@ -389,12 +384,9 @@ def run_cycle(cfg: Config, log) -> int:
     client = OddsPapiClient(cfg.secrets.odds_papi_key, logger=log)
 
     # 1) Budget guard (free call) -------------------------------------------------
+    # A 429/403 here (dead or invalid key) raises QuotaExceeded, handled cleanly in main().
     safety = int(cfg.budget_opt("safety_margin", 15))
-    try:
-        acct = check_budget(client, safety, log)
-    except QuotaExceeded:
-        log.warning("Quota already exhausted (429 on a billable elsewhere). Exiting cleanly.")
-        return 0
+    acct = check_budget(client, safety, log)
     if not acct.get("safe_to_run", True):
         log.warning("Request budget nearly gone (remaining=%s <= margin=%s). Skipping scan.",
                     acct.get("remaining"), safety)
@@ -441,11 +433,9 @@ def run_cycle(cfg: Config, log) -> int:
                     "nothing to compute. Upgrade the plan / enable more books, then re-run. "
                     "Exiting now (0 billable odds requests spent).", len(usable), usable or "none")
         return 0
-    max_books = int(cfg.budget_opt("max_books_per_cycle", 4))
-    to_fetch = usable[:max_books]
-    if len(usable) > len(to_fetch):
-        log.info("Budget cap max_books_per_cycle=%s -> fetching %s of %s usable books this cycle: %s",
-                 max_books, len(to_fetch), len(usable), to_fetch)
+    # No per-cycle cap: fetch EVERY usable book so any pair can form an arb (one request each).
+    to_fetch = usable
+    log.info("Fetching all %s usable book(s) this cycle: %s", len(to_fetch), to_fetch)
 
     # 4) Names map (cached; refresh at most every names_cache_hours, budget permitting) --
     names = catalog.load_json(cfg.cache_dir, catalog.NAMES_FILE) or {}
@@ -456,20 +446,17 @@ def run_cycle(cfg: Config, log) -> int:
         if remaining is not None and (remaining - client.billable_count) <= safety + len(to_fetch):
             log.warning("Skipping names refresh to preserve odds budget (remaining=%s).", remaining)
         else:
-            try:
-                log.info("Refreshing fixtures name map (cache age=%s, ttl=%sh).",
-                         f"{names_age:.1f}h" if names_age is not None else "missing", names_ttl)
-                names = catalog.refresh_names(client, cfg.cache_dir, cfg.sport_id, tournament_ids,
-                                              cfg.from_utc, cfg.to_utc, now.timestamp())
-            except QuotaExceeded:
-                log.warning("Quota hit while refreshing names — continuing with cached/empty names.")
+            # A quota/rate-limit error here means the key is dead; let it bubble up to main().
+            log.info("Refreshing fixtures name map (cache age=%s, ttl=%sh).",
+                     f"{names_age:.1f}h" if names_age is not None else "missing", names_ttl)
+            names = catalog.refresh_names(client, cfg.cache_dir, cfg.sport_id, tournament_ids,
+                                          cfg.from_utc, cfg.to_utc, now.timestamp())
     by_fixture = names.get("by_fixture", {})
     by_participant = names.get("by_participant", {})
 
     # 5) Odds — ONE billable call per book, merged across books ------------------
-    start_remaining = acct.get("remaining")
     feeds, fetched_books, returning_books = _fetch_odds_per_book(
-        client, cfg, tournament_ids, to_fetch, start_remaining, safety, log)
+        client, cfg, tournament_ids, to_fetch, log)
     log.info("Odds fetch: %s book-call(s); %s returned odds (%s).",
              len(fetched_books), len(returning_books), ", ".join(returning_books) or "none")
     if len(returning_books) < 2:
@@ -705,8 +692,9 @@ def main() -> int:
     cfg = load_config()
     try:
         return run_cycle(cfg, log)
-    except QuotaExceeded:
-        log.warning("Quota exhausted mid-run. Exiting cleanly (exit 0).")
+    except QuotaExceeded as exc:
+        # Key out of credits / rate-limited (429) or forbidden (403): clean message, no traceback.
+        log_key_exhausted(log, exc)
         return 0
     except Exception:  # noqa: BLE001 - report bugs loudly but don't mask the traceback
         log.exception("Unexpected error during scan cycle.")

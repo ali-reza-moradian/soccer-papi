@@ -49,11 +49,12 @@ git commit data/ back to main  ([skip ci])
 > omitting it returns all books in one call. In practice the live free/standard subscription
 > **rejects that** (`400 INVALID_PARAMETER`) and returns **exactly one bookmaker per call** via a
 > singular `bookmaker` param — and only for the books your subscription grants. So cross-book
-> arbitrage costs **one request per book**: the scanner fetches up to `budget.max_books_per_cycle`
-> books (actionable first), merges them onto each canonical fixture, then computes real + shadow
-> arbs. The bot logs which books your plan grants (read for free from `/v4/account`) and **exits
-> without spending any odds requests if fewer than 2 usable books are available** (you can't arb
-> one book).
+> arbitrage costs **one request per book**: the scanner fetches **every** book your plan grants
+> (actionable first), merges them onto each canonical fixture, then computes real + shadow arbs.
+> There is **no per-cycle book cap** — any pair of books can form an arb. The bot logs which books
+> your plan grants (read for free from `/v4/account`) and **exits without spending any odds requests
+> if fewer than 2 usable books are available** (you can't arb one book). If the key runs out of
+> credits or is rate-limited (HTTP 429/403), it prints `API Key exhausted…` and exits cleanly.
 
 ---
 
@@ -214,16 +215,18 @@ Key knobs (see the file for all defaults):
   (no billable calls, build not failed).
 - **Static catalogs are cached** in `data/cache/` and refreshed by the separate
   `refresh-catalog` workflow only — not on every scan.
-- **Each scan costs ~`max_books_per_cycle` requests** (one `odds-by-tournaments` call per book;
-  default 4). The fixtures name map costs 1 request **per pinned tournament**, at most once every
-  `names_cache_hours` (6) — so 2 pinned tournaments = 2 extra requests on a refresh cycle.
-- A run can never overspend: the fetch loop stops as soon as the per-run budget would hit the
-  safety margin, and the pre-flight guard skips the whole scan when the monthly quota is low.
-- **Cadence vs. longevity:** the budget guard prevents *overspend*, but cadence controls how long
-  250 requests last. At 4 books/cycle, the default 3-hour cron ≈ 32 req/day. Raise the cron
-  frequency for a live burst, or `max_books_per_cycle` for more coverage — both cost more/month.
-  *Upgrading the OddsPapi plan is what unlocks more books per call / a higher quota.*
-- Cooldowns are respected (1000 ms; 2000 ms for `/v4/fixtures`). A 429 stops the run immediately.
+- **Each scan costs one request per granted book** (one `odds-by-tournaments` call each) — there is
+  no per-cycle cap, so every scan fetches **all** usable books. The fixtures name map costs 1 request
+  **per pinned tournament**, at most once every `names_cache_hours` (6) — so 2 pinned tournaments =
+  2 extra requests on a refresh cycle.
+- **Pre-flight guard:** the scan is still skipped when the monthly quota is within `safety_margin`
+  of zero. If the key runs out mid-fetch (HTTP 429) or is forbidden/exhausted (HTTP 403), the run
+  prints **`API Key exhausted. Please replace the key in your .env/secrets`** and exits cleanly
+  (exit 0) — never a traceback.
+- **Cadence vs. longevity:** cadence controls how long your quota lasts. With *N* granted books,
+  the default 3-hour cron ≈ `8·N` requests/day. Raise the cron frequency for a live burst — it
+  costs more/month. *Upgrading the OddsPapi plan is what unlocks more books / a higher quota.*
+- Cooldowns are respected (1000 ms; 2000 ms for `/v4/fixtures`). A 429/403 stops the run immediately.
 
 ### Future upgrade
 

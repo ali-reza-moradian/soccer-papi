@@ -5,10 +5,10 @@ name: arb-scan
 #   append CSV -> Telegram top 3 -> commit data/ back to main.
 on:
   schedule:
-    # Every 3 hours. NOTE: the free OddsPapi tier returns one bookmaker per odds call, so a
-    # cycle costs ~max_books_per_cycle requests (default 4). At 250 req/month, */15 would burn
-    # the whole quota in well under a day — 3h keeps the budget alive across the June window.
-    # The budget guard makes overspend impossible regardless; cadence controls longevity.
+    # Every 3 hours. NOTE: OddsPapi returns one bookmaker per odds call, so a cycle costs one
+    # request per granted book (no per-cycle cap — every scan fetches ALL usable books). Cadence
+    # controls how long your monthly quota lasts; 3h is a sensible default across the window.
+    # If the key runs out (HTTP 429/403) the run prints "API Key exhausted" and exits cleanly.
     # Dispatch manually for bursts during a live window.
     - cron: "0 */3 * * *"
   workflow_dispatch:

@@ -12,7 +12,7 @@ import sys
 from . import catalog
 from .config import load_config
 from .logsetup import setup_logging
-from .oddspapi import OddsPapiClient, QuotaExceeded, check_budget
+from .oddspapi import OddsPapiClient, QuotaExceeded, check_budget, log_key_exhausted
 
 
 def main() -> int:
@@ -28,8 +28,8 @@ def main() -> int:
     safety = int(cfg.budget_opt("safety_margin", 15))
     try:
         acct = check_budget(client, safety, log)
-    except QuotaExceeded:
-        log.warning("Quota already exhausted. Exiting cleanly.")
+    except QuotaExceeded as exc:
+        log_key_exhausted(log, exc)
         return 0
     # A refresh costs ~4 requests; make sure we have comfortable headroom.
     remaining = acct.get("remaining")
@@ -39,8 +39,9 @@ def main() -> int:
 
     try:
         counts = catalog.refresh_catalogs(client, cfg.cache_dir, cfg.sport_id, log)
-    except QuotaExceeded:
-        log.warning("Quota hit during refresh. Partial catalogs may be written. Exiting cleanly.")
+    except QuotaExceeded as exc:
+        log.warning("Quota hit during refresh. Partial catalogs may be written.")
+        log_key_exhausted(log, exc)
         return 0
 
     # Resolve and print friendlies IDs so the user can pin them.

@@ -5,6 +5,8 @@ import os
 import tempfile
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 from src.catalog import build_clone_group_fn, build_market_specs
 from src.config import Config, Secrets
 from src.csv_store import append_opportunities
@@ -42,6 +44,8 @@ BOOKS_JSON = [
     {"slug": "pinnacle", "bookmakerName": "Pinnacle", "cloneOf": None},
     {"slug": "1xbet", "bookmakerName": "1xBet", "cloneOf": None},
     {"slug": "stake", "bookmakerName": "Stake", "cloneOf": None},
+    {"slug": "cloudbet", "bookmakerName": "Cloudbet", "cloneOf": None},
+    {"slug": "polymarket", "bookmakerName": "Polymarket", "cloneOf": None},
 ]
 
 
@@ -107,6 +111,57 @@ def test_scan_finds_real_arb():
     # Best Over @ pinnacle 2.10, best Under @ 1xbet 2.05 -> the worked-example arb.
     books = {leg.book for leg in opp.res.legs}
     assert books == {"pinnacle", "1xbet"}
+
+
+def test_scan_pairs_two_books_without_forcing_prediction_market():
+    """A clean pinnacle+1xbet arb is caught even when Polymarket is present with worse odds —
+    no crypto prediction market (Polymarket/Kalshi) is forced into the arb (change #3)."""
+    payload = _payload("pinnacle", "1xbet")
+    # Same fixture also quotes Polymarket, but with deliberately worse prices on both outcomes.
+    payload[0]["bookmakerOdds"]["polymarket"] = {
+        "bookmakerIsActive": True, "suspended": False, "fixturePath": "pm",
+        "markets": {"106": {"marketActive": True, "outcomes": {
+            "1": {"players": _player(1.40, 9000)},
+            "2": {"players": _player(1.40, 9000)}}}}}
+    feeds = parse_odds_payload(payload)
+    specs, _ = build_market_specs(MARKETS_JSON, 10, ["double chance"])
+    group_of = build_clone_group_fn(BOOKS_JSON)
+    ctx = _ctx(group_of, ["pinnacle", "1xbet", "polymarket"],
+               ["pinnacle", "1xbet", "polymarket", "stake", "cloudbet"])
+    opps, stats = _scan(feeds, specs, ctx, _cfg(), {}, {"35": "USA", "34": "Germany"},
+                        NOW, get_logger("test"))
+    assert stats["real_arbs"] == 1
+    # Polymarket is in the universe but NOT selected — the arb is pure pinnacle+1xbet.
+    assert {leg.book for leg in opps[0].res.legs} == {"pinnacle", "1xbet"}
+
+
+def test_scan_finds_arb_between_two_tracked_only_books():
+    """A perfect Stake+Cloudbet arb is caught (as a shadow arb here) — any pair works (change #3)."""
+    payload = [{
+        "fixtureId": "fx3", "participant1Id": 35, "participant2Id": 34, "tournamentId": 17,
+        "statusId": 0, "hasOdds": True, "startTime": KICKOFF, "updatedAt": RECENT,
+        "bookmakerOdds": {
+            "stake": {"bookmakerIsActive": True, "suspended": False, "fixturePath": "s",
+                      "markets": {"106": {"marketActive": True, "outcomes": {
+                          "1": {"players": _player(2.10, 3000)},
+                          "2": {"players": _player(1.50, 3000)}}}}},
+            "cloudbet": {"bookmakerIsActive": True, "suspended": False, "fixturePath": "c",
+                         "markets": {"106": {"marketActive": True, "outcomes": {
+                             "1": {"players": _player(1.50, 3000)},
+                             "2": {"players": _player(2.05, 3000)}}}}},
+        },
+    }]
+    feeds = parse_odds_payload(payload)
+    specs, _ = build_market_specs(MARKETS_JSON, 10, ["double chance"])
+    group_of = build_clone_group_fn(BOOKS_JSON)
+    ctx = _ctx(group_of, ["pinnacle", "1xbet", "polymarket"],
+               ["pinnacle", "1xbet", "polymarket", "stake", "cloudbet"])
+    opps, stats = _scan(feeds, specs, ctx, _cfg(), {}, {"35": "USA", "34": "Germany"},
+                        NOW, get_logger("test"))
+    assert stats["shadow_arbs"] == 1
+    assert stats["real_arbs"] == 0
+    assert {leg.book for leg in opps[0].res.legs} == {"stake", "cloudbet"}
+    assert opps[0].res.is_arb
 
 
 def test_shadow_arb_when_best_leg_is_unfunded():
@@ -181,7 +236,7 @@ def test_fetch_odds_per_book_merges_books_onto_one_fixture():
         "1xbet": _one_book_payload("1xbet", 1.55, 2.05),
     })
     feeds, fetched, returning = _fetch_odds_per_book(
-        client, _cfg(), [17], ["pinnacle", "1xbet"], start_remaining=200, safety=15, log=get_logger("t"))
+        client, _cfg(), [17], ["pinnacle", "1xbet"], log=get_logger("t"))
     assert client.billable_count == 2
     assert fetched == ["pinnacle", "1xbet"]
     assert returning == ["pinnacle", "1xbet"]
@@ -190,14 +245,28 @@ def test_fetch_odds_per_book_merges_books_onto_one_fixture():
     assert feeds[0].books_present == {"pinnacle", "1xbet"}
 
 
-def test_fetch_stops_at_budget_margin():
+def test_fetch_all_books_no_cap():
+    """Every requested book is fetched — there is no per-cycle budget cap anymore."""
     from src.run import _fetch_odds_per_book
     client = _FakeOddsClient({b: _one_book_payload(b, 2.0, 2.0) for b in ["a", "b", "c", "d"]})
-    # start_remaining 17, safety 15 -> can afford exactly 2 calls (17->16->stop at 15).
     feeds, fetched, returning = _fetch_odds_per_book(
-        client, _cfg(), [17], ["a", "b", "c", "d"], start_remaining=17, safety=15, log=get_logger("t"))
-    assert client.billable_count == 2
-    assert fetched == ["a", "b"]
+        client, _cfg(), [17], ["a", "b", "c", "d"], log=get_logger("t"))
+    assert client.billable_count == 4
+    assert fetched == ["a", "b", "c", "d"]
+
+
+def test_fetch_propagates_quota_exceeded():
+    """A 429/403 mid-fetch bubbles up (handled cleanly by main), not swallowed."""
+    from src.oddspapi import QuotaExceeded
+    from src.run import _fetch_odds_per_book
+
+    class _Quota:
+        billable_count = 1
+        def odds_by_tournaments(self, *a, **k):
+            raise QuotaExceeded("429 on /v4/odds-by-tournaments")
+
+    with pytest.raises(QuotaExceeded):
+        _fetch_odds_per_book(_Quota(), _cfg(), [17], ["pinnacle", "1xbet"], log=get_logger("t"))
 
 
 def test_fixture_list_handles_shapes():
