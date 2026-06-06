@@ -46,7 +46,25 @@ BOOKS_JSON = [
     {"slug": "stake", "bookmakerName": "Stake", "cloneOf": None},
     {"slug": "cloudbet", "bookmakerName": "Cloudbet", "cloneOf": None},
     {"slug": "polymarket", "bookmakerName": "Polymarket", "cloneOf": None},
+    {"slug": "bcgame", "bookmakerName": "BC.Game", "cloneOf": None},
 ]
+
+# A 3-way 1x2 market (outcomeId 101='1'/home, 102='X'/draw, 103='2'/away) for mapping-guard tests.
+MARKETS_1X2 = [
+    {"marketId": 101, "marketName": "Full Time Result", "marketType": "1x2",
+     "sportId": 10, "period": "fulltime", "handicap": 0, "playerProp": False,
+     "outcomes": [{"outcomeId": 101, "outcomeName": "1"},
+                  {"outcomeId": 102, "outcomeName": "X"},
+                  {"outcomeId": 103, "outcomeName": "2"}]},
+]
+
+
+def _book_1x2(home, draw, away, limit=3000):
+    return {"bookmakerIsActive": True, "suspended": False, "fixturePath": "x",
+            "markets": {"101": {"marketActive": True, "outcomes": {
+                "101": {"players": _player(home, limit)},
+                "102": {"players": _player(draw, limit)},
+                "103": {"players": _player(away, limit)}}}}}
 
 
 def _payload(over_book, under_book):
@@ -67,10 +85,11 @@ def _payload(over_book, under_book):
     }]
 
 
-def _ctx(group_of, actionable, tracked):
+def _ctx(group_of, actionable, tracked, reference_books=(), min_favorite_ratio=1.5):
     return EngineCtx(
         actionable=set(actionable), tracked=set(tracked), exchanges=set(),
         commission={}, clone_group_of=group_of, max_leg_age_minutes=20, unknown_limit_fallback=100,
+        reference_books=list(reference_books), min_favorite_ratio=min_favorite_ratio,
     )
 
 
@@ -293,3 +312,94 @@ def test_csv_dedup_updates_within_window():
         much_later = NOW + timedelta(minutes=200)
         c3 = append_opportunities(path, [row], much_later, dedup_minutes=90)
         assert c3 == {"new": 1, "updated": 0}
+
+
+# --------------------------------------------------------------------------- #
+# Outcome-mapping guard (BC.Game-style home/away flip protection)               #
+# --------------------------------------------------------------------------- #
+def test_mapping_guard_flags_flipped_book():
+    """A book whose favourite/underdog are swapped vs the reference is flagged suspect."""
+    from src.run import _detect_mapping_suspects
+    book_prices = {                                  # oid 101=home(fav), 102=draw, 103=away(dog)
+        "pinnacle": {101: 1.65, 102: 3.8, 103: 5.0},
+        "1xbet":    {101: 1.66, 102: 3.7, 103: 4.9},
+        "stake":    {101: 1.64, 102: 3.9, 103: 5.1},
+        "bcgame":   {101: 5.0,  102: 3.8, 103: 1.65},   # home/away swapped upstream
+    }
+    suspects, ref, extremes = _detect_mapping_suspects(book_prices, ["pinnacle", "1xbet"], 1.5)
+    assert ref == "pinnacle"
+    assert extremes == (101, 103)
+    assert suspects == frozenset({"bcgame"})
+
+
+def test_mapping_guard_near_even_market_is_not_judged():
+    """No clear favourite (ratio gate fails) -> ordering is noise -> never flag."""
+    from src.run import _detect_mapping_suspects
+    book_prices = {"pinnacle": {101: 1.95, 103: 1.95}, "bcgame": {101: 1.96, 103: 1.94}}
+    suspects, ref, extremes = _detect_mapping_suspects(book_prices, ["pinnacle"], 1.5)
+    assert suspects == frozenset() and extremes is None
+
+
+def test_mapping_guard_no_reference_present():
+    """If no configured reference book priced the market, we cannot judge -> no flags."""
+    from src.run import _detect_mapping_suspects
+    book_prices = {"bcgame": {101: 5.0, 103: 1.65}, "stake": {101: 1.65, 103: 5.0}}
+    suspects, ref, _ = _detect_mapping_suspects(book_prices, ["pinnacle"], 1.5)
+    assert ref is None and suspects == frozenset()
+
+
+def test_mapping_guard_two_books_defers_to_reference():
+    """Reference + one flipped book = 1-vs-1 tie -> trust the reference, flag the other."""
+    from src.run import _detect_mapping_suspects
+    book_prices = {"pinnacle": {101: 1.65, 103: 5.0}, "bcgame": {101: 5.0, 103: 1.65}}
+    suspects, _, _ = _detect_mapping_suspects(book_prices, ["pinnacle"], 1.5)
+    assert suspects == frozenset({"bcgame"})
+
+
+def test_mapping_guard_flags_a_flipped_reference_against_majority():
+    """Robustness: if the reference itself is flipped and the majority disagrees, the lone
+    reference is flagged — the correct majority is never marked suspect."""
+    from src.run import _detect_mapping_suspects
+    book_prices = {
+        "pinnacle": {101: 5.0,  103: 1.65},   # flipped reference, stands alone
+        "1xbet":    {101: 1.66, 103: 4.9},
+        "stake":    {101: 1.64, 103: 5.1},
+        "cloudbet": {101: 1.65, 103: 5.0},
+    }
+    suspects, ref, _ = _detect_mapping_suspects(book_prices, ["pinnacle"], 1.5)
+    assert ref == "pinnacle"
+    assert suspects == frozenset({"pinnacle"})
+
+
+def test_scan_drops_flipped_book_phantom_arb():
+    """End-to-end: a home/away-swapped book would mint a phantom arb; the guard drops it."""
+    payload = [{
+        "fixtureId": "fxch", "participant1Id": 35, "participant2Id": 34, "tournamentId": 17,
+        "statusId": 0, "hasOdds": True, "startTime": KICKOFF, "updatedAt": RECENT,
+        "bookmakerOdds": {
+            "pinnacle": _book_1x2(1.65, 3.8, 5.0),     # correct
+            "bcgame":   _book_1x2(5.0, 3.8, 1.65),     # home/away swapped upstream
+        },
+    }]
+    feeds = parse_odds_payload(payload)
+    specs, _ = build_market_specs(MARKETS_1X2, 10, ["double chance"])
+    group_of = build_clone_group_fn(BOOKS_JSON)
+    names = {"35": "Switzerland", "34": "Australia"}
+
+    # Guard OFF: the swapped book's 'home @ 5.0' pairs with the real 'away @ 5.0' -> phantom arb.
+    ctx_off = _ctx(group_of, ["pinnacle", "bcgame"], ["pinnacle", "bcgame"])
+    _, stats_off = _scan(feeds, specs, ctx_off, _cfg(), {}, names, NOW, get_logger("test"))
+    assert stats_off["real_arbs"] + stats_off["shadow_arbs"] >= 1
+
+    # Guard ON (Pinnacle reference): bcgame flagged + dropped -> no phantom arb survives.
+    ctx_on = _ctx(group_of, ["pinnacle", "bcgame"], ["pinnacle", "bcgame"], reference_books=["pinnacle"])
+    _, stats_on = _scan(feeds, specs, ctx_on, _cfg(), {}, names, NOW, get_logger("test"))
+    assert stats_on["real_arbs"] == 0 and stats_on["shadow_arbs"] == 0
+    assert stats_on["mapping_suspect_flags"]["bcgame"] == 1
+
+
+def test_dump_book_outcomes_runs_without_error():
+    from src.run import _dump_book_outcomes
+    specs, _ = build_market_specs(MARKETS_1X2, 10, [])
+    _dump_book_outcomes(get_logger("t"), "Switzerland vs Australia", specs[101],
+                        "Switzerland", "Australia", "bcgame", {101: 5.0, 102: 3.8, 103: 1.65})

@@ -104,6 +104,9 @@ class Config:
     def budget_opt(self, key: str, default: Any) -> Any:
         return self.get("budget", key, default=default)
 
+    def mapping_guard_opt(self, key: str, default: Any) -> Any:
+        return self.get("mapping_guard", key, default=default)
+
     def api_opt(self, key: str, default: Any) -> Any:
         return self.get("api", key, default=default)
 

@@ -5,9 +5,10 @@ Designed to be frugal: ~1 billable request per cycle (plus an occasional names r
 """
 from __future__ import annotations
 
+import os
 import sys
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any, Optional
@@ -50,6 +51,12 @@ class EngineCtx:
     clone_group_of: Any
     max_leg_age_minutes: float
     unknown_limit_fallback: float
+    # Outcome-mapping guard: trusted reference books (first present wins), the heavy-favourite
+    # gate, and an optional book whose raw per-outcome odds we dump for debugging. Empty
+    # reference_books => guard disabled (no-op).
+    reference_books: list[str] = field(default_factory=list)
+    min_favorite_ratio: float = 1.5
+    dump_book: str = ""
 
 
 @dataclass
@@ -86,10 +93,13 @@ def _to_candidates(
     universe: set[str],
     ctx: EngineCtx,
     now: datetime,
+    exclude_books: frozenset[str] = frozenset(),
 ) -> list[Candidate]:
     out: list[Candidate] = []
     for rc in raws:
         if rc.book not in universe:
+            continue
+        if rc.book in exclude_books:   # outcome-mapping-suspect for this market
             continue
         age = _leg_age_minutes(rc.changed_at, now)
         if age is not None and age > ctx.max_leg_age_minutes:
@@ -120,10 +130,11 @@ def _arb_for_universe(
     universe: set[str],
     ctx: EngineCtx,
     now: datetime,
+    exclude_books: frozenset[str] = frozenset(),
 ) -> Optional[ArbResult]:
     cands_by_outcome: dict[int, list[Candidate]] = {}
     for oid in spec.outcome_ids:
-        cl = _to_candidates(raw_market.get(oid, []), spec, universe, ctx, now)
+        cl = _to_candidates(raw_market.get(oid, []), spec, universe, ctx, now, exclude_books)
         if not cl:
             return None  # market incomplete for this universe
         cands_by_outcome[oid] = cl
@@ -131,6 +142,91 @@ def _arb_for_universe(
     if not chosen:
         return None
     return compute_arb(chosen, ctx.unknown_limit_fallback)
+
+
+# --------------------------------------------------------------------------- #
+# Outcome-mapping guard                                                         #
+# --------------------------------------------------------------------------- #
+# Some books occasionally arrive with their two extreme outcomes (home/away, or the two sides
+# of a 2-way market) swapped relative to the canonical outcomeId — an upstream data fault that
+# would otherwise mint phantom arbs (e.g. a heavy favourite priced as the underdog). We never
+# remap odds ourselves: the canonical outcomeId key is authoritative. Instead we sanity-check
+# each book against a trusted reference on markets that HAVE a clear favourite, and drop any
+# book whose favourite/underdog ranking is reversed (outcome_mapping_suspect) for that market.
+def _book_prices_by_outcome(raw_market: dict[int, list[RawCandidate]]) -> dict[str, dict[int, float]]:
+    """Per-book best decimal price for each outcomeId in one market: book -> {oid: price}."""
+    out: dict[str, dict[int, float]] = {}
+    for oid, raws in raw_market.items():
+        for rc in raws:
+            cur = out.setdefault(rc.book, {})
+            if oid not in cur or rc.price > cur[oid]:
+                cur[oid] = rc.price
+    return out
+
+
+def _detect_mapping_suspects(
+    book_prices: dict[str, dict[int, float]],
+    reference_books: list[str],
+    min_favorite_ratio: float,
+) -> tuple[frozenset[str], Optional[str], Optional[tuple[int, int]]]:
+    """Flag books that rank the favourite vs the underdog OPPOSITELY to the consensus.
+
+    Returns ``(suspect_books, reference_book, (fav_oid, dog_oid))``. The reference (first
+    configured book present, pricing >=2 outcomes) picks which outcomes are the favourite
+    (cheapest) and underdog (dearest) and gates on a clear gap. Every book that priced BOTH
+    extremes then "votes" on the ordering; the minority orientation is suspect. The reference's
+    own orientation only breaks an exact tie — so a (hypothetically) flipped reference standing
+    against a clear majority is itself flagged, not the correct books.
+    """
+    if not reference_books:
+        return frozenset(), None, None
+    ref = next((b for b in reference_books if b in book_prices and len(book_prices[b]) >= 2), None)
+    if ref is None:
+        return frozenset(), None, None
+    ref_p = book_prices[ref]
+    fav_oid = min(ref_p, key=lambda o: ref_p[o])   # lowest odds  -> favourite
+    dog_oid = max(ref_p, key=lambda o: ref_p[o])   # highest odds -> underdog
+    if fav_oid == dog_oid or ref_p[dog_oid] < ref_p[fav_oid] * min_favorite_ratio:
+        return frozenset(), ref, None              # no clear favourite -> ordering is noise
+
+    agree, reverse = [], []                        # books pricing fav cheaper vs dearer than dog
+    for book, p in book_prices.items():
+        if fav_oid not in p or dog_oid not in p:
+            continue
+        if p[fav_oid] < p[dog_oid]:
+            agree.append(book)
+        elif p[fav_oid] > p[dog_oid]:
+            reverse.append(book)
+    # Minority orientation is suspect; ties defer to the trusted reference (always in `agree`).
+    minority = reverse if len(agree) >= len(reverse) else agree
+    return frozenset(minority), ref, (fav_oid, dog_oid)
+
+
+def _outcome_team(spec: catalog.MarketSpec, oid: int, home: str, away: str) -> str:
+    return fmt.outcome_label(spec.outcome_names.get(oid, str(oid)), home, away, spec.family, spec.line)
+
+
+def _log_mapping_suspects(log, match, home, away, spec, book_prices, suspects, ref, extremes) -> None:
+    fav_oid, dog_oid = extremes
+    fav, dog = _outcome_team(spec, fav_oid, home, away), _outcome_team(spec, dog_oid, home, away)
+    market = fmt.market_label(spec.label, spec.family, spec.line)
+    rp = book_prices.get(ref, {})
+    for book in sorted(suspects):
+        bp = book_prices.get(book, {})
+        log.warning("[MAPPING SUSPECT] %s | %s: %s looks OUTCOME-FLIPPED vs %s — skipping %s for this market.",
+                    match, market, book, ref, book)
+        log.warning("    %-10s %s @ %s | %s @ %s   (favourite cheaper — correct)",
+                    ref + ":", fav, fmt.num2(rp.get(fav_oid)), dog, fmt.num2(rp.get(dog_oid)))
+        log.warning("    %-10s %s @ %s | %s @ %s   (favourite DEARER — outcomes swapped)",
+                    book + ":", fav, fmt.num2(bp.get(fav_oid)), dog, fmt.num2(bp.get(dog_oid)))
+
+
+def _dump_book_outcomes(log, match, spec, home, away, book, prices) -> None:
+    """Raw per-outcome odds for one book on one market (set DEBUG_DUMP_BOOK / mapping_guard.dump_book)."""
+    market = fmt.market_label(spec.label, spec.family, spec.line)
+    parts = [f"oid {oid} [{spec.outcome_names.get(oid, oid)}={_outcome_team(spec, oid, home, away)}] @ {fmt.num2(prices[oid])}"
+             for oid in spec.outcome_ids if oid in prices]
+    log.info("[DUMP %s] %s | %s: %s", book, match, market, "; ".join(parts) or "(no priced outcomes)")
 
 
 # --------------------------------------------------------------------------- #
@@ -469,6 +565,8 @@ def run_cycle(cfg: Config, log) -> int:
     if missing:
         log.info("marketIds seen but NOT scanned (player-prop/excluded/unclassified): %s", sorted(missing))
 
+    guard_on = bool(cfg.mapping_guard_opt("enabled", True))
+    reference_books = [str(b) for b in (cfg.mapping_guard_opt("reference_books", ["pinnacle", "1xbet"]) or [])]
     ctx = EngineCtx(
         actionable=set(cfg.actionable_books),
         tracked=set(cfg.tracked_books),
@@ -477,6 +575,9 @@ def run_cycle(cfg: Config, log) -> int:
         clone_group_of=clone_group_of,
         max_leg_age_minutes=float(cfg.threshold("max_leg_age_minutes", 20)),
         unknown_limit_fallback=float(cfg.threshold("unknown_limit_fallback", 100)),
+        reference_books=reference_books if guard_on else [],
+        min_favorite_ratio=float(cfg.mapping_guard_opt("min_favorite_ratio", 1.5)),
+        dump_book=os.environ.get("DEBUG_DUMP_BOOK") or str(cfg.mapping_guard_opt("dump_book", "") or ""),
     )
 
     # 6) Scan --------------------------------------------------------------------
@@ -507,6 +608,7 @@ def _scan(feeds, specs, ctx, cfg, by_fixture, by_participant, now, log):
         "near_misses": 0,
         "arbs_below_threshold": 0,
         "shadow_book_counter": Counter(),
+        "mapping_suspect_flags": Counter(),
     }
 
     for fx in feeds:
@@ -540,8 +642,21 @@ def _scan(feeds, specs, ctx, cfg, by_fixture, by_participant, now, log):
                 continue
             stats["markets_scanned"] += 1
 
-            real = _arb_for_universe(raw_market, spec, ctx.actionable, ctx, now)
-            shadow = _arb_for_universe(raw_market, spec, ctx.tracked, ctx, now)
+            # Outcome-mapping guard: drop books whose favourite/underdog look swapped (see above).
+            book_prices = _book_prices_by_outcome(raw_market)
+            suspects, ref_book, extremes = _detect_mapping_suspects(
+                book_prices, ctx.reference_books, ctx.min_favorite_ratio)
+            if suspects and extremes:
+                _log_mapping_suspects(log, match, home_team, away_team, spec,
+                                      book_prices, suspects, ref_book, extremes)
+                for b in suspects:
+                    stats["mapping_suspect_flags"][b] += 1
+            if ctx.dump_book and ctx.dump_book in book_prices:
+                _dump_book_outcomes(log, match, spec, home_team, away_team, ctx.dump_book,
+                                    book_prices[ctx.dump_book])
+
+            real = _arb_for_universe(raw_market, spec, ctx.actionable, ctx, now, suspects)
+            shadow = _arb_for_universe(raw_market, spec, ctx.tracked, ctx, now, suspects)
 
             # The broadest complete result for this market — used for diagnostics so we can
             # SEE how close the market got, even when nothing clears the arb threshold.
@@ -683,6 +798,10 @@ def _emit(opportunities, stats, cfg: Config, now, client, log):
         log.info("         Books by # of shadow arbs they appeared in (which to fund next):")
         for book, c in stats["shadow_book_counter"].most_common():
             log.info("           %-14s %s", book, c)
+    if stats.get("mapping_suspect_flags"):
+        log.info("         Books skipped as outcome-mapping-suspect (favourite/underdog flipped vs reference):")
+        for book, c in stats["mapping_suspect_flags"].most_common():
+            log.info("           %-14s %s market(s)", book, c)
     log.info("         Billable requests used this run: %s", client.billable_count)
     log.info("=" * 78)
 

@@ -41,6 +41,18 @@ markets:
   exclude_names: ["double chance"]   # case-insensitive substrings of marketName to drop
   allow_quarter_lines: false         # Asian quarter lines (e.g. 2.75) are NOT clean 2-way arbs
 
+mapping_guard:
+  # Outcome-mapping sanity check. We ALWAYS key odds off the canonical outcomeId, but a book can
+  # arrive (upstream) with home/away — or the two sides of a 2-way market — swapped, which would
+  # mint a phantom arb (a heavy favourite shown as the underdog). On any market with a clear
+  # favourite we compare each book to a trusted reference; a book that ranks the favourite and
+  # underdog the OPPOSITE way is marked outcome_mapping_suspect and dropped for that market only.
+  enabled: true
+  reference_books: [pinnacle, 1xbet]   # truth source — first one present in the market wins
+  min_favorite_ratio: 1.5              # only judge when reference underdog_odds >= this × favourite_odds
+  dump_book: ""                        # set to a slug (e.g. bcgame) to log its raw per-outcome odds
+                                       #   (env DEBUG_DUMP_BOOK overrides this for a one-off run)
+
 thresholds:
   min_roi_pct: 0.5                   # ignore arbs below this ROI
   roi_suspicious_pct: 8.0            # above this → flag suspicious (likely stale/error line)
