@@ -1626,6 +1626,12 @@
     "slug": "polymarket"
   },
   {
+    "bookmakerName": "Polymarket US",
+    "cloneOf": null,
+    "liveOdds": null,
+    "slug": "polymarket.us"
+  },
+  {
     "bookmakerName": "Powbet",
     "cloneOf": "allbritishcasino",
     "liveOdds": true,
