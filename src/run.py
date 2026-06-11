@@ -51,7 +51,7 @@ def _rolling_window(now: datetime) -> tuple[str, str]:
     via ``timedelta`` + a date/time recombination. Example: anytime Wed UTC -> through Fri 23:59:59Z.
     """
     now = now.astimezone(timezone.utc)
-    end_date = (now + timedelta(days=2)).date()
+    end_date = now.date() + timedelta(days=2)          # utcnow().date() + 2 days
     to_dt = datetime(end_date.year, end_date.month, end_date.day, 23, 59, 59, tzinfo=timezone.utc)
     return (now.strftime("%Y-%m-%dT%H:%M:%SZ"), to_dt.strftime("%Y-%m-%dT%H:%M:%SZ"))
 

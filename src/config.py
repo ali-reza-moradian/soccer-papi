@@ -51,13 +51,17 @@ class Config:
     def sport_id(self) -> int:
         return int(self.get("sport_id", default=10))
 
+    # NOTE: NO hardcoded date fallback. The scan window is computed at runtime in
+    # src/run.py (_resolve_window writes a rolling 2-day range onto target_window before
+    # these are read). If nothing has been set, these return None rather than leaking a
+    # stale literal date — a missing window is a bug to surface, not a date to invent.
     @property
-    def from_utc(self) -> str:
-        return self.get("target_window", "from_utc", default="2026-06-05T00:00:00Z")
+    def from_utc(self) -> str | None:
+        return self.get("target_window", "from_utc", default=None)
 
     @property
-    def to_utc(self) -> str:
-        return self.get("target_window", "to_utc", default="2026-06-08T23:59:59Z")
+    def to_utc(self) -> str | None:
+        return self.get("target_window", "to_utc", default=None)
 
     @property
     def actionable_books(self) -> list[str]:
