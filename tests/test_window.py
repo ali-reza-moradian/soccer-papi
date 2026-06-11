@@ -1,11 +1,10 @@
-"""Rolling 2-day scan window (change #2) and its Telegram banner label."""
+"""Rolling 2-day scan window (resolved in src/config.py) and its Telegram banner label."""
 from __future__ import annotations
 
 from datetime import datetime, timezone
 
 from src import formatting as fmt
-from src.config import Config, Secrets
-from src.run import _resolve_window, _rolling_window
+from src.config import _rolling_window, load_config
 
 
 def _utc(y, m, d, hh=0, mm=0):
@@ -37,18 +36,33 @@ def test_window_uses_utc_even_for_naive_input():
         "2026-06-10T00:01:00Z", "2026-06-12T23:59:59Z")
 
 
-def test_resolve_window_prefers_explicit_override():
-    cfg = Config(raw={"target_window": {"from_utc": "2026-01-01T00:00:00Z",
-                                        "to_utc": "2026-01-02T00:00:00Z"}},
-                 secrets=Secrets(None, None, None))
-    assert _resolve_window(cfg, _utc(2026, 6, 10, 0, 1)) == (
-        "2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z")
+def test_load_config_defaults_to_rolling_window_when_no_dates_set(monkeypatch, tmp_path):
+    # With no FROM_DATE/TO_DATE in the environment (the cron case), load_config must populate a
+    # rolling window: from = a current UTC instant, to = end of (UTC today + 2 days) 23:59:59Z.
+    for var in ("FROM_DATE", "TO_DATE"):
+        monkeypatch.delenv(var, raising=False)
+    cfg_file = tmp_path / "config.yaml"
+    cfg_file.write_text("tournaments:\n  pinned_ids: [16]\n", encoding="utf-8")
+
+    cfg = load_config(str(cfg_file))
+    now = datetime.now(timezone.utc)
+    exp_from, exp_to = _rolling_window(now)
+    # `to` is deterministic to the second within a single test run; `from` only to the day.
+    assert cfg.to_utc == exp_to
+    assert cfg.from_utc.startswith(now.strftime("%Y-%m-%d"))
+    assert cfg.from_utc.endswith("Z")
 
 
-def test_resolve_window_falls_back_to_rolling_when_no_dates_pinned():
-    cfg = Config(raw={}, secrets=Secrets(None, None, None))
-    assert _resolve_window(cfg, _utc(2026, 6, 10, 0, 1)) == (
-        "2026-06-10T00:01:00Z", "2026-06-12T23:59:59Z")
+def test_load_config_explicit_dispatch_override_still_wins(monkeypatch, tmp_path):
+    # An explicit FROM_DATE/TO_DATE (workflow_dispatch) overrides the rolling default, per-field.
+    monkeypatch.setenv("FROM_DATE", "2026-01-01T00:00:00Z")
+    monkeypatch.setenv("TO_DATE", "2026-01-02T00:00:00Z")
+    cfg_file = tmp_path / "config.yaml"
+    cfg_file.write_text("tournaments:\n  pinned_ids: [16]\n", encoding="utf-8")
+
+    cfg = load_config(str(cfg_file))
+    assert cfg.from_utc == "2026-01-01T00:00:00Z"
+    assert cfg.to_utc == "2026-01-02T00:00:00Z"
 
 
 def test_window_label_is_compact_utc():

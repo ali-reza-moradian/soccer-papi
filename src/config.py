@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import yaml
@@ -15,6 +16,20 @@ DEFAULT_CSV_PATH = os.path.join(REPO_ROOT, "data", "arbitrage_opportunities.csv"
 
 def _truthy(val: str | None) -> bool:
     return str(val).strip().lower() in {"1", "true", "yes", "on"} if val is not None else False
+
+
+def _rolling_window(now: datetime) -> tuple[str, str]:
+    """Rolling UTC scan window: ``from`` == now, ``to`` == end of the calendar day two days out.
+
+    All arithmetic is UTC. A naive ``now`` is treated as UTC (no local-timezone leak). ``to`` is
+    (UTC today + 2 days) at 23:59:59Z, so a run any time on day D covers D, D+1 and D+2. Month and
+    year rollovers fall out of ``timedelta`` plus a date/time recombination — e.g. Jun 29 -> Jul 1,
+    Dec 30 -> Jan 1 of the next year.
+    """
+    now = now.replace(tzinfo=timezone.utc) if now.tzinfo is None else now.astimezone(timezone.utc)
+    end_date = now.date() + timedelta(days=2)
+    to_dt = datetime(end_date.year, end_date.month, end_date.day, 23, 59, 59, tzinfo=timezone.utc)
+    return now.strftime("%Y-%m-%dT%H:%M:%SZ"), to_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 @dataclass
@@ -51,10 +66,10 @@ class Config:
     def sport_id(self) -> int:
         return int(self.get("sport_id", default=10))
 
-    # NOTE: NO hardcoded date fallback. The scan window is computed at runtime in
-    # src/run.py (_resolve_window writes a rolling 2-day range onto target_window before
-    # these are read). If nothing has been set, these return None rather than leaking a
-    # stale literal date — a missing window is a bug to surface, not a date to invent.
+    # NOTE: NO hardcoded date fallback. load_config() resolves the scan window — a rolling 2-day
+    # range from the current UTC instant, or a FROM_DATE/TO_DATE workflow_dispatch override — and
+    # writes it onto target_window before these are read. If somehow unset they return None rather
+    # than leaking a stale literal date: a missing window is a bug to surface, not a date to invent.
     @property
     def from_utc(self) -> str | None:
         return self.get("target_window", "from_utc", default=None)
@@ -121,11 +136,16 @@ def load_config(config_path: str | None = None) -> Config:
     with open(path, "r", encoding="utf-8") as fh:
         raw = yaml.safe_load(fh) or {}
 
-    # ---- workflow_dispatch / env overrides ----------------------------------
-    if os.environ.get("FROM_DATE"):
-        raw.setdefault("target_window", {})["from_utc"] = os.environ["FROM_DATE"]
-    if os.environ.get("TO_DATE"):
-        raw.setdefault("target_window", {})["to_utc"] = os.environ["TO_DATE"]
+    # ---- scan window: rolling 2-day default, workflow_dispatch overrides -----
+    # When a dispatch date is empty, default to the rolling window computed from the current UTC
+    # instant: from = now, to = end of (UTC today + 2 days) at 23:59:59Z. An explicit FROM_DATE /
+    # TO_DATE (or a target_window pinned in YAML) still wins, per-field. No literal dates live here.
+    roll_from, roll_to = _rolling_window(datetime.now(timezone.utc))
+    tw = raw.setdefault("target_window", {})
+    tw["from_utc"] = os.environ["FROM_DATE"] if os.environ.get("FROM_DATE") else (tw.get("from_utc") or roll_from)
+    tw["to_utc"] = os.environ["TO_DATE"] if os.environ.get("TO_DATE") else (tw.get("to_utc") or roll_to)
+
+    # ---- other workflow_dispatch / env overrides ----------------------------
     if os.environ.get("MIN_ROI_PCT"):
         try:
             raw.setdefault("thresholds", {})["min_roi_pct"] = float(os.environ["MIN_ROI_PCT"])

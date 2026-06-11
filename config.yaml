@@ -6,15 +6,15 @@ sport_id: 10                         # OddsPapi soccer sportId (confirm via /v4/
 
 # UTC window we care about. odds-by-tournaments returns ALL events for a league;
 # we filter to fixtures whose kickoff falls inside this window and is in the future.
-# NOTE: the window is computed dynamically at runtime in src/run.py — a rolling
-# "now -> end of (today + 2 days) 23:59:59Z" range — so there are NO hardcoded dates
+# NOTE: the window is computed dynamically in src/config.py (load_config) — a rolling
+# "now -> end of (today + 2 days) 23:59:59Z" UTC range — so there are NO hardcoded dates
 # here. A workflow_dispatch run may still override it via the FROM_DATE / TO_DATE env.
 
 tournaments:
-  match_name_regex: "world.cup|FIFA World Cup"   # FIFA World Cup only, via /v4/tournaments
-  # No pinned IDs: cleared so they are re-resolved from the API against the regex above on
-  # the next catalog refresh. (Previously pinned the Int. Friendly Games tournaments.)
-  pinned_ids: []
+  match_name_regex: "world.cup|fifa world cup"   # FIFA World Cup only, via /v4/tournaments
+  # Pinned to tournamentId 16 = "World Cup" — the only WC tournament carrying fixtures. Pinning
+  # short-circuits regex discovery; clear this list to re-resolve from the API against the regex.
+  pinned_ids: [16]
   national_teams_only: true          # World Cup is national-team only; exclude club/simulated variants
 
 bookmakers:

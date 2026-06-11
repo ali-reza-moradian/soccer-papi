@@ -10,7 +10,7 @@ import os
 import sys
 from collections import Counter
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any, Optional
 
@@ -41,29 +41,6 @@ def _leg_age_minutes(changed_at: Optional[str], now: datetime) -> Optional[float
     if dt is None:
         return None
     return (now - dt).total_seconds() / 60.0
-
-
-def _rolling_window(now: datetime) -> tuple[str, str]:
-    """Rolling UTC scan window: from = now, to = end of the calendar day 2 days out.
-
-    All arithmetic is UTC-only (no local timezone). ``to`` is today + 2 days at 23:59:59Z, so a
-    scan run any time on day D covers D, D+1 and D+2 — handling midnight and month-end rollovers
-    via ``timedelta`` + a date/time recombination. Example: anytime Wed UTC -> through Fri 23:59:59Z.
-    """
-    now = now.astimezone(timezone.utc)
-    end_date = now.date() + timedelta(days=2)          # utcnow().date() + 2 days
-    to_dt = datetime(end_date.year, end_date.month, end_date.day, 23, 59, 59, tzinfo=timezone.utc)
-    return (now.strftime("%Y-%m-%dT%H:%M:%SZ"), to_dt.strftime("%Y-%m-%dT%H:%M:%SZ"))
-
-
-def _resolve_window(cfg: Config, now: datetime) -> tuple[str, str]:
-    """The active window: an explicit workflow_dispatch override (FROM_DATE/TO_DATE) if both are
-    present, otherwise the rolling 2-day window computed from ``now``."""
-    win = cfg.raw.get("target_window") or {}
-    override_from, override_to = win.get("from_utc"), win.get("to_utc")
-    if override_from and override_to:
-        return str(override_from), str(override_to)
-    return _rolling_window(now)
 
 
 @dataclass
@@ -494,11 +471,10 @@ def _fetch_odds_per_book(client, cfg, tournament_ids, books, log):
 # --------------------------------------------------------------------------- #
 def run_cycle(cfg: Config, log) -> int:
     now = datetime.now(timezone.utc)
-    # Rolling 2-day UTC window (or a workflow_dispatch override). Write it back onto the config so
-    # every downstream consumer (names refresh, _scan, Telegram header) sees the same range.
-    from_utc, to_utc = _resolve_window(cfg, now)
-    cfg.raw.setdefault("target_window", {})["from_utc"] = from_utc
-    cfg.raw["target_window"]["to_utc"] = to_utc
+    # The scan window — a rolling 2-day UTC range, or a FROM_DATE/TO_DATE workflow_dispatch
+    # override — is resolved in load_config() and lives on cfg.from_utc / cfg.to_utc, so every
+    # downstream consumer (names refresh, _scan, Telegram header) sees the same range.
+    from_utc, to_utc = cfg.from_utc, cfg.to_utc
     log.info("=" * 78)
     log.info("SCAN @ %s | window %s -> %s UTC", fmt.fmt_dt(now), from_utc, to_utc)
 
