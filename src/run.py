@@ -5,11 +5,12 @@ Designed to be frugal: ~1 billable request per cycle (plus an occasional names r
 """
 from __future__ import annotations
 
+import json
 import os
 import sys
 from collections import Counter
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any, Optional
 
@@ -42,6 +43,29 @@ def _leg_age_minutes(changed_at: Optional[str], now: datetime) -> Optional[float
     return (now - dt).total_seconds() / 60.0
 
 
+def _rolling_window(now: datetime) -> tuple[str, str]:
+    """Rolling UTC scan window: from = now, to = end of the calendar day 2 days out.
+
+    All arithmetic is UTC-only (no local timezone). ``to`` is today + 2 days at 23:59:59Z, so a
+    scan run any time on day D covers D, D+1 and D+2 — handling midnight and month-end rollovers
+    via ``timedelta`` + a date/time recombination. Example: anytime Wed UTC -> through Fri 23:59:59Z.
+    """
+    now = now.astimezone(timezone.utc)
+    end_date = (now + timedelta(days=2)).date()
+    to_dt = datetime(end_date.year, end_date.month, end_date.day, 23, 59, 59, tzinfo=timezone.utc)
+    return (now.strftime("%Y-%m-%dT%H:%M:%SZ"), to_dt.strftime("%Y-%m-%dT%H:%M:%SZ"))
+
+
+def _resolve_window(cfg: Config, now: datetime) -> tuple[str, str]:
+    """The active window: an explicit workflow_dispatch override (FROM_DATE/TO_DATE) if both are
+    present, otherwise the rolling 2-day window computed from ``now``."""
+    win = cfg.raw.get("target_window") or {}
+    override_from, override_to = win.get("from_utc"), win.get("to_utc")
+    if override_from and override_to:
+        return str(override_from), str(override_to)
+    return _rolling_window(now)
+
+
 @dataclass
 class EngineCtx:
     actionable: set[str]
@@ -51,6 +75,7 @@ class EngineCtx:
     clone_group_of: Any
     max_leg_age_minutes: float
     unknown_limit_fallback: float
+    low_confidence_limit_floor: float = 10.0
     # Outcome-mapping guard: trusted reference books (first present wins), the heavy-favourite
     # gate, and an optional book whose raw per-outcome odds we dump for debugging. Empty
     # reference_books => guard disabled (no-op).
@@ -141,7 +166,7 @@ def _arb_for_universe(
     chosen = select_legs(cands_by_outcome)
     if not chosen:
         return None
-    return compute_arb(chosen, ctx.unknown_limit_fallback)
+    return compute_arb(chosen, ctx.unknown_limit_fallback, ctx.low_confidence_limit_floor)
 
 
 # --------------------------------------------------------------------------- #
@@ -469,9 +494,13 @@ def _fetch_odds_per_book(client, cfg, tournament_ids, books, log):
 # --------------------------------------------------------------------------- #
 def run_cycle(cfg: Config, log) -> int:
     now = datetime.now(timezone.utc)
+    # Rolling 2-day UTC window (or a workflow_dispatch override). Write it back onto the config so
+    # every downstream consumer (names refresh, _scan, Telegram header) sees the same range.
+    from_utc, to_utc = _resolve_window(cfg, now)
+    cfg.raw.setdefault("target_window", {})["from_utc"] = from_utc
+    cfg.raw["target_window"]["to_utc"] = to_utc
     log.info("=" * 78)
-    log.info("SCAN @ %s | window %s -> %s (Eastern Time)",
-             fmt.fmt_dt(now), fmt.fmt_dt(cfg.from_utc), fmt.fmt_dt(cfg.to_utc))
+    log.info("SCAN @ %s | window %s -> %s UTC", fmt.fmt_dt(now), from_utc, to_utc)
 
     if not cfg.secrets.odds_papi_key:
         log.error("ODDS_PAPI_KEY not set — cannot run.")
@@ -575,6 +604,7 @@ def run_cycle(cfg: Config, log) -> int:
         clone_group_of=clone_group_of,
         max_leg_age_minutes=float(cfg.threshold("max_leg_age_minutes", 20)),
         unknown_limit_fallback=float(cfg.threshold("unknown_limit_fallback", 100)),
+        low_confidence_limit_floor=float(cfg.threshold("low_confidence_limit_floor", 10)),
         reference_books=reference_books if guard_on else [],
         min_favorite_ratio=float(cfg.mapping_guard_opt("min_favorite_ratio", 1.5)),
         dump_book=os.environ.get("DEBUG_DUMP_BOOK") or str(cfg.mapping_guard_opt("dump_book", "") or ""),
@@ -675,7 +705,11 @@ def _scan(feeds, specs, ctx, cfg, by_fixture, by_participant, now, log):
             for res in (real, shadow):
                 if res is None or not res.is_arb:
                     continue
-                if res.roi_pct < min_roi or res.t_max < min_stake:
+                if res.roi_pct < min_roi:
+                    continue
+                # Low-confidence arbs (null/tiny limit, e.g. thin Polymarket/Kalshi) are kept even
+                # below the stake floor — the human judges them; the flag is carried to Telegram.
+                if res.t_max < min_stake and not res.low_confidence:
                     continue
 
                 actionable = all(leg.book in ctx.actionable for leg in res.legs)
@@ -748,6 +782,72 @@ def _rank_key(cfg: Config):
     return lambda o: o.rank_profit
 
 
+# --------------------------------------------------------------------------- #
+# Telegram notify throttle (hourly "no real arbs" summary)                      #
+# --------------------------------------------------------------------------- #
+NOTIFY_STATE_FILE = "notify_state.json"
+
+
+def _notify_state_path(cfg: Config) -> str:
+    return os.path.join(cfg.cache_dir, NOTIFY_STATE_FILE)
+
+
+def _load_notify_state(cfg: Config) -> dict[str, Any]:
+    try:
+        with open(_notify_state_path(cfg), "r", encoding="utf-8") as fh:
+            return json.load(fh) or {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _save_notify_state(cfg: Config, state: dict[str, Any]) -> None:
+    try:
+        os.makedirs(cfg.cache_dir, exist_ok=True)
+        with open(_notify_state_path(cfg), "w", encoding="utf-8") as fh:
+            json.dump(state, fh)
+    except OSError:  # pragma: no cover - disk error
+        pass
+
+
+def _shadow_summary(opp: Opportunity, cfg: Config) -> str:
+    """One-line summary of a single shadow arb for the 'no real arbs' notice."""
+    market = fmt.market_label(opp.spec.label, opp.spec.family, opp.spec.line)
+    books = "+".join(sorted({leg.book for leg in opp.res.legs}))
+    flag = " 🌫 low-confidence" if opp.res.low_confidence else ""
+    return (f"👀 {opp.match} | {market} | ROI {fmt.num2(opp.res.roi_pct)}% · "
+            f"T_max {fmt.money(opp.res.t_max)} · {books}{flag}")
+
+
+def _send_empty_notice(opportunities, stats, cfg: Config, now: datetime, log, window_line: str) -> int:
+    """On zero real arbs, send a short summary at most once per empty_notice_interval_minutes."""
+    interval_min = float(cfg.telegram_opt("empty_notice_interval_minutes", 60))
+    state = _load_notify_state(cfg)
+    last = _parse_iso(state.get("last_empty_notice_utc"))
+    if last is not None and (now - last).total_seconds() < interval_min * 60.0:
+        log.info("Zero real arbs; last 'no real arbs' notice was %.1f min ago (< %s) — staying quiet.",
+                 (now - last).total_seconds() / 60.0, interval_min)
+        return 0
+
+    shadow_count = stats["shadow_arbs"]
+    lines = [window_line, f"⚽ No real arbs found — shadow count: {shadow_count}"]
+    shadows = [o for o in opportunities if not o.actionable]
+    if shadows:
+        lines.append(_shadow_summary(max(shadows, key=_rank_key(cfg)), cfg))
+    msg = "\n".join(l for l in lines if l)
+
+    if cfg.dry_run:
+        log.info("[dry_run] Would send hourly 'no real arbs' notice (shadow count: %s).", shadow_count)
+        return 0
+    if not cfg.secrets.telegram_ready:
+        log.warning("Telegram not configured — would have sent 'no real arbs' notice.")
+        return 0
+    if send_message(cfg.secrets.telegram_bot_key, cfg.secrets.telegram_group_id, msg, log):
+        state["last_empty_notice_utc"] = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+        _save_notify_state(cfg, state)
+        return 1
+    return 0
+
+
 def _emit(opportunities, stats, cfg: Config, now, client, log):
     # --- CSV ---
     if opportunities:
@@ -758,7 +858,9 @@ def _emit(opportunities, stats, cfg: Config, now, client, log):
     else:
         log.info("CSV: no opportunities to write.")
 
-    # --- Telegram (top 3) ---
+    # --- Telegram ---
+    # A window banner heads every message so the group always knows the range we covered.
+    window_line = f"📅 Scanning: {fmt.window_label(cfg.from_utc, cfg.to_utc)}"
     rank = _rank_key(cfg)
     # Prefer actionable, non-suspicious arbs for the headline three.
     preferred = [o for o in opportunities if o.actionable and not o.suspicious]
@@ -767,24 +869,25 @@ def _emit(opportunities, stats, cfg: Config, now, client, log):
     top = ordered[:3]
 
     sent = 0
-    if top and not cfg.dry_run:
-        if cfg.secrets.telegram_ready:
-            header = (f"⚽ <b>Arb scan</b> — {fmt.fmt_dt(now)}\n"
+    if stats["real_arbs"] >= 1:
+        # At least one real (actionable) arb -> send the full top-3 alert every cycle.
+        if cfg.dry_run:
+            log.info("[dry_run] Would send %s opportunities to Telegram.", len(top))
+        elif not cfg.secrets.telegram_ready:
+            log.warning("Telegram not configured — would have sent %s opportunities.", len(top))
+        else:
+            header = (f"{window_line}\n"
+                      f"⚽ <b>Arb scan</b> — {fmt.fmt_dt(now)}\n"
                       f"{stats['real_arbs']} real · {stats['shadow_arbs']} shadow · "
                       f"top {len(top)} below")
             msg = build_message([_telegram_item(o) for o in top], header,
                                 str(cfg.telegram_opt("local_tz", "America/Toronto")))
             if send_message(cfg.secrets.telegram_bot_key, cfg.secrets.telegram_group_id, msg, log):
                 sent = len(top)
-        else:
-            log.warning("Telegram not configured — would have sent %s opportunities.", len(top))
-    elif top and cfg.dry_run:
-        log.info("[dry_run] Would send %s opportunities to Telegram.", len(top))
-    elif not top:
-        log.info("No opportunities to send to Telegram this cycle.")
-        if cfg.telegram_opt("send_when_empty", False) and cfg.secrets.telegram_ready and not cfg.dry_run:
-            send_message(cfg.secrets.telegram_bot_key, cfg.secrets.telegram_group_id,
-                         f"⚽ Arb scan {fmt.fmt_time(now)}: no opportunities this cycle.", log)
+    else:
+        # Zero real arbs -> at most one short summary per hour (with the best shadow arb, if any).
+        log.info("No real arbs this cycle (%s shadow). Considering hourly summary.", stats["shadow_arbs"])
+        sent = _send_empty_notice(opportunities, stats, cfg, now, log, window_line)
 
     # --- Summary ---
     log.info("-" * 78)

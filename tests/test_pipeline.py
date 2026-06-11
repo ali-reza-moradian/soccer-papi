@@ -211,6 +211,61 @@ def test_shadow_arb_when_best_leg_is_unfunded():
     assert stats["shadow_book_counter"]["stake"] == 1
 
 
+def test_low_confidence_arb_kept_below_stake_floor():
+    """A thin-liquidity arb (tiny limits, T_max < min_total_stake) is kept because it is
+    low_confidence — the human judges it; it is NOT discarded (polish item)."""
+    payload = [{
+        "fixtureId": "fxlc", "participant1Id": 35, "participant2Id": 34, "tournamentId": 17,
+        "statusId": 0, "hasOdds": True, "startTime": KICKOFF, "updatedAt": RECENT,
+        "bookmakerOdds": {
+            "kalshi": {"bookmakerIsActive": True, "suspended": False, "fixturePath": "k",
+                       "markets": {"106": {"marketActive": True, "outcomes": {
+                           "1": {"players": _player(2.10, 4)},      # only $4 of liquidity
+                           "2": {"players": _player(1.50, 4)}}}}},
+            "polymarket": {"bookmakerIsActive": True, "suspended": False, "fixturePath": "p",
+                           "markets": {"106": {"marketActive": True, "outcomes": {
+                               "1": {"players": _player(1.50, 4)},
+                               "2": {"players": _player(2.05, 4)}}}}},
+        },
+    }]
+    feeds = parse_odds_payload(payload)
+    specs, _ = build_market_specs(MARKETS_JSON, 10, ["double chance"])
+    group_of = build_clone_group_fn(BOOKS_JSON)
+    ctx = _ctx(group_of, ["kalshi", "polymarket"], ["kalshi", "polymarket"])
+    opps, stats = _scan(feeds, specs, ctx, _cfg(), {}, {"35": "USA", "34": "Germany"},
+                        NOW, get_logger("test"))
+    # T_max (~$8) is below the $20 stake floor, but the arb survives, flagged low_confidence.
+    assert stats["real_arbs"] == 1
+    assert opps[0].res.t_max < 20
+    assert opps[0].res.low_confidence
+
+
+def test_empty_notice_throttled_to_once_per_interval(monkeypatch, tmp_path):
+    """Zero real arbs -> at most one 'no real arbs' Telegram message per interval (polish item)."""
+    import src.run as run
+    sent: list[str] = []
+    monkeypatch.setattr(run, "send_message", lambda tok, chat, text, log: bool(sent.append(text)) or True)
+
+    raw = {"telegram": {"empty_notice_interval_minutes": 60},
+           "target_window": {"from_utc": "2026-06-10T00:00:00Z", "to_utc": "2026-06-12T23:59:59Z"}}
+    cfg = Config(raw=raw, secrets=Secrets(None, "bot", "chat"), cache_dir=str(tmp_path), dry_run=False)
+    stats = {"shadow_arbs": 2, "real_arbs": 0}
+    banner = "📅 Scanning: Jun 10 – Jun 12 UTC"
+
+    n1 = run._send_empty_notice([], stats, cfg, NOW, get_logger("t"), banner)
+    assert n1 == 1 and len(sent) == 1
+    assert "No real arbs found — shadow count: 2" in sent[0]
+    assert banner in sent[0]
+
+    # 10 minutes later, still within the hour -> suppressed.
+    n2 = run._send_empty_notice([], stats, cfg, NOW + timedelta(minutes=10), get_logger("t"), banner)
+    assert n2 == 0 and len(sent) == 1
+
+    # 61 minutes later -> the throttle window has passed, so it sends again.
+    n3 = run._send_empty_notice([], stats, cfg, NOW + timedelta(minutes=61), get_logger("t"), banner)
+    assert n3 == 1 and len(sent) == 2
+
+
 def test_stale_legs_are_skipped():
     payload = _payload("pinnacle", "1xbet")
     # Make the 1xbet Under price stale.

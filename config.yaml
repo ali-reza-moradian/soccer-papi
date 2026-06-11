@@ -6,35 +6,29 @@ sport_id: 10                         # OddsPapi soccer sportId (confirm via /v4/
 
 # UTC window we care about. odds-by-tournaments returns ALL events for a league;
 # we filter to fixtures whose kickoff falls inside this window and is in the future.
-target_window:
-  from_utc: "2026-06-05T00:00:00Z"
-  to_utc:   "2026-06-08T23:59:59Z"
+# NOTE: the window is computed dynamically at runtime in src/run.py — a rolling
+# "now -> end of (today + 2 days) 23:59:59Z" range — so there are NO hardcoded dates
+# here. A workflow_dispatch run may still override it via the FROM_DATE / TO_DATE env.
 
 tournaments:
-  match_name_regex: "friendl"        # used to discover friendlies via /v4/tournaments
-  # Resolved 2026-06-05 from the cached catalog (senior national-team internationals):
-  #   851 = "Int. Friendly Games"    (men's senior,   International)   <- primary
-  #   852 = "Int. Friendly Games W"  (women's senior, International)
-  # Youth (U21/U20/... ids 854,855,...), club, and simulated (SRL) leagues are excluded.
-  # Drop 852 if you only want men's; clear this list to fall back to regex discovery.
-  pinned_ids: [851, 852]
-  national_teams_only: true          # prefer national-team friendlies over club/simulated variants
+  match_name_regex: "world.cup|FIFA World Cup"   # FIFA World Cup only, via /v4/tournaments
+  # No pinned IDs: cleared so they are re-resolved from the API against the regex above on
+  # the next catalog refresh. (Previously pinned the Int. Friendly Games tournaments.)
+  pinned_ids: []
+  national_teams_only: true          # World Cup is national-team only; exclude club/simulated variants
 
 bookmakers:
-  # Books I can actually bet right now (funded accounts). Real arbs use only these.
-  # kalshi temporarily removed (no funds) — still TRACKED so shadow arbs show what it
-  # would add; re-add it here to start placing real bets on it again.
-  actionable: [pinnacle, 1xbet, polymarket]
-  # Everything we want stats on. Shadow arbs may use any of these.
-  tracked:    [pinnacle, 1xbet, kalshi, polymarket, stake, cloudbet, bcgame, rollbit, sx.bet]
+  # Exactly four books are scanned now. Both lists are identical, so every arb is
+  # actionable and shadow arbs operate across the same 4 books.
+  actionable: [kalshi, polymarket, pinnacle, 1xbet]
+  tracked:    [kalshi, polymarket, pinnacle, 1xbet]
   # Treated as betting exchanges: liquidity from exchangeMeta/limit, may charge commission.
-  # (Confirmed slugs from the cached bookmakers catalog.)
-  exchanges:  [kalshi, polymarket, sx.bet, betfair-ex, matchbook, prophetx, limitless-ex, orbitx, overtime.io]
+  # kalshi <-> polymarket arbs are valid exchange-vs-exchange opportunities and are NOT filtered.
+  exchanges:  [kalshi, polymarket]
   # Commission charged on net winnings (decimal). Sportsbooks default to 0.
   commission:
     kalshi: 0.0
     polymarket: 0.0
-    sx.bet: 0.0
 
 markets:
   exclude: [double_chance]           # market families to never scan (overlap 1x2 → bad for arbing)
@@ -62,11 +56,15 @@ thresholds:
   closest_report_count: 10           # how many "closest to an arb" markets to print each run
   csv_dedup_minutes: 90              # same signature seen within this window → UPDATE row, don't duplicate
   unknown_limit_fallback: 100        # T_max fallback when NO leg has a known limit (marks low_confidence)
+  low_confidence_limit_floor: 10     # any leg with limit null or < this ($) → low_confidence (kept, flagged)
 
 telegram:
   rank_by: profit                    # profit (= roi * T_max) | roi
-  send_when_empty: false             # stay quiet when zero arbs (avoid spam); always logged regardless
   local_tz: "America/Toronto"
+  # When zero REAL arbs are found, send at most ONE short "no real arbs" summary per this many
+  # minutes (default 60) — keeps the group informed without spamming every 15-min cycle. The
+  # summary includes the shadow-arb count and the single best shadow arb if any exist.
+  empty_notice_interval_minutes: 60
 
 budget:
   safety_margin: 15                  # pre-flight guard: if (limit - count) <= this, skip the scan (exit 0)

@@ -132,8 +132,14 @@ def select_legs(outcomes: dict[int, list[Candidate]]) -> Optional[list[Candidate
 # --------------------------------------------------------------------------- #
 # Arb computation                                                              #
 # --------------------------------------------------------------------------- #
-def compute_arb(candidates: list[Candidate], unknown_limit_fallback: float = 100.0) -> ArbResult:
-    """Compute the full arbitrage result for one chosen leg per outcome."""
+def compute_arb(candidates: list[Candidate], unknown_limit_fallback: float = 100.0,
+                low_confidence_limit_floor: float = 10.0) -> ArbResult:
+    """Compute the full arbitrage result for one chosen leg per outcome.
+
+    ``low_confidence_limit_floor`` marks the arb low_confidence (but never discards it) when any
+    leg's known limit is below this dollar amount — common on thin Polymarket/Kalshi books where
+    a tiny or unknown limit means the human, not the bot, should judge whether to take it.
+    """
     if not candidates:
         raise ValueError("compute_arb requires at least one candidate")
 
@@ -141,7 +147,8 @@ def compute_arb(candidates: list[Candidate], unknown_limit_fallback: float = 100
     roi = (1.0 / S) - 1.0
 
     known = [c for c in candidates if c.limit and c.limit > 0]
-    low_confidence = any((c.limit is None or c.limit <= 0) for c in candidates)
+    # Null/non-positive limit, or a known-but-tiny limit (< floor), all => low confidence.
+    low_confidence = any((c.limit is None or c.limit < low_confidence_limit_floor) for c in candidates)
 
     if known:
         # T_max is the tightest L_i * o_i_eff * S across legs with a known limit.

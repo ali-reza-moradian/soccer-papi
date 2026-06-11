@@ -5,22 +5,21 @@ name: arb-scan
 #   append CSV -> Telegram top 3 -> commit data/ back to main.
 on:
   schedule:
-    # Every 3 hours. NOTE: OddsPapi returns one bookmaker per odds call, so a cycle costs one
-    # request per granted book (no per-cycle cap — every scan fetches ALL usable books). Cadence
-    # controls how long your monthly quota lasts; 3h is a sensible default across the window.
-    # If the key runs out (HTTP 429/403) the run prints "API Key exhausted" and exits cleanly.
-    # Dispatch manually for bursts during a live window.
-    - cron: "0 */3 * * *"
+    # Every 15 minutes. NOTE: OddsPapi returns one bookmaker per odds call, so a cycle costs one
+    # request per granted book (no per-cycle cap — every scan fetches ALL usable books). If the key
+    # runs out (HTTP 429/403) the run prints "API Key exhausted" and exits cleanly. The scan window
+    # is a rolling 2-day range computed at runtime; dispatch manually only to override it.
+    - cron: "*/15 * * * *"
   workflow_dispatch:
     inputs:
       from_date:
-        description: "Window start (ISO 8601 UTC). Default: config.yaml"
+        description: "Window start override (ISO 8601 UTC). Blank = rolling 2-day window."
         required: false
-        default: "2026-06-05T00:00:00Z"
+        default: ""
       to_date:
-        description: "Window end (ISO 8601 UTC). Default: config.yaml"
+        description: "Window end override (ISO 8601 UTC). Blank = rolling 2-day window."
         required: false
-        default: "2026-06-08T23:59:59Z"
+        default: ""
       min_roi_pct:
         description: "Minimum ROI %% to record/report"
         required: false
@@ -35,10 +34,11 @@ on:
         type: boolean
         default: false
 
-# Serialise runs so they never race the commit-back.
+# Cancel any in-flight run when a new one starts, so a stalled scan never lets runs pile up
+# (15-min cadence). The loser is cancelled, not queued.
 concurrency:
   group: arb-scan
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 permissions:
   contents: write

@@ -154,6 +154,32 @@ def test_unknown_limit_marks_low_confidence():
     assert res.binding_book == "pinnacle"
 
 
+def test_tiny_known_limit_marks_low_confidence():
+    """A known-but-thin limit (< floor) on an exchange leg flags low_confidence (kept, not dropped)."""
+    a = _cand(1, "Yes", "polymarket", 2.10, limit=4, is_exchange=True)   # only $4 available
+    b = _cand(2, "No", "kalshi", 2.10, limit=2000, is_exchange=True)
+    res = compute_arb([a, b], low_confidence_limit_floor=10.0)
+    assert res.is_arb
+    assert res.low_confidence
+    # A comfortable limit on both legs does NOT flag low_confidence.
+    fat = compute_arb([_cand(1, "Yes", "polymarket", 2.10, limit=500, is_exchange=True),
+                       _cand(2, "No", "kalshi", 2.10, limit=500, is_exchange=True)],
+                      low_confidence_limit_floor=10.0)
+    assert not fat.low_confidence
+
+
+def test_exchange_vs_exchange_arb_is_valid():
+    """Kalshi <-> Polymarket (exchange vs exchange) is a legitimate arb — nothing filters it out."""
+    a = _cand(1, "Yes", "kalshi", 2.10, limit=1000, is_exchange=True)
+    b = _cand(2, "No", "polymarket", 2.05, limit=1000, is_exchange=True)
+    chosen = select_legs({1: [a], 2: [b]})
+    assert chosen is not None
+    res = compute_arb(chosen)
+    assert res.is_arb
+    assert res.involves_exchange
+    assert {leg.book for leg in res.legs} == {"kalshi", "polymarket"}
+
+
 def test_signature_is_stable_and_order_independent():
     over = _cand(106, "Over", "bet365", 2.10, limit=1500)
     under = _cand(107, "Under", "1xbet", 2.05, limit=5000)

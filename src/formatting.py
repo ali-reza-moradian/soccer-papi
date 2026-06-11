@@ -90,6 +90,18 @@ def date_local(ts: Any, tz_name: str = LOCAL_TZ_NAME) -> str:
     return to_local(dt, tz_name).strftime("%Y-%m-%d") if dt is not None else ""
 
 
+def window_label(from_utc: Any, to_utc: Any) -> str:
+    """Compact UTC range for the Telegram header, e.g. ``Jun 10 – Jun 12 UTC``.
+
+    Deliberately UTC (not Eastern) because the scan window itself is defined in UTC.
+    """
+    a, b = parse_iso(from_utc), parse_iso(to_utc)
+    if a is None or b is None:
+        return ""
+    a, b = a.astimezone(timezone.utc), b.astimezone(timezone.utc)
+    return f"{a.strftime('%b')} {a.day} – {b.strftime('%b')} {b.day} UTC"
+
+
 # --------------------------------------------------------------------------- #
 # Money / numbers                                                               #
 # --------------------------------------------------------------------------- #
