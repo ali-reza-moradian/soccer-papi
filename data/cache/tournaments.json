@@ -2133,7 +2133,7 @@
     "categoryName": "Brazil",
     "categorySlug": "brazil",
     "futureFixtures": 260,
-    "liveFixtures": 2,
+    "liveFixtures": 0,
     "tournamentId": 390,
     "tournamentName": "Brasileiro Serie B",
     "tournamentSlug": "brasileiro-serie-b",
@@ -3073,7 +3073,7 @@
     "categoryName": "Ukraine",
     "categorySlug": "ukraine",
     "futureFixtures": 0,
-    "liveFixtures": 0,
+    "liveFixtures": 1,
     "tournamentId": 691,
     "tournamentName": "Persha Liga",
     "tournamentSlug": "persha-liga",
@@ -3817,7 +3817,7 @@
     "tournamentId": 851,
     "tournamentName": "Int. Friendly Games",
     "tournamentSlug": "int-friendly-games",
-    "upcomingFixtures": 1
+    "upcomingFixtures": 0
   },
   {
     "categoryName": "International",
@@ -3832,7 +3832,7 @@
   {
     "categoryName": "International Clubs",
     "categorySlug": "international-clubs",
-    "futureFixtures": 1,
+    "futureFixtures": 2,
     "liveFixtures": 10,
     "tournamentId": 853,
     "tournamentName": "Club Friendly Games",
@@ -6733,7 +6733,7 @@
     "categoryName": "Brazil",
     "categorySlug": "brazil",
     "futureFixtures": 277,
-    "liveFixtures": 0,
+    "liveFixtures": 1,
     "tournamentId": 15281,
     "tournamentName": "U20 Paulista",
     "tournamentSlug": "u20-paulista",
@@ -7263,7 +7263,7 @@
     "categoryName": "Malawi",
     "categorySlug": "malawi",
     "futureFixtures": 192,
-    "liveFixtures": 0,
+    "liveFixtures": 1,
     "tournamentId": 19494,
     "tournamentName": "Super League",
     "tournamentSlug": "super-league",
@@ -7413,7 +7413,7 @@
     "categoryName": "Sweden",
     "categorySlug": "sweden",
     "futureFixtures": 561,
-    "liveFixtures": 0,
+    "liveFixtures": 1,
     "tournamentId": 20782,
     "tournamentName": "Division 2, Promotion Playoffs",
     "tournamentSlug": "division-2-promotion-playoffs",
@@ -8153,7 +8153,7 @@
     "categoryName": "Spain Amateur",
     "categorySlug": "spain-amateur",
     "futureFixtures": 0,
-    "liveFixtures": 0,
+    "liveFixtures": 1,
     "tournamentId": 26034,
     "tournamentName": "Tercera Federacion, Group 9",
     "tournamentSlug": "tercera-federacion-group-9",
@@ -9203,11 +9203,11 @@
     "categoryName": "USA",
     "categorySlug": "usa",
     "futureFixtures": 198,
-    "liveFixtures": 2,
+    "liveFixtures": 0,
     "tournamentId": 28165,
     "tournamentName": "USL League One",
     "tournamentSlug": "usl-league-one",
-    "upcomingFixtures": 0
+    "upcomingFixtures": 1
   },
   {
     "categoryName": "Virtual Football",
@@ -9457,7 +9457,7 @@
     "tournamentId": 28743,
     "tournamentName": "USL League Two",
     "tournamentSlug": "usl-league-two",
-    "upcomingFixtures": 21
+    "upcomingFixtures": 19
   },
   {
     "categoryName": "Turkiye Amateur",
@@ -14553,7 +14553,7 @@
     "categoryName": "Australia",
     "categorySlug": "australia",
     "futureFixtures": 60,
-    "liveFixtures": 0,
+    "liveFixtures": 1,
     "tournamentId": 45671,
     "tournamentName": "Victoria Premier League, Women",
     "tournamentSlug": "victoria-premier-league-women",
@@ -15662,7 +15662,7 @@
   {
     "categoryName": "Croatia",
     "categorySlug": "croatia",
-    "futureFixtures": 0,
+    "futureFixtures": 1,
     "liveFixtures": 0,
     "tournamentId": 48060,
     "tournamentName": "U19 Prva NL Juniori",
@@ -16272,7 +16272,7 @@
   {
     "categoryName": "Kenya",
     "categorySlug": "kenya",
-    "futureFixtures": 2,
+    "futureFixtures": 8,
     "liveFixtures": 0,
     "tournamentId": 48935,
     "tournamentName": "Super League",
