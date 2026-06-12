@@ -128,16 +128,20 @@ _BOOK_ALIAS: dict[str, str] = {
     "betfair_ex_uk": "betfair-ex", "betfair_ex_eu": "betfair-ex", "betfair": "betfair-ex",
     "betfair_sb_uk": "betfair-spb",
     "unibet": "unibet", "unibet_uk": "unibet", "unibet_eu": "unibet",
-    "leovegas": "leovegas", "leovegas_uk": "leovegas.uk",
+    "unibet_nl": "unibet", "unibet_se": "unibet", "unibet_fr": "unibet",
+    "leovegas": "leovegas", "leovegas_uk": "leovegas.uk", "leovegas_se": "leovegas",
     "betway": "betway",
     "coral": "coral",
     "ladbrokes": "ladbrokes", "ladbrokes_uk": "ladbrokes",
     "paddypower": "paddypower", "paddy_power": "paddypower",
     "boylesports": "boylesports",
     "grosvenor": "grosvenor",
-    "smarkets": "smarkets",          # NOTE: not in the OddsPapi catalog yet -> filtered/logged until it is
     "matchbook": "matchbook",
-    "betfred": "betfred",
+    "betfred": "betfred", "betfred_uk": "betfred",
+    # NOTE: betvictor & smarkets are GRANTED by the plan but absent from the cached /v4/bookmakers
+    # catalog (Jun 11) — they stay filtered/logged until the bookmaker catalog is refreshed.
+    "betvictor": "betvictor",
+    "smarkets": "smarkets",
     "888sport": "888sport", "sport888": "888sport",
     "casumo": "casumo",
     "skybet": "skybet", "sky_bet": "skybet",

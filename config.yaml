@@ -24,11 +24,19 @@ bookmakers:
   tracked:    [kalshi, polymarket, pinnacle, 1xbet]
   # Treated as betting exchanges: liquidity from exchangeMeta/limit, may charge commission.
   # kalshi <-> polymarket arbs are valid exchange-vs-exchange opportunities and are NOT filtered.
-  exchanges:  [kalshi, polymarket]
-  # Commission charged on net winnings (decimal). Sportsbooks default to 0.
+  # betfair-ex/betfair-spb/matchbook/smarkets arrive via the the-odds-api feed (no exchangeMeta),
+  # so they carry no live liquidity (limit=None -> low_confidence) but DO charge commission.
+  exchanges:  [kalshi, polymarket, betfair-ex, betfair-spb, matchbook, smarkets]
+  # Commission charged on net winnings (decimal). Sportsbooks default to 0. The exchange rates below
+  # are CONSERVATIVE DEFAULTS — adjust to your actual account tier. Applied via eff_odds in BOTH the
+  # actionable and shadow universes, so observed exchange arbs are already net of commission.
   commission:
     kalshi: 0.0
     polymarket: 0.0
+    betfair-ex: 0.05      # adjustable — standard Betfair Exchange ~2-5%; conservative 5%
+    betfair-spb: 0.05     # adjustable — Betfair Sportsbook-via-exchange; conservative 5%
+    matchbook: 0.02       # adjustable — Matchbook ~1.5-2%; conservative 2%
+    smarkets: 0.02        # adjustable — Smarkets ~2%; conservative 2%
 
 theoddsapi:
   # Supplemental SECOND data source (the-odds-api.com, key in ODDS_API_KEY). Fills WC gaps OddsPapi
@@ -44,9 +52,39 @@ theoddsapi:
   # sane odds across a few runs, THEN flip to true.
   actionable: false
   commence_tolerance_minutes: 120    # a fixture matches only if team identity AND kickoff agree within this
-  # Optional canonical-slug allow-list (post-alias). Omit/empty = ingest every catalog book the feed
-  # returns. onexbet is aliased to 1xbet in src/theoddsapi.py.
-  books: [1xbet, bet365, unibet, williamhill, sbobet]
+  # Canonical-slug allow-list (post-alias). Every the-odds-api book confirmed present in the
+  # OddsPapi catalog from the eu/uk shadow run. Omit/empty would ingest all catalog books the feed
+  # returns. Pinnacle is intentionally absent — OddsPapi sources it actively, so we defer (no
+  # double-sourcing). Aliases (onexbet→1xbet, betfair_ex_*→betfair-ex, unibet_*→unibet, …) live in
+  # src/theoddsapi.py.
+  books:
+    - 1xbet
+    - unibet
+    - williamhill
+    - paddypower
+    - skybet
+    - coral
+    - ladbrokes
+    - betway
+    - boylesports
+    - 888sport
+    - betsson
+    - nordicbet
+    - tipico
+    - leovegas
+    - casumo
+    - grosvenor
+    - coolbet
+    - virginbet
+    - livescorebet
+    - winamax.fr
+    - winamax.de
+    - matchbook
+    - betfair-ex
+    - betfair-spb
+    - betfred
+    - betvictor          # in plan grant; needs a bookmaker-catalog refresh to leave the skip list
+    - smarkets           # in plan grant; needs a bookmaker-catalog refresh to leave the skip list
 
 markets:
   exclude: [double_chance]           # market families to never scan (overlap 1x2 → bad for arbing)
