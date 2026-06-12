@@ -49,6 +49,7 @@ class Secrets:
     odds_papi_key: str | None
     telegram_bot_key: str | None
     telegram_group_id: str | None
+    odds_api_key: str | None = None       # the-odds-api.com (supplemental feed)
 
     @property
     def telegram_ready(self) -> bool:
@@ -147,6 +148,19 @@ class Config:
     def api_opt(self, key: str, default: Any) -> Any:
         return self.get("api", key, default=default)
 
+    # -- the-odds-api supplemental feed ----------------------------------------
+    def theoddsapi_opt(self, key: str, default: Any) -> Any:
+        return self.get("theoddsapi", key, default=default)
+
+    @property
+    def theoddsapi_enabled(self) -> bool:
+        return bool(self.get("theoddsapi", "enabled", default=False))
+
+    @property
+    def theoddsapi_actionable(self) -> bool:
+        """While False, NO the-odds-api leg may form an actionable arb (shadow/tracked only)."""
+        return bool(self.get("theoddsapi", "actionable", default=False))
+
 
 def load_config(config_path: str | None = None) -> Config:
     """Load config.yaml, layer in env-based workflow inputs, and read secrets."""
@@ -177,6 +191,7 @@ def load_config(config_path: str | None = None) -> Config:
         odds_papi_key=os.environ.get("ODDS_PAPI_KEY"),
         telegram_bot_key=os.environ.get("TELEGRAM_BOT_KEY"),
         telegram_group_id=os.environ.get("TELEGRAM_GROUP_ID"),
+        odds_api_key=os.environ.get("ODDS_API_KEY"),
     )
 
     return Config(

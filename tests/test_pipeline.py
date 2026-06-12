@@ -387,11 +387,13 @@ def test_fetch_odds_per_book_merges_books_onto_one_fixture():
         "pinnacle": _one_book_payload("pinnacle", 2.10, 1.55),
         "1xbet": _one_book_payload("1xbet", 1.55, 2.05),
     })
-    feeds, fetched, returning = _fetch_odds_per_book(
+    raw_by_fixture, fetched, returning = _fetch_odds_per_book(
         client, _cfg(), [17], ["pinnacle", "1xbet"], log=get_logger("t"))
     assert client.billable_count == 2
     assert fetched == ["pinnacle", "1xbet"]
     assert returning == ["pinnacle", "1xbet"]
+    # _fetch now returns the raw per-fixture dicts (pre-parse) so a supplemental source can gap-fill.
+    feeds = parse_odds_payload(list(raw_by_fixture.values()))
     assert len(feeds) == 1
     # Both single-book calls merged onto the same canonical fixture.
     assert feeds[0].books_present == {"pinnacle", "1xbet"}
@@ -401,7 +403,7 @@ def test_fetch_all_books_no_cap():
     """Every requested book is fetched — there is no per-cycle budget cap anymore."""
     from src.run import _fetch_odds_per_book
     client = _FakeOddsClient({b: _one_book_payload(b, 2.0, 2.0) for b in ["a", "b", "c", "d"]})
-    feeds, fetched, returning = _fetch_odds_per_book(
+    _raw, fetched, returning = _fetch_odds_per_book(
         client, _cfg(), [17], ["a", "b", "c", "d"], log=get_logger("t"))
     assert client.billable_count == 4
     assert fetched == ["a", "b", "c", "d"]

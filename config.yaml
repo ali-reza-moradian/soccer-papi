@@ -30,6 +30,24 @@ bookmakers:
     kalshi: 0.0
     polymarket: 0.0
 
+theoddsapi:
+  # Supplemental SECOND data source (the-odds-api.com, key in ODDS_API_KEY). Fills WC gaps OddsPapi
+  # leaves: recovers books it returns suspended (1xbet) and adds soft books (bet365, unibet, …).
+  # It gap-fills the OddsPapi feed by canonical fixtureId/marketId/outcomeId, so the arb engine,
+  # clone-dedup, and staleness rules apply unchanged. See src/theoddsapi.py.
+  enabled: true
+  wc_key: soccer_fifa_world_cup      # confirmed active; has_outrights=false (we skip the winner outright)
+  regions: eu,uk                     # both regions (6 credits/poll); 100K credits/15d covers 15-min cadence (~17,280)
+  markets: h2h,spreads,totals        # h2h→1x2, spreads→asian_handicap, totals→over/under
+  # SAFE ROLLOUT: while false, NO the-odds-api leg can form an actionable arb / send a Telegram
+  # alert — they are tracked (shadow) only. Watch the logs/CSV for correct fixtures, home/away, and
+  # sane odds across a few runs, THEN flip to true.
+  actionable: false
+  commence_tolerance_minutes: 120    # a fixture matches only if team identity AND kickoff agree within this
+  # Optional canonical-slug allow-list (post-alias). Omit/empty = ingest every catalog book the feed
+  # returns. onexbet is aliased to 1xbet in src/theoddsapi.py.
+  books: [1xbet, bet365, unibet, williamhill, sbobet]
+
 markets:
   exclude: [double_chance]           # market families to never scan (overlap 1x2 → bad for arbing)
   exclude_names: ["double chance"]   # case-insensitive substrings of marketName to drop

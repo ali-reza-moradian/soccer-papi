@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any, Optional
 
-from . import catalog, formatting as fmt, normalize
+from . import catalog, formatting as fmt, normalize, theoddsapi
 from .arbitrage import ArbResult, Candidate, compute_arb, make_signature, select_legs
 from .config import Config, load_config
 from .csv_store import append_opportunities
@@ -512,12 +512,58 @@ def _fixture_list(payload: Any) -> list[dict[str, Any]]:
     return []
 
 
+def _merge_theoddsapi(cfg, cats, by_fixture, raw_by_fixture, log) -> dict[str, set[str]]:
+    """Gap-fill raw_by_fixture with the-odds-api odds. Returns toa_books_by_fixture (fid -> slugs
+    this source injected) so the scan can keep those legs shadow-only. Any failure is swallowed
+    with a warning — the supplemental feed must never break the OddsPapi run."""
+    if not cfg.theoddsapi_enabled:
+        return {}
+    if not cfg.secrets.odds_api_key:
+        log.warning("theoddsapi.enabled but ODDS_API_KEY is not set — skipping supplemental feed.")
+        return {}
+    try:
+        wc_key = str(cfg.theoddsapi_opt("wc_key", "soccer_fifa_world_cup"))
+        regions = str(cfg.theoddsapi_opt("regions", "eu"))
+        markets = str(cfg.theoddsapi_opt("markets", "h2h,spreads,totals"))
+        odds_format = str(cfg.api_opt("odds_format", "decimal"))
+        tol = float(cfg.theoddsapi_opt("commence_tolerance_minutes", 120))
+        allow = cfg.theoddsapi_opt("books", None)
+        allow_books = set(allow) if allow else None
+        cost = len([m for m in markets.split(",") if m]) * len([r for r in regions.split(",") if r])
+
+        catalog_slugs = {b.get("slug") for b in (cats.get("bookmakers") or []) if b.get("slug")}
+        index = theoddsapi.build_market_index(cats.get("markets") or [], cfg.sport_id)
+        if index.ambiguous:
+            log.warning("[THE-ODDS-API] ambiguous market indices skipped: %s", "; ".join(index.ambiguous))
+
+        client = theoddsapi.TheOddsApiClient(cfg.secrets.odds_api_key)
+        payload = client.wc_odds(wc_key, regions, markets, odds_format)
+
+        cov, toa_books = theoddsapi.merge_into(
+            raw_by_fixture, by_fixture, index, catalog_slugs, payload,
+            tolerance_minutes=tol, allow_books=allow_books, cost_credits=cost, log=log)
+        for line in cov.lines():
+            log.info("%s", line)
+        log.info("[THE-ODDS-API] quota: %s requests remaining (used %s) | actionable=%s",
+                 client.requests_remaining, client.requests_used, cfg.theoddsapi_actionable)
+        return toa_books
+    except theoddsapi.TheOddsApiError as exc:
+        log.warning("the-odds-api feed unavailable (%s) — continuing with OddsPapi only.", exc)
+        return {}
+    except Exception as exc:  # noqa: BLE001 - supplemental feed must never break the run
+        log.warning("the-odds-api merge failed (%s: %s) — continuing with OddsPapi only.",
+                    type(exc).__name__, exc)
+        return {}
+
+
 def _fetch_odds_per_book(client, cfg, tournament_ids, books, log):
     """One odds-by-tournaments call per book; merge each book's odds onto the shared fixture.
 
-    Returns (feeds, fetched_books, returning_books). Fetches EVERY requested book — there is no
-    per-cycle cap, so any pair of books can form an arb. A quota/rate-limit error (HTTP 429/403)
-    raises QuotaExceeded, which is left to bubble up to main() for a clean "replace the key" exit.
+    Returns (raw_by_fixture, fetched_books, returning_books) — the raw per-fixture dicts BEFORE
+    normalization, so a supplemental source (the-odds-api) can gap-fill them before parsing. Fetches
+    EVERY requested book — there is no per-cycle cap, so any pair of books can form an arb. A
+    quota/rate-limit error (HTTP 429/403) raises QuotaExceeded, left to bubble up to main() for a
+    clean "replace the key" exit.
     """
     verbosity = int(cfg.api_opt("odds_verbosity", 3))
     odds_format = str(cfg.api_opt("odds_format", "decimal"))
@@ -557,8 +603,7 @@ def _fetch_odds_per_book(client, cfg, tournament_ids, books, log):
         log.info("  fetched %-14s -> %s fixture(s)%s", book, len(fixtures),
                  "" if had_data else " (no odds for this book in window)")
 
-    feeds = normalize.parse_odds_payload(list(raw_by_fixture.values()))
-    return feeds, fetched, returning
+    return raw_by_fixture, fetched, returning
 
 
 # --------------------------------------------------------------------------- #
@@ -654,10 +699,15 @@ def run_cycle(cfg: Config, log) -> int:
     by_participant = names.get("by_participant", {})
 
     # 5) Odds — ONE billable call per book, merged across books ------------------
-    feeds, fetched_books, returning_books = _fetch_odds_per_book(
+    raw_by_fixture, fetched_books, returning_books = _fetch_odds_per_book(
         client, cfg, tournament_ids, to_fetch, log)
     log.info("Odds fetch: %s book-call(s); %s returned odds (%s).",
              len(fetched_books), len(returning_books), ", ".join(returning_books) or "none")
+
+    # 5b) Supplemental: the-odds-api gap-fill (shadow-only until theoddsapi.actionable is true) ----
+    toa_books_by_fixture = _merge_theoddsapi(cfg, cats, by_fixture, raw_by_fixture, log)
+
+    feeds = normalize.parse_odds_payload(list(raw_by_fixture.values()))
     if len(returning_books) < 2:
         log.warning("Fewer than 2 books returned odds this cycle (%s) -> no cross-book arbitrage possible.",
                     returning_books or "none")
@@ -668,11 +718,18 @@ def run_cycle(cfg: Config, log) -> int:
     if missing:
         log.info("marketIds seen but NOT scanned (player-prop/excluded/unclassified): %s", sorted(missing))
 
+    # the-odds-api books join the TRACKED (shadow) universe at runtime — so shadow arbs can use
+    # them — without being added to config bookmakers.tracked (which would make OddsPapi fetch &
+    # bill them). They are deliberately NOT added to actionable.
+    toa_all_books: set[str] = set().union(*toa_books_by_fixture.values()) if toa_books_by_fixture else set()
+    if toa_all_books:
+        log.info("[THE-ODDS-API] added to TRACKED (shadow) universe only: %s", ", ".join(sorted(toa_all_books)))
+
     guard_on = bool(cfg.mapping_guard_opt("enabled", True))
     reference_books = [str(b) for b in (cfg.mapping_guard_opt("reference_books", ["pinnacle", "1xbet"]) or [])]
     ctx = EngineCtx(
         actionable=set(cfg.actionable_books),
-        tracked=set(cfg.tracked_books),
+        tracked=set(cfg.tracked_books) | toa_all_books,
         exchanges=cfg.exchanges,
         commission=cfg.commission,
         clone_group_of=clone_group_of,
@@ -690,22 +747,27 @@ def run_cycle(cfg: Config, log) -> int:
     )
 
     # 6) Scan --------------------------------------------------------------------
-    opportunities, stats = _scan(feeds, specs, ctx, cfg, by_fixture, by_participant, now, log)
+    opportunities, stats = _scan(feeds, specs, ctx, cfg, by_fixture, by_participant, now, log,
+                                 toa_books_by_fixture)
 
     # 7) Output ------------------------------------------------------------------
     _emit(opportunities, stats, cfg, now, client, log)
     return 0
 
 
-def _scan(feeds, specs, ctx, cfg, by_fixture, by_participant, now, log):
+def _scan(feeds, specs, ctx, cfg, by_fixture, by_participant, now, log, toa_books_by_fixture=None):
+    toa_books_by_fixture = toa_books_by_fixture or {}
+    theoddsapi_actionable = cfg.theoddsapi_actionable
     from_dt = _parse_iso(cfg.from_utc)
     to_dt = _parse_iso(cfg.to_utc)
     min_roi = float(cfg.threshold("min_roi_pct", 0.5))
     min_stake = float(cfg.threshold("min_total_stake", 20))
     susp_pct = float(cfg.threshold("roi_suspicious_pct", 8.0))
     near_ceiling = float(cfg.threshold("near_miss_ceiling_S", 1.02))
-    # Every configured book, in priority order (actionable first), for the COVERAGE diagnostic.
-    coverage_books = cfg.actionable_books + [b for b in cfg.tracked_books if b not in cfg.actionable_books]
+    # Every book in play, in priority order (actionable first), for the COVERAGE diagnostic. Uses
+    # ctx.tracked so runtime-added the-odds-api shadow books show their per-fixture status too.
+    actionable_first = list(cfg.actionable_books)
+    coverage_books = actionable_first + [b for b in sorted(ctx.tracked) if b not in set(actionable_first)]
     allow_quarter = cfg.allow_quarter_lines
 
     opportunities: dict[str, Opportunity] = {}
@@ -769,7 +831,24 @@ def _scan(feeds, specs, ctx, cfg, by_fixture, by_participant, now, log):
                 _dump_book_outcomes(log, match, spec, home_team, away_team, ctx.dump_book,
                                     book_prices[ctx.dump_book])
 
-            real = _arb_for_universe(raw_market, spec, ctx.actionable, ctx, now, leg_age_limit, suspects)
+            # Safe rollout: the-odds-api legs are TRACKED (shadow) only until theoddsapi.actionable
+            # is true. Even once enabled, a the-odds-api SPREAD may only turn actionable if an
+            # OddsPapi (non-the-odds-api) book prices the same marketId+handicap, to validate the
+            # sign mapping against. When blocked, the-odds-api books are excluded from the actionable
+            # UNIVERSE (so no pure-actionable arb selects them) AND any result that still contains a
+            # the-odds-api leg has its `actionable` flag forced False below — the slug check alone is
+            # not enough, since a recovered book (e.g. 1xbet) is itself in the actionable list.
+            toa_here = toa_books_by_fixture.get(fx.fixture_id, frozenset())
+            block_toa_actionable = False
+            if toa_here:
+                if not theoddsapi_actionable:
+                    block_toa_actionable = True                    # rollout: no the-odds-api leg actionable
+                elif spec.family == "asian_handicap":
+                    nontoa = {rc.book for raws in raw_market.values() for rc in raws if rc.book not in toa_here}
+                    block_toa_actionable = not nontoa              # unvalidated spread line -> not actionable
+            real_exclude = (suspects | set(toa_here)) if block_toa_actionable else suspects
+
+            real = _arb_for_universe(raw_market, spec, ctx.actionable, ctx, now, leg_age_limit, real_exclude)
             shadow = _arb_for_universe(raw_market, spec, ctx.tracked, ctx, now, leg_age_limit, suspects)
 
             # The broadest complete result for this market — used for diagnostics so we can
@@ -796,8 +875,13 @@ def _scan(feeds, specs, ctx, cfg, by_fixture, by_participant, now, log):
                 if res.t_max < min_stake and not res.low_confidence:
                     continue
 
-                actionable = all(leg.book in ctx.actionable for leg in res.legs)
-                shadow_books = [leg.book for leg in res.legs if leg.book not in ctx.actionable]
+                # A the-odds-api-sourced leg forces the arb non-actionable while blocked (rollout /
+                # unvalidated spread), even though the recovered slug may be in the actionable list.
+                has_toa_leg = any(leg.book in toa_here for leg in res.legs)
+                actionable = (all(leg.book in ctx.actionable for leg in res.legs)
+                              and not (has_toa_leg and block_toa_actionable))
+                shadow_books = [leg.book for leg in res.legs
+                                if leg.book not in ctx.actionable or leg.book in toa_here]
                 suspicious = res.roi_pct > susp_pct
                 sig = make_signature(fx.fixture_id, mid, spec.line, res.legs)
                 bet_links = {leg.book: fx.fixture_paths.get(leg.book, "") for leg in res.legs}
