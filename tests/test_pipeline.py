@@ -16,7 +16,9 @@ from src.run import EngineCtx, _scan
 
 NOW = datetime(2026, 6, 7, 12, 0, 0, tzinfo=timezone.utc)
 RECENT = (NOW - timedelta(minutes=2)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
-STALE = (NOW - timedelta(minutes=90)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+# KICKOFF is 7h after NOW -> the "far" staleness bucket (360-min limit), so a 90-min-old leg is
+# now FRESH; only a price older than the far limit is stale this far out (see kickoff-aware tiers).
+STALE = (NOW - timedelta(minutes=400)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
 KICKOFF = "2026-06-07T19:00:00.000Z"
 
 
@@ -86,9 +88,11 @@ def _payload(over_book, under_book):
 
 
 def _ctx(group_of, actionable, tracked, reference_books=(), min_favorite_ratio=1.5):
+    # Staleness tiers left at their defaults (far=360 / mid=60 / near=20 min). With KICKOFF 7h out
+    # every fixture here lands in the far bucket, so RECENT legs are fresh and STALE (400m) is dropped.
     return EngineCtx(
         actionable=set(actionable), tracked=set(tracked), exchanges=set(),
-        commission={}, clone_group_of=group_of, max_leg_age_minutes=20, unknown_limit_fallback=100,
+        commission={}, clone_group_of=group_of, unknown_limit_fallback=100,
         reference_books=list(reference_books), min_favorite_ratio=min_favorite_ratio,
     )
 
@@ -97,7 +101,9 @@ def _cfg():
     raw = {
         "target_window": {"from_utc": "2026-06-05T00:00:00Z", "to_utc": "2026-06-08T23:59:59Z"},
         "thresholds": {"min_roi_pct": 0.5, "roi_suspicious_pct": 8.0, "min_total_stake": 20,
-                       "max_leg_age_minutes": 20, "near_miss_ceiling_S": 1.02},
+                       "max_leg_age_far_minutes": 360, "max_leg_age_mid_minutes": 60,
+                       "max_leg_age_near_minutes": 20, "stale_far_horizon_hours": 6,
+                       "stale_near_horizon_hours": 1, "near_miss_ceiling_S": 1.02},
         "markets": {"allow_quarter_lines": False},
         "telegram": {"rank_by": "profit"},
     }
@@ -268,7 +274,7 @@ def test_empty_notice_throttled_to_once_per_interval(monkeypatch, tmp_path):
 
 def test_stale_legs_are_skipped():
     payload = _payload("pinnacle", "1xbet")
-    # Make the 1xbet Under price stale.
+    # Make the 1xbet Under price stale (400 min old — past even the far-bucket 360-min limit).
     payload[0]["bookmakerOdds"]["1xbet"]["markets"]["106"]["outcomes"]["2"]["players"]["0"]["changedAt"] = STALE
     feeds = parse_odds_payload(payload)
     specs, _ = build_market_specs(MARKETS_JSON, 10, ["double chance"])
@@ -278,6 +284,78 @@ def test_stale_legs_are_skipped():
                         NOW, get_logger("test"))
     # Under now only available stale -> incomplete market -> no arb.
     assert stats["real_arbs"] == 0
+
+
+# --------------------------------------------------------------------------- #
+# Kickoff-aware staleness (change #2)                                           #
+# --------------------------------------------------------------------------- #
+def test_max_leg_age_for_scales_with_kickoff():
+    """The staleness limit relaxes the further off kickoff is, tightens inside the final hour."""
+    ctx = _ctx(build_clone_group_fn(BOOKS_JSON), ["pinnacle"], ["pinnacle"])
+    ko = lambda hours: NOW + timedelta(hours=hours)
+    assert ctx.max_leg_age_for(ko(8), NOW) == 360       # >6h -> far bucket
+    assert ctx.max_leg_age_for(ko(6.01), NOW) == 360
+    assert ctx.max_leg_age_for(ko(6), NOW) == 60        # exactly 6h -> mid (boundary is exclusive)
+    assert ctx.max_leg_age_for(ko(3), NOW) == 60        # 1–6h -> mid bucket
+    assert ctx.max_leg_age_for(ko(1.01), NOW) == 60
+    assert ctx.max_leg_age_for(ko(0.5), NOW) == 20      # <1h -> near bucket
+    assert ctx.max_leg_age_for(None, NOW) == 20         # unknown kickoff -> tightest cut
+
+
+def test_pre_match_leg_kept_when_far_from_kickoff():
+    """A 90-min-old soft-book line is FRESH 7h before kickoff (far bucket) — the old flat 20-min
+    cut would have wrongly discarded it. The clean pinnacle+1xbet arb survives."""
+    mid_old = (NOW - timedelta(minutes=90)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    payload = _payload("pinnacle", "1xbet")
+    for oc in ("1", "2"):
+        payload[0]["bookmakerOdds"]["1xbet"]["markets"]["106"]["outcomes"][oc]["players"]["0"]["changedAt"] = mid_old
+    feeds = parse_odds_payload(payload)
+    specs, _ = build_market_specs(MARKETS_JSON, 10, ["double chance"])
+    ctx = _ctx(build_clone_group_fn(BOOKS_JSON), ["pinnacle", "1xbet"], ["pinnacle", "1xbet"])
+    opps, stats = _scan(feeds, specs, ctx, _cfg(), {}, {"35": "USA", "34": "Germany"},
+                        NOW, get_logger("test"))
+    assert stats["real_arbs"] == 1
+
+
+# --------------------------------------------------------------------------- #
+# Per-book COVERAGE diagnostic (change #1)                                      #
+# --------------------------------------------------------------------------- #
+def test_coverage_status_classifies_each_book():
+    """Each of the 4 configured books gets exactly one status: OK:N / STALE / SUSPENDED / ABSENT."""
+    from src.run import _book_coverage_status, _coverage_line
+    stale_ts = (NOW - timedelta(minutes=45)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    payload = [{
+        "fixtureId": "fxcov", "participant1Id": 35, "participant2Id": 34, "tournamentId": 17,
+        "statusId": 0, "hasOdds": True, "startTime": KICKOFF, "updatedAt": RECENT,
+        "bookmakerOdds": {
+            "pinnacle": {"bookmakerIsActive": True, "suspended": False, "fixturePath": "p",
+                "markets": {"106": {"marketActive": True, "outcomes": {
+                    "1": {"players": _player(2.10, 1500)},          # fresh
+                    "2": {"players": _player(1.80, 1500)}}}}},
+            "polymarket": {"bookmakerIsActive": True, "suspended": False, "fixturePath": "pm",
+                "markets": {"106": {"marketActive": True, "outcomes": {
+                    "1": {"players": _player(2.0, 1500, stale_ts)}, # both legs 45m old
+                    "2": {"players": _player(1.9, 1500, stale_ts)}}}}},
+            "1xbet": {"bookmakerIsActive": True, "suspended": True, "fixturePath": "x",
+                "markets": {"106": {"marketActive": True, "outcomes": {
+                    "1": {"players": _player(2.0, 1500)},
+                    "2": {"players": _player(1.9, 1500)}}}}},
+            # kalshi deliberately omitted -> not in the feed at all.
+        },
+    }]
+    fx = parse_odds_payload(payload)[0]
+    specs, _ = build_market_specs(MARKETS_JSON, 10, ["double chance"])
+    # A tight 20-min limit -> the 45-min-old polymarket legs read as STALE.
+    assert _book_coverage_status(fx, "pinnacle", specs, False, NOW, 20) == "OK:1"
+    assert _book_coverage_status(fx, "polymarket", specs, False, NOW, 20) == "STALE"
+    assert _book_coverage_status(fx, "1xbet", specs, False, NOW, 20) == "SUSPENDED"
+    assert _book_coverage_status(fx, "kalshi", specs, False, NOW, 20) == "ABSENT"
+    # A relaxed 360-min limit -> polymarket's 45-min legs are fresh again -> OK.
+    assert _book_coverage_status(fx, "polymarket", specs, False, NOW, 360) == "OK:1"
+    line = _coverage_line(fx, "USA vs Germany",
+                          ["pinnacle", "polymarket", "1xbet", "kalshi"], specs, False, NOW, 20)
+    assert line == ("COVERAGE USA vs Germany: pinnacle OK:1 | polymarket STALE | "
+                    "1xbet SUSPENDED | kalshi ABSENT | age-limit 20m")
 
 
 class _FakeOddsClient:

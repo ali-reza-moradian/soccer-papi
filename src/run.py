@@ -50,8 +50,15 @@ class EngineCtx:
     exchanges: set[str]
     commission: dict[str, float]
     clone_group_of: Any
-    max_leg_age_minutes: float
-    unknown_limit_fallback: float
+    unknown_limit_fallback: float = 100.0
+    # Time-to-kickoff-aware staleness (replaces a single flat max age): soft books hold steady
+    # pre-match lines for hours, so the max allowed leg age scales with how far off kickoff is.
+    # See max_leg_age_for(). All ages are minutes; horizons are hours.
+    max_leg_age_far: float = 360.0           # kickoff > stale_far_horizon_hours away
+    max_leg_age_mid: float = 60.0            # between the near and far horizons
+    max_leg_age_near: float = 20.0           # within stale_near_horizon_hours of kickoff
+    stale_far_horizon_hours: float = 6.0
+    stale_near_horizon_hours: float = 1.0
     low_confidence_limit_floor: float = 10.0
     # Outcome-mapping guard: trusted reference books (first present wins), the heavy-favourite
     # gate, and an optional book whose raw per-outcome odds we dump for debugging. Empty
@@ -59,6 +66,22 @@ class EngineCtx:
     reference_books: list[str] = field(default_factory=list)
     min_favorite_ratio: float = 1.5
     dump_book: str = ""
+
+    def max_leg_age_for(self, kickoff: Optional[datetime], now: datetime) -> float:
+        """Max allowed price age (minutes) for legs on a fixture kicking off at ``kickoff``.
+
+        Soft books hold steady lines hours before kickoff, so we relax the staleness cut the
+        further off kickoff is, and tighten it inside the final hour when lines move fast. With no
+        kickoff known we fall back to the tightest (near) limit rather than trust an old price.
+        """
+        if kickoff is None:
+            return self.max_leg_age_near
+        hours_to_ko = (kickoff - now).total_seconds() / 3600.0
+        if hours_to_ko > self.stale_far_horizon_hours:
+            return self.max_leg_age_far
+        if hours_to_ko > self.stale_near_horizon_hours:
+            return self.max_leg_age_mid
+        return self.max_leg_age_near
 
 
 @dataclass
@@ -95,6 +118,7 @@ def _to_candidates(
     universe: set[str],
     ctx: EngineCtx,
     now: datetime,
+    max_leg_age: float,
     exclude_books: frozenset[str] = frozenset(),
 ) -> list[Candidate]:
     out: list[Candidate] = []
@@ -104,7 +128,7 @@ def _to_candidates(
         if rc.book in exclude_books:   # outcome-mapping-suspect for this market
             continue
         age = _leg_age_minutes(rc.changed_at, now)
-        if age is not None and age > ctx.max_leg_age_minutes:
+        if age is not None and age > max_leg_age:   # kickoff-aware staleness limit
             continue
         is_exch = rc.book in ctx.exchanges or bool(rc.exchange_meta)
         limit = exchange_liquidity(rc.exchange_meta, rc.limit) if is_exch else rc.limit
@@ -132,11 +156,12 @@ def _arb_for_universe(
     universe: set[str],
     ctx: EngineCtx,
     now: datetime,
+    max_leg_age: float,
     exclude_books: frozenset[str] = frozenset(),
 ) -> Optional[ArbResult]:
     cands_by_outcome: dict[int, list[Candidate]] = {}
     for oid in spec.outcome_ids:
-        cl = _to_candidates(raw_market.get(oid, []), spec, universe, ctx, now, exclude_books)
+        cl = _to_candidates(raw_market.get(oid, []), spec, universe, ctx, now, max_leg_age, exclude_books)
         if not cl:
             return None  # market incomplete for this universe
         cands_by_outcome[oid] = cl
@@ -229,6 +254,76 @@ def _dump_book_outcomes(log, match, spec, home, away, book, prices) -> None:
     parts = [f"oid {oid} [{spec.outcome_names.get(oid, oid)}={_outcome_team(spec, oid, home, away)}] @ {fmt.num2(prices[oid])}"
              for oid in spec.outcome_ids if oid in prices]
     log.info("[DUMP %s] %s | %s: %s", book, match, market, "; ".join(parts) or "(no priced outcomes)")
+
+
+# --------------------------------------------------------------------------- #
+# Per-book coverage diagnostic (WHY is a book missing for a fixture?)            #
+# --------------------------------------------------------------------------- #
+def _book_coverage_status(
+    fx: FixtureFeed,
+    book: str,
+    specs: dict[int, catalog.MarketSpec],
+    allow_quarter_lines: bool,
+    now: datetime,
+    max_leg_age: float,
+) -> str:
+    """Exactly one coverage status for ``book`` on fixture ``fx`` — see _coverage_line.
+
+      ABSENT     — slug not in this fixture's raw OddsPapi feed at all (missing upstream)
+      SUSPENDED  — returned upstream but offered no active priced markets (suspended / inactive)
+      STALE      — has in-scope priced markets, but EVERY one is older than the staleness limit
+      OK:N       — contributes N in-scope markets that have at least one fresh (non-stale) leg
+    """
+    if book not in fx.books_in_feed:
+        return "ABSENT"
+    if book not in fx.books_present:          # in feed, but normalize dropped it (suspended/no markets)
+        return "SUSPENDED"
+    priced = 0   # in-scope scannable markets where this book has any priced leg
+    fresh = 0    # ...of those, how many have at least one leg within the staleness limit
+    for mid, raw_market in fx.markets.items():
+        spec = specs.get(mid)
+        if spec is None:                      # out-of-scope future / non-MECE / player-prop — not scanned
+            continue
+        if spec.has_quarter_line and not allow_quarter_lines:
+            continue
+        has_priced = has_fresh = False
+        for raws in raw_market.values():
+            for rc in raws:
+                if rc.book != book:
+                    continue
+                has_priced = True
+                age = _leg_age_minutes(rc.changed_at, now)
+                if age is None or age <= max_leg_age:
+                    has_fresh = True
+                    break
+            if has_fresh:
+                break
+        if has_priced:
+            priced += 1
+            fresh += 1 if has_fresh else 0
+    if priced and not fresh:
+        return "STALE"
+    return f"OK:{fresh}"
+
+
+def _coverage_line(
+    fx: FixtureFeed,
+    match: str,
+    books: list[str],
+    specs: dict[int, catalog.MarketSpec],
+    allow_quarter_lines: bool,
+    now: datetime,
+    max_leg_age: float,
+) -> str:
+    """One COVERAGE line per in-window fixture: a status for every configured book, so it is
+    obvious which of the books supplied odds and — when one didn't — exactly why (absent upstream
+    vs suspended vs filtered out as stale). The trailing age-limit shows which kickoff-aware
+    staleness bucket applied, which explains any STALE verdicts."""
+    parts = " | ".join(
+        f"{b} {_book_coverage_status(fx, b, specs, allow_quarter_lines, now, max_leg_age)}"
+        for b in books
+    )
+    return f"COVERAGE {match}: {parts} | age-limit {max_leg_age:.0f}m"
 
 
 # --------------------------------------------------------------------------- #
@@ -502,10 +597,13 @@ def run_cycle(cfg: Config, log) -> int:
         log.error("Required catalogs unavailable. Exiting.")
         return 0
 
-    specs, skipped = catalog.build_market_specs(cats["markets"], cfg.sport_id, cfg.exclude_market_names)
+    specs, skipped = catalog.build_market_specs(
+        cats["markets"], cfg.sport_id, cfg.exclude_market_names, cfg.exclude_future_names)
     clone_group_of = catalog.build_clone_group_fn(cats["bookmakers"])
-    log.info("Market catalog: %s MECE markets accepted, %s skipped (player-prop/excluded/non-MECE).",
-             len(specs), len(skipped))
+    n_futures = sum(1 for s in skipped if s.get("reason") == "out_of_scope_future")
+    log.info("Market catalog: %s MECE markets accepted, %s skipped "
+             "(player-prop/excluded/non-MECE; %s out-of-scope futures).",
+             len(specs), len(skipped), n_futures)
 
     # 3) Tournaments -------------------------------------------------------------
     tournament_ids, _matched = _resolve_tournaments(cfg, cats.get("tournaments") or [], log)
@@ -578,8 +676,13 @@ def run_cycle(cfg: Config, log) -> int:
         exchanges=cfg.exchanges,
         commission=cfg.commission,
         clone_group_of=clone_group_of,
-        max_leg_age_minutes=float(cfg.threshold("max_leg_age_minutes", 20)),
         unknown_limit_fallback=float(cfg.threshold("unknown_limit_fallback", 100)),
+        # Time-to-kickoff-aware staleness tiers (relaxed pre-match; tight inside the final hour).
+        max_leg_age_far=float(cfg.threshold("max_leg_age_far_minutes", 360)),
+        max_leg_age_mid=float(cfg.threshold("max_leg_age_mid_minutes", 60)),
+        max_leg_age_near=float(cfg.threshold("max_leg_age_near_minutes", 20)),
+        stale_far_horizon_hours=float(cfg.threshold("stale_far_horizon_hours", 6)),
+        stale_near_horizon_hours=float(cfg.threshold("stale_near_horizon_hours", 1)),
         low_confidence_limit_floor=float(cfg.threshold("low_confidence_limit_floor", 10)),
         reference_books=reference_books if guard_on else [],
         min_favorite_ratio=float(cfg.mapping_guard_opt("min_favorite_ratio", 1.5)),
@@ -601,6 +704,9 @@ def _scan(feeds, specs, ctx, cfg, by_fixture, by_participant, now, log):
     min_stake = float(cfg.threshold("min_total_stake", 20))
     susp_pct = float(cfg.threshold("roi_suspicious_pct", 8.0))
     near_ceiling = float(cfg.threshold("near_miss_ceiling_S", 1.02))
+    # Every configured book, in priority order (actionable first), for the COVERAGE diagnostic.
+    coverage_books = cfg.actionable_books + [b for b in cfg.tracked_books if b not in cfg.actionable_books]
+    allow_quarter = cfg.allow_quarter_lines
 
     opportunities: dict[str, Opportunity] = {}
     closest: list[tuple] = []  # (S, roi_pct, match, label, leg_summary, t_max, is_arb)
@@ -637,8 +743,10 @@ def _scan(feeds, specs, ctx, cfg, by_fixture, by_participant, now, log):
             continue
         tournament = info.get("tournament") or ""
         stats["fixtures_in_window"] += 1
+        leg_age_limit = ctx.max_leg_age_for(start, now)
         log.info("MATCH: %s | %s | books with odds: %s",
                  match, fx.start_time, ", ".join(sorted(fx.books_present)) or "none")
+        log.info("  %s", _coverage_line(fx, match, coverage_books, specs, allow_quarter, now, leg_age_limit))
 
         for mid, raw_market in fx.markets.items():
             spec = specs.get(mid)
@@ -661,8 +769,8 @@ def _scan(feeds, specs, ctx, cfg, by_fixture, by_participant, now, log):
                 _dump_book_outcomes(log, match, spec, home_team, away_team, ctx.dump_book,
                                     book_prices[ctx.dump_book])
 
-            real = _arb_for_universe(raw_market, spec, ctx.actionable, ctx, now, suspects)
-            shadow = _arb_for_universe(raw_market, spec, ctx.tracked, ctx, now, suspects)
+            real = _arb_for_universe(raw_market, spec, ctx.actionable, ctx, now, leg_age_limit, suspects)
+            shadow = _arb_for_universe(raw_market, spec, ctx.tracked, ctx, now, leg_age_limit, suspects)
 
             # The broadest complete result for this market — used for diagnostics so we can
             # SEE how close the market got, even when nothing clears the arb threshold.
@@ -826,7 +934,11 @@ def _send_empty_notice(opportunities, stats, cfg: Config, now: datetime, log, wi
 
 def _emit(opportunities, stats, cfg: Config, now, client, log):
     # --- CSV ---
-    if opportunities:
+    # dry_run is verification-only: never mutate the opportunities CSV (mirrors the Telegram guards).
+    if cfg.dry_run:
+        log.info("[dry_run] Would write %s opportunity row(s) to %s (suppressed).",
+                 len(opportunities), cfg.csv_path)
+    elif opportunities:
         rows = [_csv_row(o, now) for o in opportunities]
         counts = append_opportunities(cfg.csv_path, rows, now,
                                       float(cfg.threshold("csv_dedup_minutes", 90)))

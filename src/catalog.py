@@ -128,8 +128,14 @@ def build_market_specs(
     markets_json: list[dict[str, Any]],
     sport_id: int,
     exclude_names: list[str],
+    exclude_future_names: list[str] = (),
 ) -> tuple[dict[int, MarketSpec], list[dict[str, Any]]]:
-    """Return (accepted specs by marketId, list of skipped/unclassified markets for logging)."""
+    """Return (accepted specs by marketId, list of skipped/unclassified markets for logging).
+
+    ``exclude_future_names`` are case-insensitive substrings flagging out-of-scope tournament-level
+    futures (outright winner, group winner, golden boot, …) — those settle weeks out, past the 2-day
+    scan window, so they are dropped here BEFORE classification even if 2-/3-way shaped.
+    """
     specs: dict[int, MarketSpec] = {}
     skipped: list[dict[str, Any]] = []
 
@@ -148,6 +154,10 @@ def build_market_specs(
             continue
         if any(x in lname for x in exclude_names):
             skipped.append({"marketId": mid, "name": name, "reason": "excluded_name"})
+            continue
+        if any(x in lname for x in exclude_future_names):
+            # Long-dated tournament future — resolves past the scan window, out of scope (change #3).
+            skipped.append({"marketId": mid, "name": name, "reason": "out_of_scope_future"})
             continue
 
         outcomes = m.get("outcomes") or []

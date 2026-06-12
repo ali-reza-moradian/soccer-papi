@@ -34,6 +34,38 @@ markets:
   exclude: [double_chance]           # market families to never scan (overlap 1x2 → bad for arbing)
   exclude_names: ["double chance"]   # case-insensitive substrings of marketName to drop
   allow_quarter_lines: false         # Asian quarter lines (e.g. 2.75) are NOT clean 2-way arbs
+  # SCOPE GUARD (resolve-within-window): we only scan per-match markets that SETTLE by the
+  # fixture's kickoff/end — those resolve well inside the 2-day scan window. Tournament-level
+  # futures (outright winner, group winner, golden boot, to-qualify/advance/reach-the-final, …)
+  # resolve weeks out and are explicitly OUT of scope. Any market whose name contains one of these
+  # case-insensitive substrings is skipped — even if it is 2-/3-way shaped and would otherwise
+  # classify as 1x2/handicap. Tune this list if the feed starts carrying new long-dated markets.
+  exclude_future_names:
+    - outright
+    - to qualify
+    - to advance
+    - to reach
+    - reach the final
+    - finalist
+    - golden boot
+    - golden ball
+    - golden glove
+    - top goalscorer
+    - top scorer
+    - tournament winner
+    - group winner
+    - winner of group
+    - to win group
+    - to win the group
+    - to win their group
+    - group betting
+    - stage of elimination
+    - to be eliminated
+    - to win the tournament
+    - to win outright
+    - to lift
+    - to win the world cup
+    - champion
 
 mapping_guard:
   # Outcome-mapping sanity check. We ALWAYS key odds off the canonical outcomeId, but a book can
@@ -51,7 +83,17 @@ thresholds:
   min_roi_pct: 0.5                   # ignore arbs below this ROI
   roi_suspicious_pct: 8.0            # above this → flag suspicious (likely stale/error line)
   min_total_stake: 20                # ignore arbs whose T_max is below this (liquidity junk)
-  max_leg_age_minutes: 20            # skip any leg whose price changedAt is older than this
+  # Staleness is TIME-TO-KICKOFF-AWARE (replaces the old flat max_leg_age_minutes: 20). Soft books
+  # hold steady pre-match lines for hours, so a flat 20-min cut threw away valid odds. A leg's price
+  # is skipped if its changedAt is older than the limit for its fixture's time-to-kickoff bucket:
+  #   kickoff > stale_far_horizon_hours away         -> max_leg_age_far_minutes  (lines barely move)
+  #   between near & far horizon                      -> max_leg_age_mid_minutes
+  #   within stale_near_horizon_hours of kickoff      -> max_leg_age_near_minutes (lines move fast)
+  max_leg_age_far_minutes: 360       # >6h to kickoff: allow legs up to 6h old
+  max_leg_age_mid_minutes: 60        # 1–6h to kickoff: allow legs up to 60 min old
+  max_leg_age_near_minutes: 20       # <1h to kickoff: keep the tight 20-min cut
+  stale_far_horizon_hours: 6         # boundary between the "far" (360m) and "mid" (60m) buckets
+  stale_near_horizon_hours: 1        # boundary between the "mid" (60m) and "near" (20m) buckets
   near_miss_ceiling_S: 1.02          # count markets with 1.00 <= S <= this as near-misses
   closest_report_count: 10           # how many "closest to an arb" markets to print each run
   csv_dedup_minutes: 90              # same signature seen within this window → UPDATE row, don't duplicate

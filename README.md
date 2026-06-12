@@ -103,6 +103,16 @@ A market is scanned **only if every one of its outcomes is priced**; incomplete 
 skipped. The distinct `marketId`s seen in each feed are logged so coverage is verifiable —
 if a target market is missing, raise `api.odds_verbosity` in `config.yaml`.
 
+Only **per-match** markets that settle by the fixture's end are in scope. Tournament-level futures
+(outright winner, group winner, golden boot, to-qualify/advance/reach-final, …) resolve weeks out,
+past the scan window, and are dropped via `markets.exclude_future_names` — even when 2-/3-way shaped.
+
+Per fixture the scan logs a **`COVERAGE`** line giving every configured book exactly one status, so
+it is obvious which books supplied odds and — when one didn't — why:
+`ABSENT` (not in the feed upstream) · `SUSPENDED` (in the feed but no active priced markets) ·
+`STALE` (priced, but every market older than the kickoff-aware age limit) · `OK:N` (contributing N
+priced markets). Example: `COVERAGE Canada vs Bosnia: pinnacle OK:38 | polymarket OK:31 | 1xbet ABSENT | kalshi ABSENT`.
+
 ---
 
 ## Bookmakers
@@ -128,7 +138,11 @@ Jurisdiction is **ignored entirely** — every listed book is treated as fully a
 
 ## Safety filters
 
-- **Staleness** — legs whose `changedAt` is older than `max_leg_age_minutes` (default 20) are dropped.
+- **Staleness (time-to-kickoff-aware)** — a leg whose `changedAt` is older than the limit for its
+  fixture's kickoff bucket is dropped: `max_leg_age_far_minutes` (default 360) when kickoff is
+  >`stale_far_horizon_hours` (6) away, `max_leg_age_mid_minutes` (60) within 1–6h, and
+  `max_leg_age_near_minutes` (20) inside `stale_near_horizon_hours` (1) of kickoff. Soft books hold
+  steady pre-match lines for hours, so the flat 20-min cut was discarding valid odds.
 - **ROI ceiling** — arbs above `roi_suspicious_pct` (default 8%) are flagged `suspicious`
   (likely a stale/error line), still recorded, de-prioritised for Telegram.
 - **ROI floor / min stake** — only arbs with ROI ≥ `min_roi_pct` (0.5%) **and** `T_max ≥

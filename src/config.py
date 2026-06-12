@@ -13,6 +13,18 @@ DEFAULT_CONFIG_PATH = os.path.join(REPO_ROOT, "config.yaml")
 DEFAULT_CACHE_DIR = os.path.join(REPO_ROOT, "data", "cache")
 DEFAULT_CSV_PATH = os.path.join(REPO_ROOT, "data", "arbitrage_opportunities.csv")
 
+# Tournament-level futures resolve weeks out (well past the 2-day scan window) and are out of scope.
+# Used when config.yaml omits markets.exclude_future_names. Substrings are matched case-insensitively
+# against marketName; chosen to catch real futures without touching per-match markets (a bare
+# "winner" is deliberately NOT here — "Match Winner"/"1X2" is a per-match market we DO scan).
+_DEFAULT_FUTURE_NAMES = [
+    "outright", "to qualify", "to advance", "to reach", "reach the final", "finalist",
+    "golden boot", "golden ball", "golden glove", "top goalscorer", "top scorer",
+    "tournament winner", "group winner", "winner of group", "to win group", "to win the group",
+    "to win their group", "group betting", "stage of elimination", "to be eliminated",
+    "to win the tournament", "to win outright", "to lift", "to win the world cup", "champion",
+]
+
 
 def _truthy(val: str | None) -> bool:
     return str(val).strip().lower() in {"1", "true", "yes", "on"} if val is not None else False
@@ -109,6 +121,12 @@ class Config:
     @property
     def exclude_market_names(self) -> list[str]:
         return [str(x).lower() for x in (self.get("markets", "exclude_names", default=["double chance"]) or [])]
+
+    @property
+    def exclude_future_names(self) -> list[str]:
+        """Substrings flagging out-of-scope tournament-level futures (settle past the scan window)."""
+        return [str(x).lower() for x in
+                (self.get("markets", "exclude_future_names", default=_DEFAULT_FUTURE_NAMES) or [])]
 
     @property
     def allow_quarter_lines(self) -> bool:

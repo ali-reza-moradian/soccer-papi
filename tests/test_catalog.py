@@ -75,6 +75,28 @@ def test_quarter_line_detection():
     assert specs[106].has_quarter_line is False  # 2.5 is a clean half line
 
 
+def test_build_market_specs_drops_out_of_scope_futures():
+    """Tournament-level futures are dropped BEFORE classification — even a 3-way 'Outright Winner'
+    that would otherwise classify as 1x2 (change #3)."""
+    markets = SAMPLE_MARKETS + [
+        {"marketId": 500, "marketName": "Outright Winner", "marketType": "1x2", "sportId": 10,
+         "period": "fulltime", "handicap": 0, "playerProp": False,
+         "outcomes": [{"outcomeId": 1, "outcomeName": "A"}, {"outcomeId": 2, "outcomeName": "B"},
+                      {"outcomeId": 3, "outcomeName": "C"}]},
+        {"marketId": 501, "marketName": "Top Goalscorer", "marketType": "totals", "sportId": 10,
+         "period": "fulltime", "handicap": 0, "playerProp": False,
+         "outcomes": [{"outcomeId": 1, "outcomeName": "Yes"}, {"outcomeId": 2, "outcomeName": "No"}]},
+    ]
+    specs, skipped = build_market_specs(
+        markets, sport_id=10, exclude_names=["double chance"],
+        exclude_future_names=["outright", "top goalscorer"])
+    assert 500 not in specs and 501 not in specs          # futures dropped
+    assert {101, 106, 300} <= set(specs.keys())           # per-match markets still accepted
+    reasons = {s["marketId"]: s["reason"] for s in skipped}
+    assert reasons[500] == "out_of_scope_future"
+    assert reasons[501] == "out_of_scope_future"
+
+
 # --------------------------------------------------------------------------- #
 # clone groups                                                                 #
 # --------------------------------------------------------------------------- #

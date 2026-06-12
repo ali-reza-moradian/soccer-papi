@@ -35,6 +35,11 @@ class FixtureFeed:
     # markets[market_id][outcome_id] -> list[RawCandidate]
     markets: dict[int, dict[int, list[RawCandidate]]] = field(default_factory=dict)
     books_present: set[str] = field(default_factory=set)
+    # Every book slug that appeared under this fixture's raw bookmakerOdds, BEFORE the
+    # suspended/inactive/no-priced-outcome filtering below. A book in books_in_feed but not in
+    # books_present was returned upstream yet contributed nothing (suspended / no active markets) —
+    # the COVERAGE diagnostic uses this gap to separate ABSENT (not in feed) from SUSPENDED.
+    books_in_feed: set[str] = field(default_factory=set)
     fixture_paths: dict[str, str] = field(default_factory=dict)
 
 
@@ -84,6 +89,7 @@ def parse_odds_payload(payload: Any) -> list[FixtureFeed]:
         )
 
         for book, bdata in (fx.get("bookmakerOdds") or {}).items():
+            feed.books_in_feed.add(book)  # present upstream — even if dropped below (for COVERAGE)
             if not isinstance(bdata, dict):
                 continue
             if bdata.get("bookmakerIsActive") is False:
