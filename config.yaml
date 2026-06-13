@@ -106,7 +106,7 @@ kalshi:
   # data. It overrides OddsPapi's suspended `kalshi` entry with live per-match World Cup result
   # odds, merging by canonical fixtureId/marketId/outcomeId exactly like the-odds-api — so the arb
   # engine, clone-dedup, staleness and mapping-guard run unchanged. See src/kalshi.py.
-  enabled: false                     # fetch gate: build + verify shadow-only first, THEN enable
+  enabled: true                      # fetch gate ON; kalshi.actionable below keeps it SHADOW-only
   base_url: https://external-api.kalshi.com/trade-api/v2
   # Per-match WORLD CUP RESULT series: KXWCGAME. Event tickers are KXWCGAME-<YYMMMDD><HOME3><AWAY3>
   # (e.g. KXWCGAME-26JUN12USAPAR), one event per match with 3 mutually-exclusive Yes markets —
