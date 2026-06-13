@@ -323,12 +323,32 @@ def _add_leg(entry: dict[str, Any], mid: int, oid: int, price: float, last_updat
 
 
 def _oddspapi_has_active(book_entry: Any) -> bool:
-    """True if OddsPapi already supplied this book active for the fixture (so we DEFER, not inject)."""
+    """True only if OddsPapi already supplied this book with a GENUINELY active price for the
+    fixture (so we DEFER, not inject). A non-empty markets dict is NOT enough: OddsPapi often sends
+    a suspended book (e.g. kalshi) carrying a markets structure whose outcomes are all unpriced /
+    inactive. We therefore require >=1 market with >=1 active, priced (decimal > 1) outcome — the
+    SAME definition normalize.parse_odds_payload uses to decide books_present (COVERAGE OK vs
+    SUSPENDED). When OddsPapi's book is merely suspended, the supplemental source overrides it."""
     if not isinstance(book_entry, dict):
         return False
     if book_entry.get("bookmakerIsActive") is False or book_entry.get("suspended") is True:
         return False
-    return bool(book_entry.get("markets"))
+    for mdata in (book_entry.get("markets") or {}).values():
+        if not isinstance(mdata, dict) or mdata.get("marketActive") is False:
+            continue
+        for odata in (mdata.get("outcomes") or {}).values():
+            if not isinstance(odata, dict):
+                continue
+            p = (odata.get("players") or {}).get("0")
+            if not isinstance(p, dict) or p.get("active") is False:
+                continue
+            try:
+                price = float(p.get("price"))
+            except (TypeError, ValueError):
+                continue
+            if price > 1.0:
+                return True
+    return False
 
 
 # --------------------------------------------------------------------------- #

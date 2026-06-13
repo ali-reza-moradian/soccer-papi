@@ -152,10 +152,11 @@ def test_merge_defers_to_active_oddspapi_book():
         _bm("onexbet", [{"key": "h2h", "outcomes": [
             {"name": "Australia", "price": 3.0}, {"name": "Turkiye", "price": 2.5}, {"name": "Draw", "price": 3.2}]}]),
     ])]
-    # OddsPapi already supplied an active 1xbet for this fixture -> defer, do not overwrite.
+    # OddsPapi already supplied a GENUINELY active 1xbet (a priced outcome) -> defer, don't overwrite.
     raw = {"idAAA": {"fixtureId": "idAAA", "startTime": "2026-06-14T04:00:00.000Z",
                      "bookmakerOdds": {"1xbet": {"bookmakerIsActive": True, "suspended": False,
-                                                 "markets": {"101": {"marketActive": True, "outcomes": {}}}}}}}
+                                                 "markets": {"101": {"marketActive": True, "outcomes": {
+                                                     "101": {"players": {"0": {"active": True, "price": 2.9}}}}}}}}}}
     cov, toa_books = toa.merge_into(raw, BY_FIXTURE, idx, {"1xbet"}, payload,
                                     tolerance_minutes=120, allow_books={"1xbet"}, cost_credits=3, log=LOG)
     assert cov.deferred.get("1xbet") == 1 and "idAAA" not in toa_books

@@ -182,10 +182,14 @@ def leg_limit(yes_ask_size_fp: Any, yes_ask_dollars: Any) -> float:
         return 0.0
 
 
-# Date in an event ticker spans the whole match day; we lack a precise kickoff, so we match on the
-# UTC calendar day. Anchoring the event "commence" at noon and allowing ±12h covers 00:00–24:00 of
-# that day without spilling into an adjacent day.
-_DAY_MATCH_TOLERANCE_MIN = 12 * 60
+# The event-ticker date is US-LOCAL, so for a fixture kicking off in UTC small-hours it can be one
+# calendar day BEHIND the fixture's UTC date (e.g. ticker 26JUN13 vs kickoff 2026-06-14T01:00Z). We
+# therefore match on team identity within the scan window, allowing the ticker date to differ from
+# the fixture's UTC date by up to ±1 day. Anchoring the event "commence" at noon and allowing ±36h
+# spans the whole of (ticker_date − 1) through (ticker_date + 1). A WC team-pair is unique inside a
+# 2-day window, so this stays unambiguous — and match_event_to_fixture still drops any pair that
+# (hypothetically) matched two in-window fixtures as `ambiguous`, never guessing.
+_DAY_MATCH_TOLERANCE_MIN = 36 * 60
 
 
 def _event_commence_iso(event_ticker: str) -> Optional[str]:

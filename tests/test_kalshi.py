@@ -118,6 +118,58 @@ def test_merge_skips_non_active_market_as_incomplete():
 
 
 # --------------------------------------------------------------------------- #
+# Bug 1: override OddsPapi's SUSPENDED kalshi (markets present but no live price)  #
+# --------------------------------------------------------------------------- #
+def test_oddspapi_has_active_false_when_outcomes_suspended():
+    from src.theoddsapi import _oddspapi_has_active
+    # The shape OddsPapi sends for a suspended kalshi: markets present, but every outcome is
+    # inactive / unpriced. A non-empty markets dict alone must NOT count as active.
+    suspended = {"bookmakerIsActive": True, "suspended": False, "markets": {"101": {"marketActive": True,
+        "outcomes": {"101": {"players": {"0": {"active": False, "price": 2.0}}},
+                     "102": {"players": {"0": {"active": True, "price": None}}},
+                     "103": {"players": {"0": {}}}}}}}
+    assert _oddspapi_has_active(suspended) is False
+    active = {"bookmakerIsActive": True, "suspended": False, "markets": {"101": {"marketActive": True,
+        "outcomes": {"101": {"players": {"0": {"active": True, "price": 2.0}}}}}}}
+    assert _oddspapi_has_active(active) is True
+
+
+def test_merge_overrides_suspended_oddspapi_kalshi():
+    """OddsPapi supplied kalshi with markets present but all outcomes suspended -> Kalshi-direct
+    OVERRIDES it (recovers), rather than deferring (the live-scan bug)."""
+    suspended_entry = {"bookmakerIsActive": True, "suspended": False, "markets": {"101": {"marketActive": True,
+        "outcomes": {"101": {"players": {"0": {"active": False, "price": 2.0}}}}}}}
+    raw = {"idBBB": {"fixtureId": "idBBB", "startTime": "2026-06-13T19:00:00.000Z",
+                     "bookmakerOdds": {"kalshi": suspended_entry}}}
+    cov, kbooks = kalshi.merge_into(raw, BY_FIXTURE, INDEX, _usa_par_markets("normal"), now=NOW, log=LOG)
+    assert cov.recovered == 1 and cov.deferred == 0
+    assert kbooks == {"idBBB": {"kalshi"}}
+    _assert_usa_par_mapping(raw)   # suspended stub overwritten with our priced legs
+
+
+# --------------------------------------------------------------------------- #
+# Bug 2: cross-midnight-UTC fixture (US-local ticker date one day behind UTC)    #
+# --------------------------------------------------------------------------- #
+def test_merge_matches_cross_midnight_utc_fixture():
+    """Haiti–Scotland: ticker date 26JUN13 (US-local) but kickoff 2026-06-14T01:00Z (next UTC day).
+    Must match on team identity within ±1 day, not drop as time_mismatch."""
+    by_fixture = {"idHS": {"p1": "Haiti", "p2": "Scotland", "start_time": "2026-06-14T01:00:00.000Z",
+                           "status_id": 0, "tournament": "World Cup"}}
+    event = "KXWCGAME-26JUN13HTISCO"
+    markets = [_mkt("Haiti", "0.5000", "100", event=event),
+               _mkt("Tie", "0.4000", "100", event=event),
+               _mkt("Scotland", "0.2500", "100", event=event)]
+    raw: dict = {}
+    cov, kbooks = kalshi.merge_into(raw, by_fixture, INDEX, markets, now=NOW, log=LOG)
+    assert cov.matched == 1 and cov.time_mismatch == []
+    assert kbooks == {"idHS": {"kalshi"}}
+    outs = raw["idHS"]["bookmakerOdds"]["kalshi"]["markets"]["101"]["outcomes"]
+    assert outs["101"]["players"]["0"]["price"] == 2.0      # Haiti 1/0.50 (p1 -> home)
+    assert outs["102"]["players"]["0"]["price"] == 2.5      # Tie -> draw
+    assert outs["103"]["players"]["0"]["price"] == 4.0      # Scotland 1/0.25 (p2 -> away)
+
+
+# --------------------------------------------------------------------------- #
 # Shadow rollout gate in run._scan                                              #
 # --------------------------------------------------------------------------- #
 def _cfg(kalshi_actionable=False):
