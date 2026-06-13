@@ -176,7 +176,10 @@ def test_merge_skips_books_not_in_catalog():
 # --------------------------------------------------------------------------- #
 # Rollout safety — the-odds-api leg cannot be actionable while flag is false     #
 # --------------------------------------------------------------------------- #
-def _cfg(theoddsapi_actionable=False):
+def _cfg(theoddsapi_actionable=False, actionable_books=None):
+    toa: dict = {"actionable": theoddsapi_actionable}
+    if actionable_books is not None:
+        toa["actionable_books"] = actionable_books
     raw = {
         "target_window": {"from_utc": "2026-06-10T00:00:00Z", "to_utc": "2026-06-16T23:59:59Z"},
         "thresholds": {"min_roi_pct": 0.5, "roi_suspicious_pct": 8.0, "min_total_stake": 20,
@@ -184,7 +187,7 @@ def _cfg(theoddsapi_actionable=False):
                        "max_leg_age_near_minutes": 20, "stale_far_horizon_hours": 6,
                        "stale_near_horizon_hours": 1, "near_miss_ceiling_S": 1.02},
         "markets": {"allow_quarter_lines": False},
-        "theoddsapi": {"actionable": theoddsapi_actionable},
+        "theoddsapi": toa,
     }
     return Config(raw=raw, secrets=Secrets(None, None, None))
 
@@ -238,3 +241,50 @@ def test_toa_leg_actionable_when_flag_true():
     opps, stats = _scan(feeds, specs, ctx, _cfg(theoddsapi_actionable=True), BY_FIXTURE, {}, now, LOG, toa_books)
     # h2h is not a spread, so with the flag on the recovered 1xbet leg may now be actionable.
     assert any(o.actionable for o in opps)
+
+
+def _two_recovered_book_fixtures():
+    """Two 1x2 fixtures, each a >0-ROI arb that REQUIRES its recovered the-odds-api leg:
+    idAAA recovered via 1xbet(toa), idBBB recovered via coolbet(toa). pinnacle alone is no arb
+    (S>1); best-of-both clears S<1 only by using the recovered leg."""
+    now = datetime(2026, 6, 13, 0, 0, tzinfo=timezone.utc)
+    ko = "2026-06-13T08:00:00.000Z"          # 8h out -> far staleness bucket
+    cu = "2026-06-12T23:50:00Z"              # 10 min before `now` -> fresh
+
+    def book(markets):
+        return {"bookmakerIsActive": True, "suspended": False, "markets": markets}
+
+    def leg(price):
+        return {"players": {"0": {"price": price, "limit": None, "changedAt": cu, "mainLine": True, "active": True}}}
+
+    def mkt(h, d, a):
+        return {"101": {"marketActive": True, "outcomes": {"101": leg(h), "102": leg(d), "103": leg(a)}}}
+
+    pinn = book(mkt(2.1, 3.0, 3.0))
+    soft = book(mkt(1.9, 3.6, 4.2))          # best home@pinn + draw/away@soft -> S~0.99
+    raw = [
+        {"fixtureId": "idAAA", "startTime": ko, "statusId": 0, "hasOdds": True,
+         "bookmakerOdds": {"pinnacle": pinn, "1xbet": soft}},
+        {"fixtureId": "idBBB", "startTime": ko, "statusId": 0, "hasOdds": True,
+         "bookmakerOdds": {"pinnacle": pinn, "coolbet": soft}},
+    ]
+    return now, parse_odds_payload(raw)
+
+
+def test_actionable_books_gate_allows_1xbet_blocks_soft_book():
+    """Master switch on + theoddsapi.actionable_books=[1xbet]: a recovered 1xBet leg may turn an
+    arb actionable, but a recovered soft book (coolbet) — even one placed in the actionable
+    UNIVERSE — can NEVER make an arb actionable. The per-book gate is the real control."""
+    now, feeds = _two_recovered_book_fixtures()
+    specs, _ = build_market_specs(MARKETS_JSON, 10, [], [])
+    # Both recovered books sit in the actionable universe; only the per-book allow-list differs them.
+    ctx = _ctx(actionable=["pinnacle", "1xbet", "coolbet"], tracked=["pinnacle", "1xbet", "coolbet"])
+    toa_books = {"idAAA": {"1xbet"}, "idBBB": {"coolbet"}}
+    cfg = _cfg(theoddsapi_actionable=True, actionable_books=["1xbet"])
+
+    opps, _ = _scan(feeds, specs, ctx, cfg, BY_FIXTURE, {}, now, LOG, toa_books)
+    by_match = {o.match: o for o in opps}
+    onexbet_opp = by_match["Australia vs Turkiye"]   # idAAA — recovered via 1xbet (allow-listed)
+    coolbet_opp = by_match["USA vs Paraguay"]         # idBBB — recovered via coolbet (soft, blocked)
+    assert onexbet_opp.actionable is True
+    assert coolbet_opp.actionable is False

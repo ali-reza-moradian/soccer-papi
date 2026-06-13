@@ -158,8 +158,29 @@ class Config:
 
     @property
     def theoddsapi_actionable(self) -> bool:
-        """While False, NO the-odds-api leg may form an actionable arb (shadow/tracked only)."""
+        """Master switch. While False, NO the-odds-api leg may form an actionable arb (shadow only)."""
         return bool(self.get("theoddsapi", "actionable", default=False))
+
+    @property
+    def theoddsapi_actionable_books(self) -> set[str] | None:
+        """Per-book allow-list within the-odds-api: only these recovered slugs may turn an arb
+        actionable (the master switch `actionable` must also be on). None/absent => no per-book
+        restriction. Mirrors the `allow_books` allow-list pattern in merge_into."""
+        books = self.get("theoddsapi", "actionable_books", default=None)
+        return set(books) if books else None
+
+    # -- kalshi-direct supplemental feed ---------------------------------------
+    def kalshi_opt(self, key: str, default: Any) -> Any:
+        return self.get("kalshi", key, default=default)
+
+    @property
+    def kalshi_enabled(self) -> bool:
+        return bool(self.get("kalshi", "enabled", default=False))
+
+    @property
+    def kalshi_actionable(self) -> bool:
+        """Shadow gate. While False, any arb with a kalshi-direct leg is forced non-actionable."""
+        return bool(self.get("kalshi", "actionable", default=False))
 
 
 def load_config(config_path: str | None = None) -> Config:

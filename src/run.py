@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any, Optional
 
-from . import catalog, formatting as fmt, normalize, theoddsapi
+from . import catalog, formatting as fmt, kalshi, normalize, theoddsapi
 from .arbitrage import ArbResult, Candidate, compute_arb, make_signature, select_legs
 from .config import Config, load_config
 from .csv_store import append_opportunities
@@ -556,6 +556,35 @@ def _merge_theoddsapi(cfg, cats, by_fixture, raw_by_fixture, log) -> dict[str, s
         return {}
 
 
+def _merge_kalshi(cfg, cats, by_fixture, raw_by_fixture, now, log) -> dict[str, set[str]]:
+    """Gap-fill raw_by_fixture with Kalshi-direct per-match World Cup result odds, overriding the
+    suspended OddsPapi `kalshi` book. Returns kalshi_books_by_fixture (fid -> {"kalshi"}) so the
+    scan can keep those legs shadow-only while kalshi.actionable is false. Any failure is swallowed
+    with a warning — the supplemental feed must never break the OddsPapi run."""
+    if not cfg.kalshi_enabled:
+        return {}
+    try:
+        base_url = str(cfg.kalshi_opt("base_url", kalshi.DEFAULT_BASE_URL))
+        series = str(cfg.kalshi_opt("series_ticker", "") or "")
+        if not series:
+            log.warning("kalshi.enabled but series_ticker is empty — skipping kalshi feed.")
+            return {}
+        index = theoddsapi.build_market_index(cats.get("markets") or [], cfg.sport_id)
+        client = kalshi.KalshiClient(base_url=base_url)
+        markets = client.iter_markets(series_ticker=series, status="open")
+        cov, kalshi_books = kalshi.merge_into(raw_by_fixture, by_fixture, index, markets, now=now, log=log)
+        for line in cov.lines():
+            log.info("%s", line)
+        log.info("[KALSHI] actionable=%s (shadow while false)", cfg.kalshi_actionable)
+        return kalshi_books
+    except kalshi.KalshiError as exc:
+        log.warning("kalshi feed unavailable (%s) — continuing without it.", exc)
+        return {}
+    except Exception as exc:  # noqa: BLE001 - supplemental feed must never break the run
+        log.warning("kalshi merge failed (%s: %s) — continuing without it.", type(exc).__name__, exc)
+        return {}
+
+
 def _fetch_odds_per_book(client, cfg, tournament_ids, books, log):
     """One odds-by-tournaments call per book; merge each book's odds onto the shared fixture.
 
@@ -707,6 +736,9 @@ def run_cycle(cfg: Config, log) -> int:
     # 5b) Supplemental: the-odds-api gap-fill (shadow-only until theoddsapi.actionable is true) ----
     toa_books_by_fixture = _merge_theoddsapi(cfg, cats, by_fixture, raw_by_fixture, log)
 
+    # 5c) Supplemental: Kalshi-direct gap-fill (overrides suspended kalshi; shadow until kalshi.actionable) -
+    kalshi_books_by_fixture = _merge_kalshi(cfg, cats, by_fixture, raw_by_fixture, now, log)
+
     feeds = normalize.parse_odds_payload(list(raw_by_fixture.values()))
     if len(returning_books) < 2:
         log.warning("Fewer than 2 books returned odds this cycle (%s) -> no cross-book arbitrage possible.",
@@ -748,16 +780,20 @@ def run_cycle(cfg: Config, log) -> int:
 
     # 6) Scan --------------------------------------------------------------------
     opportunities, stats = _scan(feeds, specs, ctx, cfg, by_fixture, by_participant, now, log,
-                                 toa_books_by_fixture)
+                                 toa_books_by_fixture, kalshi_books_by_fixture)
 
     # 7) Output ------------------------------------------------------------------
     _emit(opportunities, stats, cfg, now, client, log)
     return 0
 
 
-def _scan(feeds, specs, ctx, cfg, by_fixture, by_participant, now, log, toa_books_by_fixture=None):
+def _scan(feeds, specs, ctx, cfg, by_fixture, by_participant, now, log, toa_books_by_fixture=None,
+          kalshi_books_by_fixture=None):
     toa_books_by_fixture = toa_books_by_fixture or {}
+    kalshi_books_by_fixture = kalshi_books_by_fixture or {}
     theoddsapi_actionable = cfg.theoddsapi_actionable
+    theoddsapi_actionable_books = cfg.theoddsapi_actionable_books  # None => no per-book restriction
+    kalshi_actionable = cfg.kalshi_actionable
     from_dt = _parse_iso(cfg.from_utc)
     to_dt = _parse_iso(cfg.to_utc)
     min_roi = float(cfg.threshold("min_roi_pct", 0.5))
@@ -831,22 +867,36 @@ def _scan(feeds, specs, ctx, cfg, by_fixture, by_participant, now, log, toa_book
                 _dump_book_outcomes(log, match, spec, home_team, away_team, ctx.dump_book,
                                     book_prices[ctx.dump_book])
 
-            # Safe rollout: the-odds-api legs are TRACKED (shadow) only until theoddsapi.actionable
-            # is true. Even once enabled, a the-odds-api SPREAD may only turn actionable if an
-            # OddsPapi (non-the-odds-api) book prices the same marketId+handicap, to validate the
-            # sign mapping against. When blocked, the-odds-api books are excluded from the actionable
-            # UNIVERSE (so no pure-actionable arb selects them) AND any result that still contains a
-            # the-odds-api leg has its `actionable` flag forced False below — the slug check alone is
-            # not enough, since a recovered book (e.g. 1xbet) is itself in the actionable list.
+            # Per-book actionable gate for the-odds-api legs. A recovered slug may turn an arb
+            # actionable ONLY if (a) the master switch theoddsapi.actionable is on, (b) the slug is
+            # in theoddsapi.actionable_books (None => no per-book restriction), AND (c) — for spreads
+            # — an OddsPapi (non-the-odds-api) book prices the same marketId+handicap, validating the
+            # sign mapping. Any recovered book failing this is excluded from the actionable UNIVERSE
+            # (so no pure-actionable arb selects it) AND forces `actionable` False on any result that
+            # still contains it — the actionable-slug check alone is not enough, since a recovered
+            # soft book may itself sit in bookmakers.actionable. The gate is PER-BOOK, so 1xbet can
+            # be actionable on a fixture while a soft book recovered on the same fixture cannot.
             toa_here = toa_books_by_fixture.get(fx.fixture_id, frozenset())
-            block_toa_actionable = False
+            toa_blocked: set[str] = set()
             if toa_here:
-                if not theoddsapi_actionable:
-                    block_toa_actionable = True                    # rollout: no the-odds-api leg actionable
-                elif spec.family == "asian_handicap":
+                spread_unvalidated = False
+                if spec.family == "asian_handicap":
                     nontoa = {rc.book for raws in raw_market.values() for rc in raws if rc.book not in toa_here}
-                    block_toa_actionable = not nontoa              # unvalidated spread line -> not actionable
-            real_exclude = (suspects | set(toa_here)) if block_toa_actionable else suspects
+                    spread_unvalidated = not nontoa                # no OddsPapi book validates the line
+                for b in toa_here:
+                    if (not theoddsapi_actionable
+                            or (theoddsapi_actionable_books is not None and b not in theoddsapi_actionable_books)
+                            or spread_unvalidated):
+                        toa_blocked.add(b)
+
+            # Kalshi-direct shadow gate: while kalshi.actionable is false, the recovered `kalshi` leg
+            # is blocked from actionable (kalshi is already in bookmakers.actionable, so without this
+            # it would go actionable on the first run). Same rollout posture as the-odds-api.
+            kalshi_here = kalshi_books_by_fixture.get(fx.fixture_id, frozenset())
+            kalshi_blocked = set(kalshi_here) if (kalshi_here and not kalshi_actionable) else set()
+
+            blocked = toa_blocked | kalshi_blocked
+            real_exclude = suspects | blocked
 
             real = _arb_for_universe(raw_market, spec, ctx.actionable, ctx, now, leg_age_limit, real_exclude)
             shadow = _arb_for_universe(raw_market, spec, ctx.tracked, ctx, now, leg_age_limit, suspects)
@@ -875,13 +925,15 @@ def _scan(feeds, specs, ctx, cfg, by_fixture, by_participant, now, log, toa_book
                 if res.t_max < min_stake and not res.low_confidence:
                     continue
 
-                # A the-odds-api-sourced leg forces the arb non-actionable while blocked (rollout /
-                # unvalidated spread), even though the recovered slug may be in the actionable list.
-                has_toa_leg = any(leg.book in toa_here for leg in res.legs)
+                # A blocked supplemental leg (the-odds-api: master off / not in actionable_books /
+                # unvalidated spread; kalshi: shadow gate) forces the arb non-actionable, even though
+                # the recovered slug (1xbet, kalshi) may itself sit in bookmakers.actionable.
+                has_blocked = any(leg.book in blocked for leg in res.legs)
                 actionable = (all(leg.book in ctx.actionable for leg in res.legs)
-                              and not (has_toa_leg and block_toa_actionable))
+                              and not has_blocked)
                 shadow_books = [leg.book for leg in res.legs
-                                if leg.book not in ctx.actionable or leg.book in toa_here]
+                                if leg.book not in ctx.actionable or leg.book in toa_here
+                                or leg.book in kalshi_here]
                 suspicious = res.roi_pct > susp_pct
                 sig = make_signature(fx.fixture_id, mid, spec.line, res.legs)
                 bet_links = {leg.book: fx.fixture_paths.get(leg.book, "") for leg in res.legs}

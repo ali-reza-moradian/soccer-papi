@@ -31,7 +31,13 @@ bookmakers:
   # are CONSERVATIVE DEFAULTS — adjust to your actual account tier. Applied via eff_odds in BOTH the
   # actionable and shadow universes, so observed exchange arbs are already net of commission.
   commission:
-    kalshi: 0.0
+    # FLAT APPROXIMATION of Kalshi's QUADRATIC sports trading fee. Real fee ≈ ceil(0.06 × C × P ×
+    # (1−P)) per contract, where P = price in dollars — so it is highest near the 50¢ midpoint and
+    # tapers toward the price extremes (favourites/longshots). As a fraction of NET winnings that is
+    # ≈ 0.06 × P; 0.03 is the even-money (~50¢) peak. We apply it as a single flat rate via eff_odds
+    # in both universes. TODO: refine to the real per-price formula if kalshi arbs look promising;
+    # CONFIRM against your account's actual fee tier first.
+    kalshi: 0.03
     polymarket: 0.0
     betfair-ex: 0.05      # adjustable — standard Betfair Exchange ~2-5%; conservative 5%
     betfair-spb: 0.05     # adjustable — Betfair Sportsbook-via-exchange; conservative 5%
@@ -47,10 +53,19 @@ theoddsapi:
   wc_key: soccer_fifa_world_cup      # confirmed active; has_outrights=false (we skip the winner outright)
   regions: eu,uk                     # both regions (6 credits/poll); 100K credits/15d covers 15-min cadence (~17,280)
   markets: h2h,spreads,totals        # h2h→1x2, spreads→asian_handicap, totals→over/under
-  # SAFE ROLLOUT: while false, NO the-odds-api leg can form an actionable arb / send a Telegram
-  # alert — they are tracked (shadow) only. Watch the logs/CSV for correct fixtures, home/away, and
-  # sane odds across a few runs, THEN flip to true.
-  actionable: false
+  # MASTER SWITCH: while false, NO the-odds-api leg can form an actionable arb / send a Telegram
+  # alert — they are tracked (shadow) only. When true, the per-book allow-list below (actionable_books)
+  # is the REAL control over which recovered books may turn an arb actionable.
+  actionable: true
+  # Per-book actionable allow-list WITHIN the-odds-api (canonical post-alias slugs). Even with the
+  # master switch on, ONLY recovered books listed here may make an arb actionable; every other
+  # the-odds-api book (the soft books further down) stays shadow-only no matter what. 1xBet is the
+  # one the-odds-api book we hold an account on, so it is the sole actionable recovered book.
+  # NOTE: a the-odds-api SPREAD additionally needs an OddsPapi book on the same marketId+handicap to
+  # validate the sign mapping before it can be actionable (see run._scan). Omit/empty => no per-book
+  # restriction (any recovered book may be actionable when the master switch is on).
+  actionable_books:
+    - 1xbet
   commence_tolerance_minutes: 120    # a fixture matches only if team identity AND kickoff agree within this
   # Canonical-slug allow-list (post-alias). Every the-odds-api book confirmed present in the
   # OddsPapi catalog from the eu/uk shadow run. Omit/empty would ingest all catalog books the feed
@@ -85,6 +100,26 @@ theoddsapi:
     - betfred
     - betvictor          # in plan grant; needs a bookmaker-catalog refresh to leave the skip list
     - smarkets           # in plan grant; needs a bookmaker-catalog refresh to leave the skip list
+
+kalshi:
+  # Supplemental THIRD data source (Kalshi prediction exchange, kalshi.com). No auth for market
+  # data. It overrides OddsPapi's suspended `kalshi` entry with live per-match World Cup result
+  # odds, merging by canonical fixtureId/marketId/outcomeId exactly like the-odds-api — so the arb
+  # engine, clone-dedup, staleness and mapping-guard run unchanged. See src/kalshi.py.
+  enabled: false                     # fetch gate: build + verify shadow-only first, THEN enable
+  base_url: https://external-api.kalshi.com/trade-api/v2
+  # Per-match WORLD CUP RESULT series: KXWCGAME. Event tickers are KXWCGAME-<YYMMMDD><HOME3><AWAY3>
+  # (e.g. KXWCGAME-26JUN12USAPAR), one event per match with 3 mutually-exclusive Yes markets —
+  # home win / Tie / away win, settled at 90 min + stoppage (regulation 1X2). NOT KXMENWORLDCUP
+  # (the tournament winner outright, out of scope).
+  series_ticker: KXWCGAME
+  # SHADOW gate (separate from the `kalshi` slug already in bookmakers.actionable): while false, any
+  # arb containing a kalshi-DIRECT leg is forced non-actionable, so kalshi-direct stays shadow-only
+  # for verification across a few live runs — exactly like the the-odds-api rollout. Flip to true
+  # once the recovered prices/limits/fixtures look right in the logs/CSV.
+  actionable: false
+  # Events are matched to canonical fixtures by normalized team names + the event-ticker DATE on the
+  # UTC calendar day (no precise kickoff in the ticker), so there is no ±minutes tolerance knob here.
 
 markets:
   exclude: [double_chance]           # market families to never scan (overlap 1x2 → bad for arbing)
