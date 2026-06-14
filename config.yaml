@@ -117,7 +117,7 @@ kalshi:
   # arb containing a kalshi-DIRECT leg is forced non-actionable, so kalshi-direct stays shadow-only
   # for verification across a few live runs — exactly like the the-odds-api rollout. Flip to true
   # once the recovered prices/limits/fixtures look right in the logs/CSV.
-  actionable: false
+  actionable: true
   # Events are matched to canonical fixtures by normalized team names + the event-ticker DATE on the
   # UTC calendar day (no precise kickoff in the ticker), so there is no ±minutes tolerance knob here.
 
