@@ -182,6 +182,19 @@ class Config:
         """Shadow gate. While False, any arb with a kalshi-direct leg is forced non-actionable."""
         return bool(self.get("kalshi", "actionable", default=False))
 
+    # -- polymarket-direct supplemental feed -----------------------------------
+    def polymarket_opt(self, key: str, default: Any) -> Any:
+        return self.get("polymarket", key, default=default)
+
+    @property
+    def polymarket_enabled(self) -> bool:
+        return bool(self.get("polymarket", "enabled", default=False))
+
+    @property
+    def polymarket_actionable(self) -> bool:
+        """Shadow gate. While False, any arb with a polymarket-direct leg is forced non-actionable."""
+        return bool(self.get("polymarket", "actionable", default=False))
+
 
 def load_config(config_path: str | None = None) -> Config:
     """Load config.yaml, layer in env-based workflow inputs, and read secrets."""

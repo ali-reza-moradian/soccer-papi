@@ -121,6 +121,26 @@ kalshi:
   # Events are matched to canonical fixtures by normalized team names + the event-ticker DATE on the
   # UTC calendar day (no precise kickoff in the ticker), so there is no ±minutes tolerance knob here.
 
+polymarket:
+  # Supplemental FOURTH data source (Polymarket prediction exchange, polymarket.com). Read-only
+  # PUBLIC APIs, NO auth, NO trading: Gamma (gamma-api.polymarket.com) for event discovery + CLOB
+  # read (clob.polymarket.com) for live best-ask prices/depth. Like kalshi it merges by canonical
+  # fixtureId/marketId/outcomeId, so the arb engine/clone-dedup/staleness/mapping-guard run unchanged.
+  # A WC match = ONE Gamma event (negRisk) with 3 binary Yes/No markets — home win / Draw / away win;
+  # we price each from the CLOB best ASK (decimal=1/ask) and its size (real limit). See src/polymarket.py.
+  enabled: true                      # fetch gate ON; polymarket.actionable below keeps it SHADOW-only
+  gamma_base: https://gamma-api.polymarket.com
+  clob_base: https://clob.polymarket.com
+  # SHADOW gate (separate from the `polymarket` slug already in bookmakers.actionable): while false,
+  # any arb containing a polymarket-DIRECT leg is forced non-actionable, so polymarket-direct stays
+  # shadow-only for verification across a few live runs — exactly like the kalshi / the-odds-api
+  # rollout. When OddsPapi already supplies an ACTIVE polymarket book for a fixture we DEFER to it (it
+  # carries more market types); polymarket-direct only fills fixtures OddsPapi left without one. Flip
+  # to true once the recovered prices/limits/fixtures look right in the logs/CSV.
+  actionable: false
+  # Events are matched to canonical fixtures by normalized team names + the match DATE on the UTC
+  # calendar day (anchored at noon, ±1-day cross-midnight tolerance), like kalshi — no ±minutes knob.
+
 markets:
   exclude: [double_chance]           # market families to never scan (overlap 1x2 → bad for arbing)
   exclude_names: ["double chance"]   # case-insensitive substrings of marketName to drop

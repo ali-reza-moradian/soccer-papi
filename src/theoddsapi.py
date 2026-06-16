@@ -95,6 +95,14 @@ _TEAM_EQUIV: dict[str, str] = {
     "north korea": "korea dpr", "korea dpr": "korea dpr", "dpr korea": "korea dpr",
     "czechia": "czechia", "czech republic": "czechia",
     "bosnia": "bosnia", "bosnia and herzegovina": "bosnia", "bosnia herzegovina": "bosnia",
+    # World Cup national-team spellings Polymarket sends in FULL form. Both providers' variants are
+    # collapsed to ONE token so identity-matching works regardless of which spelling each uses; never
+    # collapse two DISTINCT nations (e.g. "Congo" the Republic stays separate from "DR Congo").
+    "congo dr": "dr congo", "dr congo": "dr congo",
+    "democratic republic of congo": "dr congo", "congo democratic republic": "dr congo",
+    "cape verde": "cape verde", "cabo verde": "cape verde",
+    "ir iran": "iran", "iran": "iran",
+    "china pr": "china", "china": "china",
 }
 
 

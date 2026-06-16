@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any, Optional
 
-from . import catalog, formatting as fmt, kalshi, normalize, theoddsapi
+from . import catalog, formatting as fmt, kalshi, normalize, polymarket, theoddsapi
 from .arbitrage import ArbResult, Candidate, compute_arb, make_signature, select_legs
 from .config import Config, load_config
 from .csv_store import append_opportunities
@@ -585,6 +585,33 @@ def _merge_kalshi(cfg, cats, by_fixture, raw_by_fixture, now, log) -> dict[str, 
         return {}
 
 
+def _merge_polymarket(cfg, cats, by_fixture, raw_by_fixture, now, log) -> dict[str, set[str]]:
+    """Gap-fill raw_by_fixture with Polymarket-direct per-match World Cup result odds (CLOB best-ask
+    prices), filling fixtures where OddsPapi has no active polymarket book. Returns
+    poly_books_by_fixture (fid -> {"polymarket"}) so the scan keeps those legs shadow-only while
+    polymarket.actionable is false. Any failure is swallowed with a warning — the supplemental feed
+    must never break the OddsPapi run."""
+    if not cfg.polymarket_enabled:
+        return {}
+    try:
+        index = theoddsapi.build_market_index(cats.get("markets") or [], cfg.sport_id)
+        client = polymarket.PolymarketClient(
+            gamma_base=str(cfg.polymarket_opt("gamma_base", polymarket.GAMMA_BASE)),
+            clob_base=str(cfg.polymarket_opt("clob_base", polymarket.CLOB_BASE)))
+        events = polymarket.fetch_wc_events(client, by_fixture, log)
+        cov, poly_books = polymarket.merge_into(raw_by_fixture, by_fixture, index, events, now=now, log=log)
+        for line in cov.lines():
+            log.info("%s", line)
+        log.info("[POLYMARKET] actionable=%s (shadow while false)", cfg.polymarket_actionable)
+        return poly_books
+    except polymarket.PolymarketError as exc:
+        log.warning("polymarket feed unavailable (%s) — continuing without it.", exc)
+        return {}
+    except Exception as exc:  # noqa: BLE001 - supplemental feed must never break the run
+        log.warning("polymarket merge failed (%s: %s) — continuing without it.", type(exc).__name__, exc)
+        return {}
+
+
 def _fetch_odds_per_book(client, cfg, tournament_ids, books, log):
     """One odds-by-tournaments call per book; merge each book's odds onto the shared fixture.
 
@@ -739,6 +766,9 @@ def run_cycle(cfg: Config, log) -> int:
     # 5c) Supplemental: Kalshi-direct gap-fill (overrides suspended kalshi; shadow until kalshi.actionable) -
     kalshi_books_by_fixture = _merge_kalshi(cfg, cats, by_fixture, raw_by_fixture, now, log)
 
+    # 5d) Supplemental: Polymarket-direct gap-fill (CLOB best-ask; shadow until polymarket.actionable) -
+    poly_books_by_fixture = _merge_polymarket(cfg, cats, by_fixture, raw_by_fixture, now, log)
+
     feeds = normalize.parse_odds_payload(list(raw_by_fixture.values()))
     if len(returning_books) < 2:
         log.warning("Fewer than 2 books returned odds this cycle (%s) -> no cross-book arbitrage possible.",
@@ -780,7 +810,7 @@ def run_cycle(cfg: Config, log) -> int:
 
     # 6) Scan --------------------------------------------------------------------
     opportunities, stats = _scan(feeds, specs, ctx, cfg, by_fixture, by_participant, now, log,
-                                 toa_books_by_fixture, kalshi_books_by_fixture)
+                                 toa_books_by_fixture, kalshi_books_by_fixture, poly_books_by_fixture)
 
     # 7) Output ------------------------------------------------------------------
     _emit(opportunities, stats, cfg, now, client, log)
@@ -788,12 +818,14 @@ def run_cycle(cfg: Config, log) -> int:
 
 
 def _scan(feeds, specs, ctx, cfg, by_fixture, by_participant, now, log, toa_books_by_fixture=None,
-          kalshi_books_by_fixture=None):
+          kalshi_books_by_fixture=None, poly_books_by_fixture=None):
     toa_books_by_fixture = toa_books_by_fixture or {}
     kalshi_books_by_fixture = kalshi_books_by_fixture or {}
+    poly_books_by_fixture = poly_books_by_fixture or {}
     theoddsapi_actionable = cfg.theoddsapi_actionable
     theoddsapi_actionable_books = cfg.theoddsapi_actionable_books  # None => no per-book restriction
     kalshi_actionable = cfg.kalshi_actionable
+    poly_actionable = cfg.polymarket_actionable
     from_dt = _parse_iso(cfg.from_utc)
     to_dt = _parse_iso(cfg.to_utc)
     min_roi = float(cfg.threshold("min_roi_pct", 0.5))
@@ -895,7 +927,12 @@ def _scan(feeds, specs, ctx, cfg, by_fixture, by_participant, now, log, toa_book
             kalshi_here = kalshi_books_by_fixture.get(fx.fixture_id, frozenset())
             kalshi_blocked = set(kalshi_here) if (kalshi_here and not kalshi_actionable) else set()
 
-            blocked = toa_blocked | kalshi_blocked
+            # Polymarket-direct shadow gate: identical posture — while polymarket.actionable is false,
+            # the injected `polymarket` leg (already in bookmakers.actionable) is forced non-actionable.
+            poly_here = poly_books_by_fixture.get(fx.fixture_id, frozenset())
+            poly_blocked = set(poly_here) if (poly_here and not poly_actionable) else set()
+
+            blocked = toa_blocked | kalshi_blocked | poly_blocked
             real_exclude = suspects | blocked
 
             real = _arb_for_universe(raw_market, spec, ctx.actionable, ctx, now, leg_age_limit, real_exclude)
@@ -933,7 +970,7 @@ def _scan(feeds, specs, ctx, cfg, by_fixture, by_participant, now, log, toa_book
                               and not has_blocked)
                 shadow_books = [leg.book for leg in res.legs
                                 if leg.book not in ctx.actionable or leg.book in toa_here
-                                or leg.book in kalshi_here]
+                                or leg.book in kalshi_here or leg.book in poly_here]
                 suspicious = res.roi_pct > susp_pct
                 sig = make_signature(fx.fixture_id, mid, spec.line, res.legs)
                 bet_links = {leg.book: fx.fixture_paths.get(leg.book, "") for leg in res.legs}
