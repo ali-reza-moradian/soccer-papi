@@ -25,8 +25,10 @@ Steps:
   2. For up to 3 in-window match events, pull full event detail and print each market + every outcome
      with its CLOB token_id and human label (team / "Draw"), then print a VERDICT: is a match ONE
      market with 3 outcomes (home/draw/away) or SEPARATE binary Yes/No markets (negRisk grouping)?
-  3. For each outcome token, GET CLOB /price (buy=ask), /midpoint, and /book — print best bid/ask +
-     size (real depth), the implied prob, and the decimal odds 1/ask so the prices are legible.
+  3. For each outcome token, read the CLOB /book and print the BUY price = best ASK (lowest ask) with
+     its size (real depth) and decimal odds 1/ask — that is what you pay to buy and what the source
+     prices from. (/price is shown for reference only: its `side` is INVERTED — side=buy returns the
+     best BID, side=sell the best ASK — so it must NOT be used as the buy price.)
   4. Dump the raw JSON of one event, one market, and one orderbook so the mapping step can pin exact
      field names + units. Then STOP — paste the output; nothing here touches arbitrage.py or sources.
 """
@@ -93,7 +95,10 @@ class PolyClient:
 
     # -- CLOB (prices + depth) ----------------------------------------------
     def clob_price(self, token_id: str, side: str) -> Any:
-        """GET /price?token_id=&side=buy|sell — best ask (buy) / best bid (sell), dollars in (0,1)."""
+        """GET /price?token_id=&side=buy|sell. WARNING — Polymarket's `side` is INVERTED vs intuition:
+        side=buy returns the best BID, side=sell returns the best ASK (verified live). To BUY a Yes you
+        pay the best ASK, so DO NOT price from side=buy. The ground-truth buy price is the order book's
+        best ask (/book), which is what src/polymarket.py uses. Shown here for reference only."""
         return self._get(CLOB_BASE + "/price", {"token_id": token_id, "side": side})
 
     def clob_midpoint(self, token_id: str) -> Any:
@@ -324,9 +329,13 @@ def main(argv: list[str]) -> int:
                     print(f"        (skipped CLOB calls — hit MAX_BOOK_TOKENS={MAX_BOOK_TOKENS})")
                     continue
                 book_calls += 1
-                # /price (ask), /midpoint, /book — read-only.
+                # Read-only. We BUY a Yes, so the ground-truth buy price is the order book's BEST ASK
+                # (lowest ask) — what src/polymarket.py prices from and what polymarket.com charges.
+                # The /price endpoint is shown for reference only and its `side` is INVERTED on
+                # Polymarket: side=buy returns the best BID, side=sell returns the best ASK.
                 try:
-                    ask = client.clob_price(token, "buy")
+                    p_buy = client.clob_price(token, "buy")     # actually the best BID (inverted)
+                    p_sell = client.clob_price(token, "sell")   # actually the best ASK (inverted)
                     mid = client.clob_midpoint(token)
                     book = client.clob_book(token)
                 except PolyError as exc:
@@ -334,23 +343,25 @@ def main(argv: list[str]) -> int:
                     continue
                 if raw_book is None:
                     raw_book = book
-                ask_px = (ask or {}).get("price")
-                mid_px = (mid or {}).get("mid")
                 bb = _best_level((book or {}).get("bids"), side="bid")
-                ba = _best_level((book or {}).get("asks"), side="ask")
-                ask_dec = _num(ask_px)
-                dec = (1.0 / ask_dec) if (ask_dec and 0.0 < ask_dec < 1.0) else None
-                print(f"        price(ask)={ask_px}  midpoint={mid_px}  "
-                      f"decimal_odds(1/ask)={dec:.3f}" if dec else
-                      f"        price(ask)={ask_px}  midpoint={mid_px}  decimal_odds(1/ask)=n/a")
-                if bb:
-                    print(f"        book best BID: price={bb[0]} size={bb[1]}  (~${bb[0]*bb[1]:.0f} depth)")
-                else:
-                    print("        book best BID: (none)")
+                ba = _best_level((book or {}).get("asks"), side="ask")   # TRUE best ask = the buy price
+                buy_px = ba[0] if ba else None
+                dec = (1.0 / buy_px) if (buy_px and 0.0 < buy_px < 1.0) else None
                 if ba:
-                    print(f"        book best ASK: price={ba[0]} size={ba[1]}  (~${ba[0]*ba[1]:.0f} depth)")
+                    print(f"        BUY price (book best ASK) = {buy_px}  ->  decimal 1/ask = "
+                          f"{dec:.3f}  [limit = ask_size×ask = ${ba[0]*ba[1]:.0f}]")
                 else:
-                    print("        book best ASK: (none)")
+                    print("        BUY price (book best ASK) = (none — no resting ask)")
+                if bb:
+                    print(f"        book best BID = {bb[0]} size={bb[1]}  (~${bb[0]*bb[1]:.0f} depth) "
+                          f"— do NOT price here (that is the SELL price)")
+                else:
+                    print("        book best BID = (none)")
+                buy_side = (p_buy or {}).get("price")
+                sell_side = (p_sell or {}).get("price")
+                mid_px = (mid or {}).get("mid")
+                print(f"        ref: /price side=buy={buy_side} (=best BID, inverted)  "
+                      f"side=sell={sell_side} (=best ASK)  midpoint={mid_px}")
 
     # 4) Raw shapes so the mapping step can pin exact field names + units ----------------------
     if raw_event is not None:

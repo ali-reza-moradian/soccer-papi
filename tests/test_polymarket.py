@@ -181,6 +181,47 @@ def test_price_leg_from_clob_best_ask():
 
 
 # --------------------------------------------------------------------------- #
+# SAFETY: we BUY all three Yes legs, so each leg MUST price at the best ASK     #
+# (what you pay to buy), never the best bid. Pricing the bid manufactures false #
+# arbs: bids can sum < 1 (phantom) while the real ask buy-cost sums >= 1 (loss).#
+# Polymarket's /price?side=buy returns the BID (inverted), so we read /book.    #
+# --------------------------------------------------------------------------- #
+def _bidask_book(bid, ask, *, ask_size=1000.0, bid_size=2000.0):
+    """A CLOB book with the best bid one tick below the best ask. The best ask is deliberately NOT
+    the first asks element, so best_ask() must compute the minimum, not trust array order."""
+    return {"bids": [{"price": str(bid), "size": str(bid_size)},
+                     {"price": str(round(bid - 0.01, 2)), "size": "500"}],
+            "asks": [{"price": str(round(ask + 0.01, 2)), "size": "500"},
+                     {"price": str(ask), "size": str(ask_size)}]}
+
+
+def test_best_ask_uses_ask_not_bid_even_when_bid_is_just_below():
+    # France Yes: bid 0.66 / ask 0.67. The buy price (and polymarket.com) is the 0.67 ASK.
+    assert polymarket.best_ask(_bidask_book(0.66, 0.67, ask_size=1381930.45)) == (0.67, 1381930.45)
+
+
+def test_price_leg_emits_ask_decimal_and_ask_size_limit():
+    client = _FakeClient(books_by_token={"t": _bidask_book(0.66, 0.67, ask_size=1000.0)})
+    dec, lim = polymarket.price_leg(client, "t")
+    assert round(dec, 3) == 1.493     # 1/0.67 (ASK), NOT 1/0.66 = 1.515 (the bid -> phantom arb)
+    assert lim == 670.0               # ask_size 1000 × ask 0.67 (ask-based), NOT bid-based
+
+
+def test_no_phantom_arb_when_asks_sum_above_one():
+    """France vs Senegal (live-observed): the three best BIDS sum to 0.99 (a phantom 1% 'arb'), but
+    the three best ASKS — the real buy cost — sum to 1.02 (a 2% loss). The source prices the ASK, so
+    S >= 1 and NO arb is minted."""
+    books = {"fra": _bidask_book(0.66, 0.67), "drw": _bidask_book(0.21, 0.22), "sen": _bidask_book(0.12, 0.13)}
+    client = _FakeClient(books_by_token=books)
+    decs = [polymarket.price_leg(client, t)[0] for t in ("fra", "drw", "sen")]
+    assert [round(d, 3) for d in decs] == [1.493, 4.545, 7.692]   # exact ASK-based decimals
+    s_ask = sum(1.0 / d for d in decs)                            # == best-ask sum 0.67+0.22+0.13
+    assert round(s_ask, 2) == 1.02 and s_ask > 1.0               # NO arb (S>=1)
+    s_bid = 0.66 + 0.21 + 0.12                                   # the phantom we DON'T mint (pricing bids)
+    assert round(s_bid, 2) == 0.99 and s_bid < 1.0
+
+
+# --------------------------------------------------------------------------- #
 # Full pipeline: discover -> price -> map, with cross-sport disambiguation      #
 # --------------------------------------------------------------------------- #
 def _cricket_noise_event():
