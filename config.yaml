@@ -137,7 +137,7 @@ polymarket:
   # rollout. When OddsPapi already supplies an ACTIVE polymarket book for a fixture we DEFER to it (it
   # carries more market types); polymarket-direct only fills fixtures OddsPapi left without one. Flip
   # to true once the recovered prices/limits/fixtures look right in the logs/CSV.
-  actionable: false
+  actionable: true
   # Events are matched to canonical fixtures by normalized team names + the match DATE on the UTC
   # calendar day (anchored at noon, ±1-day cross-midnight tolerance), like kalshi — no ±minutes knob.
 
