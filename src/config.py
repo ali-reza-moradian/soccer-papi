@@ -169,6 +169,16 @@ class Config:
     def telegram_opt(self, key: str, default: Any) -> Any:
         return self.get("telegram", key, default=default)
 
+    @property
+    def heartbeat_enabled(self) -> bool:
+        """Send a 'bot alive' ping when a scan finds zero real arbs (throttled)."""
+        return bool(self.get("telegram", "heartbeat_enabled", default=True))
+
+    @property
+    def heartbeat_min_interval_min(self) -> float:
+        """Minimum minutes between heartbeats. 0 => ping on every scan."""
+        return float(self.get("telegram", "heartbeat_min_interval_min", default=60) or 0)
+
     def budget_opt(self, key: str, default: Any) -> Any:
         return self.get("budget", key, default=default)
 

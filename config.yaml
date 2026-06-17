@@ -240,10 +240,13 @@ thresholds:
 telegram:
   rank_by: profit                    # profit (= roi * T_max) | roi
   local_tz: "America/Toronto"
-  # When zero REAL arbs are found, send at most ONE short "no real arbs" summary per this many
-  # minutes (default 60) — keeps the group informed without spamming every 15-min cycle. The
-  # summary includes the shadow-arb count and the single best shadow arb if any exist.
-  empty_notice_interval_minutes: 60
+  # HEARTBEAT: when a scan finds zero REAL (funded, bettable) arbs, send a short "bot alive" ping so
+  # the group knows scanning is healthy. Throttled to at most once per heartbeat_min_interval_min to
+  # avoid burying you (the VM scans every ~10 min = up to 144/day). Set the interval to 0 to ping on
+  # EVERY scan. REAL arbs always alert immediately, independent of this throttle. Last-sent time is
+  # tracked in data/cache/notify_state.json (last_heartbeat_utc).
+  heartbeat_enabled: true
+  heartbeat_min_interval_min: 60
 
 budget:
   safety_margin: 15                  # pre-flight guard: if (limit - count) <= this, skip the scan (exit 0)

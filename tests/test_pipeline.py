@@ -246,30 +246,56 @@ def test_low_confidence_arb_kept_below_stake_floor():
     assert opps[0].res.low_confidence
 
 
-def test_empty_notice_throttled_to_once_per_interval(monkeypatch, tmp_path):
-    """Zero real arbs -> at most one 'no real arbs' Telegram message per interval (polish item)."""
+def test_heartbeat_throttled_to_once_per_interval(monkeypatch, tmp_path):
+    """Zero real arbs -> at most one heartbeat ping per heartbeat_min_interval_min, tracked in
+    notify_state.json (last_heartbeat_utc)."""
     import src.run as run
     sent: list[str] = []
     monkeypatch.setattr(run, "send_message", lambda tok, chat, text, log: bool(sent.append(text)) or True)
 
-    raw = {"telegram": {"empty_notice_interval_minutes": 60},
+    raw = {"telegram": {"heartbeat_enabled": True, "heartbeat_min_interval_min": 60},
            "target_window": {"from_utc": "2026-06-10T00:00:00Z", "to_utc": "2026-06-12T23:59:59Z"}}
     cfg = Config(raw=raw, secrets=Secrets(None, "bot", "chat"), cache_dir=str(tmp_path), dry_run=False)
-    stats = {"shadow_arbs": 2, "real_arbs": 0}
-    banner = "📅 Scanning: Jun 10 – Jun 12 UTC"
+    stats = {"shadow_arbs": 2, "real_arbs": 0, "fixtures_in_window": 9}
 
-    n1 = run._send_empty_notice([], stats, cfg, NOW, get_logger("t"), banner)
-    assert n1 == 1 and len(sent) == 1
-    assert "No real arbs found — shadow count: 2" in sent[0]
-    assert banner in sent[0]
+    n1, r1 = run._send_heartbeat([], stats, cfg, NOW, get_logger("t"), "America/Toronto")
+    assert n1 == 1 and len(sent) == 1 and "heartbeat sent" in r1
+    assert "0 arbs in 9 fixtures" in sent[0] and "Bot alive" in sent[0]
 
-    # 10 minutes later, still within the hour -> suppressed.
-    n2 = run._send_empty_notice([], stats, cfg, NOW + timedelta(minutes=10), get_logger("t"), banner)
-    assert n2 == 0 and len(sent) == 1
+    # 10 minutes later, still within the hour -> suppressed (throttled).
+    n2, r2 = run._send_heartbeat([], stats, cfg, NOW + timedelta(minutes=10), get_logger("t"), "America/Toronto")
+    assert n2 == 0 and len(sent) == 1 and "throttled" in r2
 
     # 61 minutes later -> the throttle window has passed, so it sends again.
-    n3 = run._send_empty_notice([], stats, cfg, NOW + timedelta(minutes=61), get_logger("t"), banner)
+    n3, r3 = run._send_heartbeat([], stats, cfg, NOW + timedelta(minutes=61), get_logger("t"), "America/Toronto")
     assert n3 == 1 and len(sent) == 2
+
+
+def test_heartbeat_every_scan_when_interval_zero(monkeypatch, tmp_path):
+    """heartbeat_min_interval_min: 0 -> ping on every scan (no throttle)."""
+    import src.run as run
+    sent: list[str] = []
+    monkeypatch.setattr(run, "send_message", lambda tok, chat, text, log: bool(sent.append(text)) or True)
+    raw = {"telegram": {"heartbeat_enabled": True, "heartbeat_min_interval_min": 0},
+           "target_window": {"from_utc": "2026-06-10T00:00:00Z", "to_utc": "2026-06-12T23:59:59Z"}}
+    cfg = Config(raw=raw, secrets=Secrets(None, "bot", "chat"), cache_dir=str(tmp_path), dry_run=False)
+    stats = {"shadow_arbs": 0, "real_arbs": 0, "fixtures_in_window": 5}
+    for i in range(3):
+        n, _ = run._send_heartbeat([], stats, cfg, NOW + timedelta(minutes=i), get_logger("t"), "America/Toronto")
+        assert n == 1
+    assert len(sent) == 3
+
+
+def test_heartbeat_disabled(monkeypatch, tmp_path):
+    import src.run as run
+    sent: list[str] = []
+    monkeypatch.setattr(run, "send_message", lambda tok, chat, text, log: bool(sent.append(text)) or True)
+    raw = {"telegram": {"heartbeat_enabled": False},
+           "target_window": {"from_utc": "2026-06-10T00:00:00Z", "to_utc": "2026-06-12T23:59:59Z"}}
+    cfg = Config(raw=raw, secrets=Secrets(None, "bot", "chat"), cache_dir=str(tmp_path), dry_run=False)
+    stats = {"shadow_arbs": 0, "real_arbs": 0, "fixtures_in_window": 5}
+    n, r = run._send_heartbeat([], stats, cfg, NOW, get_logger("t"), "America/Toronto")
+    assert n == 0 and len(sent) == 0 and "disabled" in r
 
 
 def test_stale_legs_are_skipped():

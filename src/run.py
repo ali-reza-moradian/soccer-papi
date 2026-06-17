@@ -951,6 +951,7 @@ def _scan(feeds, specs, ctx, cfg, by_fixture, by_participant, now, log, toa_book
         "arbs_below_threshold": 0,
         "shadow_book_counter": Counter(),
         "mapping_suspect_flags": Counter(),
+        "funded_arbs": [],   # (roi_pct, S, match, market, books, t_max, above_floor) — funded-only
     }
 
     for fx in feeds:
@@ -1037,6 +1038,16 @@ def _scan(feeds, specs, ctx, cfg, by_fixture, by_participant, now, log, toa_book
 
             real = _arb_for_universe(raw_market, spec, ctx.actionable, ctx, now, leg_age_limit, real_exclude)
             shadow = _arb_for_universe(raw_market, spec, ctx.tracked, ctx, now, leg_age_limit, suspects)
+
+            # FUNDED-ONLY transparency: record every funded (kalshi/polymarket/pinnacle/1xbet) arb that
+            # clears S<1, EVEN below the ROI/stake floor, so a funded arb can never be silently hidden
+            # behind a juicier shadow-book price. (Funded arbs above the floor also surface as real
+            # opportunities below; this list is the complete funded picture for the end-of-run report.)
+            if real is not None and real.is_arb:
+                books = "+".join(sorted({lg.book for lg in real.legs}))
+                above = real.roi_pct >= min_roi and (real.t_max >= min_stake or real.low_confidence)
+                stats["funded_arbs"].append(
+                    (real.roi_pct, real.arb_sum_S, match, spec.label, books, real.t_max, above))
 
             # The broadest complete result for this market — used for diagnostics so we can
             # SEE how close the market got, even when nothing clears the arb threshold.
@@ -1166,43 +1177,38 @@ def _save_notify_state(cfg: Config, state: dict[str, Any]) -> None:
         pass
 
 
-def _shadow_summary(opp: Opportunity, cfg: Config) -> str:
-    """One-line summary of a single shadow arb for the 'no real arbs' notice."""
-    market = fmt.market_label(opp.spec.label, opp.spec.family, opp.spec.line)
-    books = "+".join(sorted({leg.book for leg in opp.res.legs}))
-    flag = " 🌫 low-confidence" if opp.res.low_confidence else ""
-    return (f"👀 {opp.match} | {market} | ROI {fmt.num2(opp.res.roi_pct)}% · "
-            f"T_max {fmt.money(opp.res.t_max)} · {books}{flag}")
+def _send_heartbeat(opportunities, stats, cfg: Config, now: datetime, log, local_tz: str) -> tuple[int, str]:
+    """On zero REAL arbs, send a short 'bot alive' ping at most once per heartbeat_min_interval_min.
 
+    Returns (sent_count, reason) for the per-scan TELEGRAM status line. Real arbs are handled by the
+    caller and always send immediately — this is only the no-real-arb path."""
+    n_fix = stats["fixtures_in_window"]
+    shadow = stats["shadow_arbs"]
+    if not cfg.heartbeat_enabled:
+        return 0, "heartbeat disabled"
 
-def _send_empty_notice(opportunities, stats, cfg: Config, now: datetime, log, window_line: str) -> int:
-    """On zero real arbs, send a short summary at most once per empty_notice_interval_minutes."""
-    interval_min = float(cfg.telegram_opt("empty_notice_interval_minutes", 60))
+    interval = cfg.heartbeat_min_interval_min
     state = _load_notify_state(cfg)
-    last = _parse_iso(state.get("last_empty_notice_utc"))
-    if last is not None and (now - last).total_seconds() < interval_min * 60.0:
-        log.info("Zero real arbs; last 'no real arbs' notice was %.1f min ago (< %s) — staying quiet.",
-                 (now - last).total_seconds() / 60.0, interval_min)
-        return 0
+    last = _parse_iso(state.get("last_heartbeat_utc"))
+    if interval > 0 and last is not None and (now - last).total_seconds() < interval * 60.0:
+        mins = (now - last).total_seconds() / 60.0
+        return 0, f"heartbeat throttled (last {mins:.0f}m ago < {interval:.0f}m); 0 real, {shadow} shadow"
 
-    shadow_count = stats["shadow_arbs"]
-    lines = [window_line, f"⚽ No real arbs found — shadow count: {shadow_count}"]
-    shadows = [o for o in opportunities if not o.actionable]
-    if shadows:
-        lines.append(_shadow_summary(max(shadows, key=_rank_key(cfg)), cfg))
-    msg = "\n".join(l for l in lines if l)
+    msg = (f"Scan @ {fmt.fmt_dt(now, local_tz)} — 0 arbs in {n_fix} fixtures. "
+           f"Bot alive, next ~10 min.")
+    if shadow:
+        msg += f"\n({shadow} shadow-only tracked — not bettable, no account there)"
 
     if cfg.dry_run:
-        log.info("[dry_run] Would send hourly 'no real arbs' notice (shadow count: %s).", shadow_count)
-        return 0
+        log.info("[dry_run] Would send heartbeat:\n%s", msg)
+        return 0, "dry-run (heartbeat not sent)"
     if not cfg.secrets.telegram_ready:
-        log.warning("Telegram not configured — would have sent 'no real arbs' notice.")
-        return 0
+        return 0, "telegram not configured (no token/chat_id)"
     if send_message(cfg.secrets.telegram_bot_key, cfg.secrets.telegram_group_id, msg, log):
-        state["last_empty_notice_utc"] = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+        state["last_heartbeat_utc"] = now.strftime("%Y-%m-%dT%H:%M:%SZ")
         _save_notify_state(cfg, state)
-        return 1
-    return 0
+        return 1, "heartbeat sent (0 real arbs)"
+    return 0, "heartbeat send FAILED"
 
 
 def _emit(opportunities, stats, cfg: Config, now, client, log):
@@ -1244,25 +1250,40 @@ def _emit(opportunities, stats, cfg: Config, now, client, log):
     local_tz = str(cfg.telegram_opt("local_tz", "America/Toronto"))
 
     sent = 0
+    suppressed = 0
     if cfg.dry_run:
         # Verification: render exactly what WOULD be sent (real or shadow), send nothing.
         if top:
             preview = build_message([_telegram_item(o) for o in top], header, local_tz)
             log.info("[dry_run] Telegram preview (%s arb(s)):\n%s", len(top), preview)
+            reason = f"dry-run (would send {len(top)} arb alert(s))"
         else:
-            log.info("[dry_run] No arbs to preview.")
+            reason = "dry-run (no arbs to preview)"
     elif stats["real_arbs"] >= 1:
-        # At least one real (actionable) arb -> send the full top-3 alert every cycle.
+        # At least one real (actionable) arb -> ALWAYS send the top-3 alert immediately (no throttle).
         if not cfg.secrets.telegram_ready:
-            log.warning("Telegram not configured — would have sent %s opportunities.", len(top))
+            reason = f"{len(top)} real arb(s) found but TELEGRAM OFF (no token/chat_id)"
         else:
             msg = build_message([_telegram_item(o) for o in top], header, local_tz)
             if send_message(cfg.secrets.telegram_bot_key, cfg.secrets.telegram_group_id, msg, log):
                 sent = len(top)
+                reason = f"{sent} real-arb alert(s) sent immediately"
+            else:
+                reason = f"{len(top)} real arb(s) found but Telegram send FAILED"
     else:
-        # Zero real arbs -> at most one short summary per hour (with the best shadow arb, if any).
-        log.info("No real arbs this cycle (%s shadow). Considering hourly summary.", stats["shadow_arbs"])
-        sent = _send_empty_notice(opportunities, stats, cfg, now, log, window_line)
+        # Zero real arbs -> a throttled heartbeat ('bot alive') ping.
+        sent, reason = _send_heartbeat(opportunities, stats, cfg, now, log, local_tz)
+        if sent == 0 and ("throttled" in reason or "disabled" in reason):
+            suppressed = 1
+
+    # One-line, EVERY scan: is Telegram working, did we send, and if not, why.
+    if cfg.dry_run:
+        tg_state = "OFF (dry-run)"
+    elif cfg.secrets.telegram_ready:
+        tg_state = "ON"
+    else:
+        tg_state = "OFF (no token)"
+    log.info("TELEGRAM: %s | %s sent | %s suppressed | %s", tg_state, sent, suppressed, reason)
 
     # --- Summary ---
     log.info("-" * 78)
@@ -1272,6 +1293,16 @@ def _emit(opportunities, stats, cfg: Config, now, client, log):
     log.info("         %s real arbs | %s shadow arbs | %s near-misses | %s arb(s) below ROI/stake floor | %s sent",
              stats["real_arbs"], stats["shadow_arbs"], stats["near_misses"],
              stats.get("arbs_below_threshold", 0), sent)
+    # FUNDED-ONLY arbs (kalshi/polymarket/pinnacle/1xbet only), incl. below floor — so a real
+    # bettable arb is never invisible behind a better shadow-book leg.
+    funded = sorted(stats.get("funded_arbs", []), key=lambda t: t[0], reverse=True)
+    if funded:
+        log.info("         FUNDED-ONLY arbs (kalshi/polymarket/pinnacle/1xbet; '*'=above ROI/stake floor):")
+        for roi, S, match, label, books, t_max, above in funded[:10]:
+            log.info("           %s S=%.4f ROI %+.2f%% T_max %s | %s | %s",
+                     "*" if above else " ", S, roi, fmt.money0(t_max), match, f"{label} [{books}]")
+    elif stats["real_arbs"] == 0:
+        log.info("         FUNDED-ONLY arbs: none clear S<1 this cycle (shadow arbs use non-funded books).")
     if stats["shadow_book_counter"]:
         log.info("         Books by # of shadow arbs they appeared in (which to fund next):")
         for book, c in stats["shadow_book_counter"].most_common():
