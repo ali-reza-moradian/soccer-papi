@@ -7,10 +7,10 @@
 
   Two modes, matching the LOCAL_RUN env contract the scanner documents:
     * Default (LOCAL_RUN): Telegram alerts ON, and ALL git add/commit/push is SKIPPED. This is the
-      VM's normal mode while there is no push credential configured — data/ stays uncommitted locally.
+      VM's normal mode while there is no push credential configured - data/ stays uncommitted locally.
       It is DISTINCT from DRY_RUN (which would instead suppress Telegram + CSV).
     * -Push: opt in to committing data/ and pushing to origin/main (needs a git remote credential /
-      token to be configured first — see README "Local development / VM").
+      token to be configured first - see README "Local development / VM").
 
   Secrets (ODDS_PAPI_KEY, ODDS_API_KEY, TELEGRAM_BOT_KEY, TELEGRAM_GROUP_ID) are loaded from the
   gitignored scripts\secrets.local.ps1 if present (copy scripts\secrets.local.ps1.example to create
@@ -33,17 +33,22 @@ $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent $PSScriptRoot
 Set-Location $repo
 
-# 1) Secrets — source the gitignored local file if it exists (it sets $env:ODDS_PAPI_KEY, etc.).
+# 1) Secrets - source the gitignored local file if it exists (it sets $env:ODDS_PAPI_KEY, etc.).
 $secrets = Join-Path $PSScriptRoot 'secrets.local.ps1'
 if (Test-Path $secrets) {
     . $secrets
 } else {
-    Write-Warning "scripts\secrets.local.ps1 not found — relying on pre-set environment variables. " +
-        "Copy scripts\secrets.local.ps1.example to scripts\secrets.local.ps1 and fill in the keys."
+    Write-Warning ("scripts\secrets.local.ps1 not found - relying on pre-set environment variables. " +
+        "Copy scripts\secrets.local.ps1.example to scripts\secrets.local.ps1 and fill in the keys.")
 }
 
-# 2) Mode — LOCAL_RUN keeps Telegram ON but skips ALL git. Pushing is opt-in (-Push).
+# 2) Mode - LOCAL_RUN keeps Telegram ON but skips ALL git. Pushing is opt-in (-Push).
 if ($Push) { $env:LOCAL_RUN = '' } else { $env:LOCAL_RUN = '1' }
+
+# Force UTF-8 for Python stdout/stderr so log lines with em-dashes / accented team names
+# (e.g. Curacao, Turkiye) render correctly instead of as mojibake in the Windows console.
+$env:PYTHONIOENCODING = 'utf-8'
+$env:PYTHONUTF8 = '1'
 
 # 3) Prefer the repo venv python; fall back to PATH python.
 $py = Join-Path $repo '.venv\Scripts\python.exe'
@@ -53,7 +58,7 @@ if (-not (Test-Path $py)) { $py = 'python' }
 & $py -m src.run
 $scanExit = $LASTEXITCODE
 
-# 5) Git — skipped entirely in LOCAL_RUN; only runs with -Push.
+# 5) Git - skipped entirely in LOCAL_RUN; only runs with -Push.
 if ($env:LOCAL_RUN) {
     Write-Output "LOCAL_RUN: skipping git add/commit/push (data/ left uncommitted on the VM)."
     exit $scanExit
