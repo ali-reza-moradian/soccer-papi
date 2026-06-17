@@ -4,6 +4,12 @@
 
 sport_id: 10                         # OddsPapi soccer sportId (confirm via /v4/sports)
 
+# Hard cap on the TOTAL money staked across all legs of any single arb. If an arb's natural T_max
+# (set by book limits) would require investing more than this, every leg stake is scaled DOWN
+# proportionally so the total equals bankroll_total (guaranteed profit scales down with it). If the
+# arb is already smaller than this (limited by real book limits), it is left untouched.
+bankroll_total: 30000
+
 oddspapi:
   # FREE PROFILE. When false, the scan spends ZERO OddsPapi odds requests: per-scan odds come
   # ONLY from the supplemental sources (the-odds-api Pinnacle + 1xBet, Kalshi-direct,
@@ -222,8 +228,14 @@ thresholds:
   near_miss_ceiling_S: 1.02          # count markets with 1.00 <= S <= this as near-misses
   closest_report_count: 10           # how many "closest to an arb" markets to print each run
   csv_dedup_minutes: 90              # same signature seen within this window → UPDATE row, don't duplicate
-  unknown_limit_fallback: 100        # T_max fallback when NO leg has a known limit (marks low_confidence)
   low_confidence_limit_floor: 10     # any leg with limit null or < this ($) → low_confidence (kept, flagged)
+  # UNKNOWN-LIMIT REALISM. Many books (the-odds-api: 1xbet, unibet, skybet, …) report NO stake limit.
+  # Treating those legs as bottomless produced fantasy T_max values (e.g. $156K "available" on 1xbet).
+  # Instead every limit-less leg is capped at this assumed executable size in the T_max/binding calc,
+  # so sizes stay realistic, and the leg is flagged UNVERIFIED in alerts + the xlsx log. Override
+  # per book below (e.g. a book you know holds more). A leg WITH a real reported limit is unaffected.
+  assumed_unknown_limit: 1000        # default assumed max stake ($) for any leg lacking a real limit
+  assumed_unknown_limit_by_book: {}  # per-book overrides, e.g. {pinnacle: 5000, 1xbet: 2000}
 
 telegram:
   rank_by: profit                    # profit (= roi * T_max) | roi

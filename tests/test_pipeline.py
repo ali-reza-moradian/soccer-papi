@@ -92,7 +92,7 @@ def _ctx(group_of, actionable, tracked, reference_books=(), min_favorite_ratio=1
     # every fixture here lands in the far bucket, so RECENT legs are fresh and STALE (400m) is dropped.
     return EngineCtx(
         actionable=set(actionable), tracked=set(tracked), exchanges=set(),
-        commission={}, clone_group_of=group_of, unknown_limit_fallback=100,
+        commission={}, clone_group_of=group_of, assumed_unknown_limit=100,
         reference_books=list(reference_books), min_favorite_ratio=min_favorite_ratio,
     )
 

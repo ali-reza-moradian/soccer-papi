@@ -145,13 +145,50 @@ def test_select_then_compute_two_legs_on_one_account():
     assert max(payouts) - min(payouts) < 1.0
 
 
-def test_unknown_limit_marks_low_confidence():
+def test_unknown_limit_marks_low_confidence_and_binds_on_assumed_cap():
+    """A leg with NO real limit is capped at the assumed cap and flagged UNVERIFIED — and that
+    assumed cap now constrains T_max (the safety fix), so the limit-less leg binds when its cap is
+    the tightest. Previously the unknown leg was bottomless and pinnacle bound at $1500."""
     a = _cand(1, "Yes", "polymarket", 2.10, limit=None, is_exchange=True)
     b = _cand(2, "No", "pinnacle", 2.10, limit=1500)
-    res = compute_arb([a, b], unknown_limit_fallback=100)
+    res = compute_arb([a, b], assumed_unknown_limit=100)
     assert res.low_confidence
-    # T_max derived from the only known limit (pinnacle leg).
-    assert res.binding_book == "pinnacle"
+    # polymarket's assumed $100 cap (< pinnacle's real $1500) now binds T_max.
+    assert res.binding_book == "polymarket"
+    assert res.unverified_books == ["polymarket"]
+    poly_leg = next(lg for lg in res.legs if lg.book == "polymarket")
+    assert poly_leg.unverified and poly_leg.effective_limit == 100
+    assert next(lg for lg in res.legs if lg.book == "pinnacle").unverified is False
+
+
+def test_per_book_assumed_limit_override():
+    """assumed_unknown_limit_by_book overrides the default for a specific book."""
+    a = _cand(1, "Yes", "1xbet", 2.10, limit=None)
+    b = _cand(2, "No", "unibet", 2.10, limit=None)
+    res = compute_arb([a, b], assumed_unknown_limit=1000,
+                      assumed_unknown_limit_by_book={"1xbet": 2000})
+    by_book = {lg.book: lg.effective_limit for lg in res.legs}
+    assert by_book == {"1xbet": 2000, "unibet": 1000}
+    assert set(res.unverified_books) == {"1xbet", "unibet"}
+
+
+def test_bankroll_cap_scales_stakes_and_profit():
+    """cap_total_investment scales an over-large arb down to the bankroll; ROI/S unchanged."""
+    from src.arbitrage import cap_total_investment
+    a = _cand(1, "Over", "pinnacle", 2.10, limit=100000)
+    b = _cand(2, "Under", "1xbet", 2.05, limit=100000)
+    res = compute_arb([a, b])
+    assert res.t_max > 30000                      # natural T_max is huge
+    roi_before, s_before = res.roi_decimal, res.arb_sum_S
+    capped = cap_total_investment(res, 30000)
+    assert math.isclose(capped.t_max, 30000, abs_tol=1.0)
+    assert math.isclose(sum(lg.stake for lg in capped.legs), 30000, abs_tol=1.0)
+    assert math.isclose(capped.roi_decimal, roi_before) and capped.arb_sum_S == s_before
+    # Already-small arbs are left untouched.
+    small = compute_arb([_cand(1, "Over", "pinnacle", 2.10, limit=500),
+                         _cand(2, "Under", "1xbet", 2.05, limit=500)])
+    t_before = small.t_max
+    assert cap_total_investment(small, 30000).t_max == t_before
 
 
 def test_tiny_known_limit_marks_low_confidence():

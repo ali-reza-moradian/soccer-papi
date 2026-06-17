@@ -12,6 +12,7 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULT_CONFIG_PATH = os.path.join(REPO_ROOT, "config.yaml")
 DEFAULT_CACHE_DIR = os.path.join(REPO_ROOT, "data", "cache")
 DEFAULT_CSV_PATH = os.path.join(REPO_ROOT, "data", "arbitrage_opportunities.csv")
+DEFAULT_XLSX_PATH = os.path.join(REPO_ROOT, "data", "arbs_log.xlsx")
 
 # Tournament-level futures resolve weeks out (well past the 2-day scan window) and are out of scope.
 # Used when config.yaml omits markets.exclude_future_names. Substrings are matched case-insensitively
@@ -64,6 +65,7 @@ class Config:
     secrets: Secrets
     cache_dir: str = DEFAULT_CACHE_DIR
     csv_path: str = DEFAULT_CSV_PATH
+    xlsx_path: str = DEFAULT_XLSX_PATH
     dry_run: bool = False
     # LOCAL_RUN: the VM is the sole scanner. Telegram alerts stay ON (unlike dry_run, which suppresses
     # them); only the git add/commit/push of data/ is skipped — that is the runner script's job (see
@@ -144,6 +146,22 @@ class Config:
     @property
     def allow_quarter_lines(self) -> bool:
         return bool(self.get("markets", "allow_quarter_lines", default=False))
+
+    @property
+    def bankroll_total(self) -> float:
+        """Hard cap on total money staked across all legs of one arb (0/absent => no cap)."""
+        return float(self.get("bankroll_total", default=0) or 0)
+
+    @property
+    def assumed_unknown_limit(self) -> float:
+        """Assumed executable stake ($) for any leg lacking a real reported limit (UNVERIFIED)."""
+        return float(self.get("thresholds", "assumed_unknown_limit", default=1000) or 0)
+
+    @property
+    def assumed_unknown_limit_by_book(self) -> dict[str, float]:
+        """Per-book overrides of assumed_unknown_limit (book slug -> assumed $ limit)."""
+        raw = self.get("thresholds", "assumed_unknown_limit_by_book", default={}) or {}
+        return {str(k): float(v) for k, v in raw.items()}
 
     def threshold(self, key: str, default: Any) -> Any:
         return self.get("thresholds", key, default=default)
@@ -245,6 +263,7 @@ def load_config(config_path: str | None = None) -> Config:
         secrets=secrets,
         cache_dir=os.environ.get("CACHE_DIR", DEFAULT_CACHE_DIR),
         csv_path=os.environ.get("CSV_PATH", DEFAULT_CSV_PATH),
+        xlsx_path=os.environ.get("XLSX_PATH", DEFAULT_XLSX_PATH),
         dry_run=_truthy(os.environ.get("DRY_RUN")),
         local_run=_truthy(os.environ.get("LOCAL_RUN")),
     )

@@ -29,3 +29,7 @@ secrets.yaml
 scripts/secrets.local.ps1
 
 # NOTE: data/ is intentionally committed (CSV history + cached catalogs).
+# EXCEPT the Excel running log: it is a BINARY file rewritten every scan, so committing it would
+# create merge conflicts on the automated CSV commit-back and bloat history. It is a VM-local
+# artifact (LOCAL_RUN skips git anyway); the text CSV remains the committed source of truth.
+data/arbs_log.xlsx

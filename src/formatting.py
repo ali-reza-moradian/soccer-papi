@@ -14,7 +14,7 @@ home/away team names (or "Draw"), and a market's line/threshold is made explicit
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from decimal import Decimal, ROUND_DOWN
+from decimal import Decimal, ROUND_DOWN, ROUND_HALF_UP
 from typing import Any, Optional
 
 try:
@@ -136,6 +136,19 @@ def num2(v: Any) -> str:
         return _two_dp(v)
     except (TypeError, ValueError):
         return "0.00"
+
+
+def round_dollars(v: Any) -> int:
+    """Round a money value to the nearest WHOLE dollar (23.85 -> 24). Half rounds up."""
+    try:
+        return int(Decimal(str(float(v))).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+    except (TypeError, ValueError):
+        return 0
+
+
+def money0(v: Any) -> str:
+    """``$X`` — a money value rounded to whole dollars (for alerts/logs, not data files)."""
+    return f"${round_dollars(v):,}"
 
 
 # --------------------------------------------------------------------------- #

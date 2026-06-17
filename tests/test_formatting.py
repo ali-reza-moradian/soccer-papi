@@ -81,16 +81,17 @@ def test_format_opportunity_end_to_end():
         ],
         "bet_links": {},
     }
+    arb["total_investment"] = 303.66
     msg = format_opportunity(arb)
-    # 2-decimal money with $ everywhere.
-    assert "stake $150.00" in msg
-    assert "stake $153.66" in msg
-    assert "limit $1500.00" in msg
-    assert "profit <b>$0.19</b>" in msg
-    assert "T_max <b>$315.00</b>" in msg
+    # WHOLE-dollar money (rounded), with thousands separators; odds keep 2 dp; ROI 2 dp.
+    assert "stake $150 (limit $1,500)" in msg
+    assert "stake $154 (limit $5,000)" in msg          # 153.66 rounds to 154
+    assert "@ <b>2.10</b>" in msg and "@ <b>2.05</b>" in msg
+    assert "profit <b>$0</b>" in msg                    # 0.195 rounds to 0
+    assert "on total <b>$304</b>" in msg               # 303.66 rounds to 304
     assert "ROI <b>1.23%</b>" in msg
-    # Total investment = sum of stakes.
-    assert "Total Investment: $303.66" in msg
+    # Funded-only arb is labelled REAL.
+    assert "REAL" in msg and "SHADOW" not in msg
     # Market line made explicit + totals outcomes carry the line.
     assert "Total Goals (2.5)" in msg
     assert "Over 2.5" in msg
@@ -98,6 +99,31 @@ def test_format_opportunity_end_to_end():
     # Eastern time, no UTC.
     assert "15:00 EDT" in msg
     assert "UTC" not in msg
+
+
+def test_format_opportunity_shadow_and_unverified():
+    """Non-actionable arb is labelled SHADOW; a leg without a verified limit shows UNVERIFIED and
+    triggers the size-warning line."""
+    arb = {
+        "match": "USA vs Germany", "home_team": "USA", "away_team": "Germany",
+        "tournament": "WC", "kickoff_utc": "2026-06-07T19:00:00Z",
+        "market": "Match Result", "market_family": "1x2", "market_line": None,
+        "roi_pct": 2.0, "max_profit": 50.0, "total_investment": 1000.0, "actionable": False,
+        "legs": [
+            {"book": "1xbet", "outcome": "1", "decimal_odds": 3.5, "limit": None,
+             "unverified": True, "stake": 300.0},
+            {"book": "unibet", "outcome": "X", "decimal_odds": 3.6, "limit": None,
+             "unverified": True, "stake": 300.0},
+            {"book": "pinnacle", "outcome": "2", "decimal_odds": 3.7, "limit": 5000,
+             "unverified": False, "stake": 400.0},
+        ],
+        "bet_links": {},
+    }
+    msg = format_opportunity(arb)
+    assert "SHADOW — not bettable, no account there" in msg
+    assert "stake $300 (UNVERIFIED)" in msg            # limit-less leg
+    assert "limit $5,000" in msg                        # verified leg keeps a real limit
+    assert "Size unverified" in msg                     # one-line warning present
 
 
 def test_format_opportunity_1x2_uses_team_names():

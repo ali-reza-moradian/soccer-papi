@@ -11,11 +11,11 @@ import sys
 from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from decimal import Decimal
 from typing import Any, Optional
 
-from . import catalog, formatting as fmt, kalshi, normalize, polymarket, theoddsapi
-from .arbitrage import ArbResult, Candidate, compute_arb, make_signature, select_legs
+from . import catalog, excel_log, formatting as fmt, kalshi, normalize, polymarket, theoddsapi
+from .arbitrage import (ArbResult, Candidate, cap_total_investment, compute_arb, make_arb_id,
+                        make_signature, select_legs)
 from .config import Config, load_config
 from .csv_store import append_opportunities
 from .logsetup import setup_logging
@@ -50,7 +50,12 @@ class EngineCtx:
     exchanges: set[str]
     commission: dict[str, float]
     clone_group_of: Any
-    unknown_limit_fallback: float = 100.0
+    # UNKNOWN-LIMIT REALISM: a leg with no real reported limit is capped at this assumed executable
+    # size in the T_max/binding calc (per-book override map first), not treated as bottomless.
+    assumed_unknown_limit: float = 1000.0
+    assumed_unknown_limit_by_book: dict[str, float] = field(default_factory=dict)
+    # Hard cap on total money staked across all legs of one arb (0 => no cap). Applied AFTER sizing.
+    bankroll_total: float = 0.0
     # Time-to-kickoff-aware staleness (replaces a single flat max age): soft books hold steady
     # pre-match lines for hours, so the max allowed leg age scales with how far off kickoff is.
     # See max_leg_age_for(). All ages are minutes; horizons are hours.
@@ -168,7 +173,9 @@ def _arb_for_universe(
     chosen = select_legs(cands_by_outcome)
     if not chosen:
         return None
-    return compute_arb(chosen, ctx.unknown_limit_fallback, ctx.low_confidence_limit_floor)
+    res = compute_arb(chosen, ctx.assumed_unknown_limit, ctx.assumed_unknown_limit_by_book,
+                      ctx.low_confidence_limit_floor)
+    return cap_total_investment(res, ctx.bankroll_total)
 
 
 # --------------------------------------------------------------------------- #
@@ -340,7 +347,8 @@ def _log_arb_calc(log, opp: Opportunity, now: datetime) -> None:
     for leg in res.legs:
         age = _leg_age_minutes(leg.changed_at, now)
         age_s = f"changed {age:.0f}m ago" if age is not None else "age n/a"
-        lim_s = f"limit {fmt.money(leg.limit)}" if leg.limit else "limit n/a"
+        # Whole-dollar money everywhere; a leg with no real limit shows UNVERIFIED (assumed cap used).
+        lim_s = "limit UNVERIFIED" if leg.unverified else f"limit {fmt.money0(leg.limit)}"
         log.info("    %-14s: %s @ %-12s (%s, %s)",
                  _outcome(opp, leg.outcome_name), fmt.num2(leg.decimal_odds), leg.book, lim_s, age_s)
     terms = " + ".join(f"1/{leg.eff_odds:.3f}" for leg in res.legs)
@@ -349,15 +357,19 @@ def _log_arb_calc(log, opp: Opportunity, now: datetime) -> None:
     log.info("    S = %s = %s = %.4f  -> %s", terms, vals, res.arb_sum_S, verdict)
     log.info("    ROI = 1/S - 1 = %s%%", fmt.num2(res.roi_pct))
     tmax_terms = ", ".join(
-        f"{fmt.money(leg.limit)}*{leg.eff_odds:.3f}*{res.arb_sum_S:.4f}" for leg in res.legs if leg.limit
+        f"{fmt.money0(leg.effective_limit)}{'(assumed)' if leg.unverified else ''}*{leg.eff_odds:.3f}*{res.arb_sum_S:.4f}"
+        for leg in res.legs
     )
-    log.info("    T_max = min(%s) = %s  (binding: %s)", tmax_terms or "n/a", fmt.money(res.t_max), res.binding_book)
-    stakes = " | ".join(f"{_outcome(opp, leg.outcome_name)} {fmt.money(leg.stake)} @ {leg.book}" for leg in res.legs)
+    log.info("    T_max = min(%s) = %s  (binding: %s)", tmax_terms or "n/a", fmt.money0(res.t_max), res.binding_book)
+    stakes = " | ".join(f"{_outcome(opp, leg.outcome_name)} {fmt.money0(leg.stake)} @ {leg.book}" for leg in res.legs)
     log.info("    Stakes @ T_max: %s", stakes)
-    total_inv = sum((fmt.dec2(leg.stake) for leg in res.legs), Decimal("0"))
-    log.info("    Total Investment = %s", fmt.money(total_inv))
+    total_inv = sum(leg.stake for leg in res.legs)
+    log.info("    Total Investment = %s", fmt.money0(total_inv))
+    if res.unverified_books:
+        log.info("    UNVERIFIED limit on: %s (sizes assumed, not from the book)",
+                 ", ".join(res.unverified_books))
     log.info("    Guaranteed profit @ T_max = %s (%s%%)  [actionable=%s, suspicious=%s, low_conf=%s]",
-             fmt.money(res.max_profit), fmt.num2(res.roi_pct), opp.actionable, opp.suspicious, res.low_confidence)
+             fmt.money0(res.max_profit), fmt.num2(res.roi_pct), opp.actionable, opp.suspicious, res.low_confidence)
 
 
 # --------------------------------------------------------------------------- #
@@ -379,6 +391,8 @@ def _legs_payload(opp: Opportunity) -> list[dict[str, Any]]:
             "decimal_odds": round(leg.decimal_odds, 2),
             "american_odds": leg.american_odds,
             "limit": None if leg.limit is None else round(leg.limit, 2),
+            "unverified": leg.unverified,
+            "effective_limit": round(leg.effective_limit, 2),
             "stake": round(leg.stake, 2),
             "changed_at": fmt.iso_local(leg.changed_at),
         }
@@ -435,6 +449,7 @@ def _telegram_item(opp: Opportunity) -> dict[str, Any]:
         "market_line": opp.spec.line,
         "roi_pct": res.roi_pct,
         "max_liquidity": res.t_max,
+        "total_investment": sum(leg.stake for leg in res.legs),
         "max_profit": res.max_profit,
         "actionable": opp.actionable,
         "suspicious": opp.suspicious,
@@ -442,10 +457,45 @@ def _telegram_item(opp: Opportunity) -> dict[str, Any]:
         "involves_exchange": res.involves_exchange,
         "legs": [
             {"book": leg.book, "outcome": leg.outcome_name,
-             "decimal_odds": leg.decimal_odds, "limit": leg.limit, "stake": leg.stake}
+             "decimal_odds": leg.decimal_odds, "limit": leg.limit,
+             "unverified": leg.unverified, "stake": leg.stake}
             for leg in res.legs
         ],
         "bet_links": opp.bet_links,
+    }
+
+
+def _xlsx_row(opp: Opportunity, now: datetime) -> dict[str, Any]:
+    """Structured row for the Excel running log (one per arb per scan). Whole-dollar money."""
+    res = opp.res
+    market = fmt.market_label(opp.spec.label, opp.spec.family, opp.spec.line)
+    legs = []
+    for leg in res.legs:
+        legs.append({
+            "book": leg.book,
+            "outcome": _outcome(opp, leg.outcome_name),
+            "odds": round(leg.decimal_odds, 2),
+            "limit": "UNVERIFIED" if leg.unverified else fmt.round_dollars(leg.limit),
+            "stake": fmt.round_dollars(leg.stake),
+        })
+    total_inv = fmt.round_dollars(sum(leg.stake for leg in res.legs))
+    return {
+        "scan_time_local": fmt.iso_local(now),
+        "scan_time_utc": now.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "game": opp.match,
+        "kickoff_time": fmt.iso_local(opp.kickoff_utc),
+        "tournament": opp.tournament,
+        "market": market,
+        "legs": legs,
+        "S": round(res.arb_sum_S, 4),
+        "ROI_pct": round(res.roi_pct, 2),
+        "T_max": fmt.round_dollars(res.t_max),
+        "total_investment": total_inv,
+        "guaranteed_profit": fmt.round_dollars(res.max_profit),
+        "type": "REAL" if opp.actionable else "SHADOW",
+        "low_confidence": "Y" if res.low_confidence else "N",
+        "unverified_limit_books": ", ".join(res.unverified_books),
+        "arb_id": make_arb_id(opp.match, market, res.legs),
     }
 
 
@@ -843,7 +893,9 @@ def run_cycle(cfg: Config, log) -> int:
         exchanges=cfg.exchanges,
         commission=cfg.commission,
         clone_group_of=clone_group_of,
-        unknown_limit_fallback=float(cfg.threshold("unknown_limit_fallback", 100)),
+        assumed_unknown_limit=cfg.assumed_unknown_limit,
+        assumed_unknown_limit_by_book=cfg.assumed_unknown_limit_by_book,
+        bankroll_total=cfg.bankroll_total,
         # Time-to-kickoff-aware staleness tiers (relaxed pre-match; tight inside the final hour).
         max_leg_age_far=float(cfg.threshold("max_leg_age_far_minutes", 360)),
         max_leg_age_mid=float(cfg.threshold("max_leg_age_mid_minutes", 60)),
@@ -1167,6 +1219,14 @@ def _emit(opportunities, stats, cfg: Config, now, client, log):
     else:
         log.info("CSV: no opportunities to write.")
 
+    # --- Excel running log (every arb, REAL and SHADOW, one row per arb per scan) ---
+    if cfg.dry_run:
+        log.info("[dry_run] Would append %s arb row(s) to %s (suppressed).",
+                 len(opportunities), cfg.xlsx_path)
+    elif opportunities:
+        n = excel_log.append_arbs(cfg.xlsx_path, [_xlsx_row(o, now) for o in opportunities], log)
+        log.info("XLSX: appended %s arb row(s) -> %s", n, cfg.xlsx_path)
+
     # --- Telegram ---
     # A window banner heads every message so the group always knows the range we covered.
     window_line = f"📅 Scanning: {fmt.window_label(cfg.from_utc, cfg.to_utc)}"
@@ -1177,20 +1237,26 @@ def _emit(opportunities, stats, cfg: Config, now, client, log):
     ordered = sorted(preferred, key=rank, reverse=True) + sorted(rest, key=rank, reverse=True)
     top = ordered[:3]
 
+    header = (f"{window_line}\n"
+              f"⚽ <b>Arb scan</b> — {fmt.fmt_dt(now)}\n"
+              f"{stats['real_arbs']} real · {stats['shadow_arbs']} shadow · "
+              f"top {len(top)} below")
+    local_tz = str(cfg.telegram_opt("local_tz", "America/Toronto"))
+
     sent = 0
-    if stats["real_arbs"] >= 1:
+    if cfg.dry_run:
+        # Verification: render exactly what WOULD be sent (real or shadow), send nothing.
+        if top:
+            preview = build_message([_telegram_item(o) for o in top], header, local_tz)
+            log.info("[dry_run] Telegram preview (%s arb(s)):\n%s", len(top), preview)
+        else:
+            log.info("[dry_run] No arbs to preview.")
+    elif stats["real_arbs"] >= 1:
         # At least one real (actionable) arb -> send the full top-3 alert every cycle.
-        if cfg.dry_run:
-            log.info("[dry_run] Would send %s opportunities to Telegram.", len(top))
-        elif not cfg.secrets.telegram_ready:
+        if not cfg.secrets.telegram_ready:
             log.warning("Telegram not configured — would have sent %s opportunities.", len(top))
         else:
-            header = (f"{window_line}\n"
-                      f"⚽ <b>Arb scan</b> — {fmt.fmt_dt(now)}\n"
-                      f"{stats['real_arbs']} real · {stats['shadow_arbs']} shadow · "
-                      f"top {len(top)} below")
-            msg = build_message([_telegram_item(o) for o in top], header,
-                                str(cfg.telegram_opt("local_tz", "America/Toronto")))
+            msg = build_message([_telegram_item(o) for o in top], header, local_tz)
             if send_message(cfg.secrets.telegram_bot_key, cfg.secrets.telegram_group_id, msg, log):
                 sent = len(top)
     else:

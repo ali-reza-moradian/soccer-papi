@@ -49,11 +49,13 @@ class Leg:
     decimal_odds: float
     eff_odds: float
     american_odds: Optional[str]
-    limit: Optional[float]
+    limit: Optional[float]            # real reported limit; None = book reported none (UNVERIFIED)
     changed_at: Optional[str]
     is_exchange: bool
     commission: float
-    stake: float = 0.0          # stake at T_max (filled by compute_arb)
+    stake: float = 0.0               # stake at T_max (filled by compute_arb)
+    effective_limit: float = 0.0     # limit actually USED in sizing (real, or assumed if unverified)
+    unverified: bool = False         # True when no real limit was reported -> assumed cap applied
 
 
 @dataclass
@@ -67,6 +69,7 @@ class ArbResult:
     min_leg_limit: float
     involves_exchange: bool
     low_confidence: bool
+    unverified_books: list[str] = field(default_factory=list)  # books whose limit was assumed
 
     @property
     def is_arb(self) -> bool:
@@ -132,38 +135,47 @@ def select_legs(outcomes: dict[int, list[Candidate]]) -> Optional[list[Candidate
 # --------------------------------------------------------------------------- #
 # Arb computation                                                              #
 # --------------------------------------------------------------------------- #
-def compute_arb(candidates: list[Candidate], unknown_limit_fallback: float = 100.0,
+def compute_arb(candidates: list[Candidate], assumed_unknown_limit: float = 1000.0,
+                assumed_unknown_limit_by_book: Optional[dict[str, float]] = None,
                 low_confidence_limit_floor: float = 10.0) -> ArbResult:
     """Compute the full arbitrage result for one chosen leg per outcome.
 
+    UNKNOWN-LIMIT REALISM: a leg whose book reported no real stake limit is NOT treated as
+    bottomless (which produced fantasy T_max values). Instead it is capped at an *assumed*
+    executable size — ``assumed_unknown_limit_by_book[book]`` if present, else
+    ``assumed_unknown_limit`` — and flagged ``unverified``. So EVERY leg now constrains T_max via
+    its effective limit (real or assumed), and the binding leg can be an assumed-limit one.
+
     ``low_confidence_limit_floor`` marks the arb low_confidence (but never discards it) when any
-    leg's known limit is below this dollar amount — common on thin Polymarket/Kalshi books where
-    a tiny or unknown limit means the human, not the bot, should judge whether to take it.
+    leg's real limit is below this dollar amount, or has no real limit at all — common on thin
+    Polymarket/Kalshi books where the human, not the bot, should judge whether to take it.
     """
     if not candidates:
         raise ValueError("compute_arb requires at least one candidate")
+    by_book = assumed_unknown_limit_by_book or {}
 
     S = sum(1.0 / c.eff_odds for c in candidates)
     roi = (1.0 / S) - 1.0
 
-    known = [c for c in candidates if c.limit and c.limit > 0]
-    # Null/non-positive limit, or a known-but-tiny limit (< floor), all => low confidence.
+    def _effective_limit(c: Candidate) -> tuple[float, bool]:
+        """Return (limit used for sizing, unverified?). Real limit if reported, else assumed cap."""
+        if c.limit and c.limit > 0:
+            return float(c.limit), False
+        return float(by_book.get(c.book, assumed_unknown_limit)), True
+
+    sized = [(c, *_effective_limit(c)) for c in candidates]  # (candidate, eff_limit, unverified)
+
+    # Null/non-positive real limit, or a known-but-tiny real limit (< floor), all => low confidence.
     low_confidence = any((c.limit is None or c.limit < low_confidence_limit_floor) for c in candidates)
 
-    if known:
-        # T_max is the tightest L_i * o_i_eff * S across legs with a known limit.
-        binding = min(known, key=lambda c: c.limit * c.eff_odds * S)
-        t_max = binding.limit * binding.eff_odds * S
-        binding_book = binding.book
-        min_leg_limit = min(c.limit for c in known)
-    else:
-        t_max = float(unknown_limit_fallback)
-        binding_book = candidates[0].book
-        min_leg_limit = 0.0
-        low_confidence = True
+    # T_max is the tightest eff_limit * o_eff * S across ALL legs (real or assumed limits).
+    binding_c, binding_lim, _ = min(sized, key=lambda t: t[1] * t[0].eff_odds * S)
+    t_max = binding_lim * binding_c.eff_odds * S
+    binding_book = binding_c.book
+    min_leg_limit = min(lim for _, lim, _ in sized)
 
     legs: list[Leg] = []
-    for c in candidates:
+    for c, eff_lim, unverified in sized:
         stake = t_max * (1.0 / c.eff_odds) / S
         legs.append(
             Leg(
@@ -178,6 +190,8 @@ def compute_arb(candidates: list[Candidate], unknown_limit_fallback: float = 100
                 is_exchange=c.is_exchange,
                 commission=c.commission,
                 stake=round(stake, 2),
+                effective_limit=eff_lim,
+                unverified=unverified,
             )
         )
 
@@ -191,7 +205,26 @@ def compute_arb(candidates: list[Candidate], unknown_limit_fallback: float = 100
         min_leg_limit=min_leg_limit,
         involves_exchange=any(c.is_exchange for c in candidates),
         low_confidence=low_confidence,
+        unverified_books=sorted({c.book for c, _, unv in sized if unv}),
     )
+
+
+def cap_total_investment(res: ArbResult, bankroll_total: float) -> ArbResult:
+    """Scale an arb DOWN so its total investment never exceeds ``bankroll_total``.
+
+    Total investment across all legs equals T_max (stakes sum to T_max). If T_max is within the
+    bankroll this is a no-op; otherwise every leg stake, T_max and the guaranteed profit are scaled
+    by the same factor (ROI and S — the arb math — are unchanged). ``bankroll_total <= 0`` disables
+    the cap. This is a capping step layered ON TOP of the arb math, not part of it.
+    """
+    if bankroll_total <= 0 or res.t_max <= bankroll_total:
+        return res
+    factor = bankroll_total / res.t_max
+    for leg in res.legs:
+        leg.stake = round(leg.stake * factor, 2)
+    res.t_max = float(bankroll_total)
+    res.max_profit = res.t_max * res.roi_decimal
+    return res
 
 
 def make_signature(fixture_id: str, market_id: int, line: Optional[float], legs: Iterable[Leg]) -> str:
@@ -199,4 +232,16 @@ def make_signature(fixture_id: str, market_id: int, line: Optional[float], legs:
     pairs = sorted((leg.book, round(leg.decimal_odds, 2)) for leg in legs)
     line_str = "" if line is None else f"{line:g}"
     raw = f"{fixture_id}|{market_id}|{line_str}|" + "|".join(f"{b}@{o}" for b, o in pairs)
+    return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:16]
+
+
+def make_arb_id(game: str, market: str, legs: Iterable[Leg]) -> str:
+    """Stable id for the STRUCTURAL arb: game + market + sorted (book, outcome) pairs.
+
+    Deliberately ignores odds (unlike make_signature) so the same arb across consecutive scans —
+    same teams, same market, same book/outcome legs — keeps one id even as prices drift. Used by the
+    xlsx log to decide new_or_repeat and to group an arb over time.
+    """
+    pairs = sorted((leg.book, leg.outcome_name) for leg in legs)
+    raw = f"{game}|{market}|" + "|".join(f"{b}:{o}" for b, o in pairs)
     return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:16]
