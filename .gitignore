@@ -21,9 +21,11 @@ htmlcov/
 .idea/
 .vscode/
 
-# Local secrets (never commit) — secrets live in GitHub Actions only
+# Local secrets (never commit) — secrets live in GitHub Actions only (and, on the VM, in the
+# gitignored scripts/secrets.local.ps1 that run_scan.ps1 sources).
 .env
 *.local.env
 secrets.yaml
+scripts/secrets.local.ps1
 
 # NOTE: data/ is intentionally committed (CSV history + cached catalogs).

@@ -4,6 +4,16 @@
 
 sport_id: 10                         # OddsPapi soccer sportId (confirm via /v4/sports)
 
+oddspapi:
+  # FREE PROFILE. When false, the scan spends ZERO OddsPapi odds requests: per-scan odds come
+  # ONLY from the supplemental sources (the-odds-api Pinnacle + 1xBet, Kalshi-direct,
+  # Polymarket-direct). OddsPapi is still used — for free — for the budget guard (/v4/account)
+  # and for the cached catalog + fixtures name map, which auto-refresh on the TTLs in `budget`
+  # below (~1 billable request per names refresh, a few per catalog refresh). This keeps OddsPapi
+  # well under ~70 requests/month while every World Cup team still resolves to a real name.
+  # Set true to restore the funded profile (one billable odds request per granted book per scan).
+  fetch_odds: false
+
 # UTC window we care about. odds-by-tournaments returns ALL events for a league;
 # we filter to fixtures whose kickoff falls inside this window and is in the future.
 # NOTE: the window is computed dynamically in src/config.py (load_config) — a rolling
@@ -62,17 +72,21 @@ theoddsapi:
   # the-odds-api book (the soft books further down) stays shadow-only no matter what. 1xBet is the
   # one the-odds-api book we hold an account on, so it is the sole actionable recovered book.
   # NOTE: a the-odds-api SPREAD additionally needs an OddsPapi book on the same marketId+handicap to
-  # validate the sign mapping before it can be actionable (see run._scan). Omit/empty => no per-book
+  # validate the sign mapping before it can be actionable (see run._scan). In the FREE PROFILE no
+  # OddsPapi odds are fetched, so spreads (asian_handicap) can never be validated and stay shadow —
+  # only h2h (1x2) and totals legs from Pinnacle/1xBet turn actionable. Omit/empty => no per-book
   # restriction (any recovered book may be actionable when the master switch is on).
   actionable_books:
     - 1xbet
+    - pinnacle           # FREE PROFILE: OddsPapi no longer sources Pinnacle odds; the-odds-api does
   commence_tolerance_minutes: 120    # a fixture matches only if team identity AND kickoff agree within this
   # Canonical-slug allow-list (post-alias). Every the-odds-api book confirmed present in the
   # OddsPapi catalog from the eu/uk shadow run. Omit/empty would ingest all catalog books the feed
-  # returns. Pinnacle is intentionally absent — OddsPapi sources it actively, so we defer (no
-  # double-sourcing). Aliases (onexbet→1xbet, betfair_ex_*→betfair-ex, unibet_*→unibet, …) live in
-  # src/theoddsapi.py.
+  # returns. Pinnacle is now sourced HERE (FREE PROFILE: oddspapi.fetch_odds=false means OddsPapi no
+  # longer supplies Pinnacle odds, so there is no double-sourcing to defer to). Aliases
+  # (onexbet→1xbet, betfair_ex_*→betfair-ex, unibet_*→unibet, …) live in src/theoddsapi.py.
   books:
+    - pinnacle           # FREE PROFILE: the-odds-api is now the sole Pinnacle odds source
     - 1xbet
     - unibet
     - williamhill
@@ -221,8 +235,17 @@ telegram:
 
 budget:
   safety_margin: 15                  # pre-flight guard: if (limit - count) <= this, skip the scan (exit 0)
-  names_cache_hours: 6               # refresh the fixtures name map at most this often
-  refresh_min_remaining: 24          # only auto-refresh missing catalogs if at least this many requests remain
+  # Names map TTL. The scan auto-refreshes the fixtures name map (fixtureId -> real team names) when
+  # the cache is older than this — ~2 refreshes/day at 12h. This is the ROOT-CAUSE FIX for stale
+  # "Team NNNN" placeholders: it keeps names current as the rolling window moves forward. Each refresh
+  # costs 1 billable OddsPapi request per pinned tournament (1 here), so ~2/day ≈ 60 requests/month.
+  names_cache_hours: 12
+  # Catalog TTL (sports/bookmakers/markets/tournaments). These are near-static for a fixed tournament,
+  # so they refresh far less often than names. A refresh costs ~4 billable requests; at 14 days that
+  # is only ~8 requests/month, keeping the OddsPapi total comfortably under ~70/month. The scan also
+  # refreshes the catalog immediately if it is missing entirely (budget permitting).
+  catalog_cache_hours: 336
+  refresh_min_remaining: 24          # only auto-refresh missing/stale catalogs if at least this many requests remain
   # NO per-cycle book cap: every scan fetches ALL usable books your plan grants (one billable
   # request each), so any pair of books can form an arb. If the key runs out of credits or is
   # rate-limited mid-fetch (HTTP 429/403), the run prints "API Key exhausted" and exits cleanly.

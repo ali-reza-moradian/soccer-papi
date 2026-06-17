@@ -8,12 +8,20 @@ using the [OddsPapi v4 API](https://oddspapi.io/us/docs), then:
 3. **Prints the full arbitrage math** to the GitHub Actions logs (odds per leg, implied
    probability sum `S`, ROI, stake split, and max stake `T_max`).
 
-It runs **entirely on GitHub Actions** — nothing needs to run on your machine. It is
-deliberately **frugal**: ~1 billable API request per scan (free tier = 250 requests/month),
-with a pre-flight budget guard that refuses to run when the quota is nearly gone.
+A **24/7 Windows VM is the sole scanner** (`scripts/run_scan.ps1` → `python -m src.run`); the
+GitHub Actions scan cron is disabled (only `workflow_dispatch` remains). It is deliberately
+**frugal**, and in the default **free profile** spends **zero** OddsPapi *odds* requests per scan:
 
-Current scope: **international friendlies, 5–8 June 2026 (UTC)**. The design generalises to
-the **FIFA World Cup** by changing config / tournament IDs only.
+- **Free profile** (`oddspapi.fetch_odds: false`) — per-scan odds come only from the supplemental
+  sources: **the-odds-api** (Pinnacle + 1xBet), **Kalshi-direct**, **Polymarket-direct**. OddsPapi is
+  still used *for free* for the pre-flight budget guard (`/v4/account`) and for the cached catalog +
+  fixtures **name map**, which **auto-refresh on a TTL** (names every ~12h, catalog every ~14d). That
+  TTL refresh is what keeps every team resolving to a real name as the window rolls forward — total
+  OddsPapi usage stays **well under ~70 requests/month**.
+- **Funded profile** (`oddspapi.fetch_odds: true`) — the original behaviour: one billable OddsPapi
+  odds request per granted book per scan.
+
+Current scope: **FIFA World Cup** (`tournaments.pinned_ids: [16]`).
 
 > ⚠️ Personal informational tooling, **not financial advice**. See [Risk caveats](#risk-caveats).
 
@@ -203,6 +211,33 @@ Secrets are read from the environment only — never hardcoded or printed.
 pip install -r requirements.txt
 pytest                      # math, stake sizing, clone dedup, classification, line matching, CSV dedup
 ODDS_PAPI_KEY=... TELEGRAM_BOT_KEY=... TELEGRAM_GROUP_ID=... DRY_RUN=1 python -m src.run
+```
+
+### Running on the VM (sole scanner)
+
+The VM runs `scripts/run_scan.ps1`, which loads keys from the gitignored
+`scripts/secrets.local.ps1` (copy `scripts/secrets.local.ps1.example`), runs one scan cycle, and
+handles git:
+
+```powershell
+Copy-Item scripts\secrets.local.ps1.example scripts\secrets.local.ps1   # then fill in the 4 keys
+powershell -ExecutionPolicy Bypass -File scripts\run_scan.ps1           # one scan; Telegram on; no git
+```
+
+Two env flags control side effects (independent of each other):
+
+| Flag | Telegram | CSV write | git add/commit/push |
+|---|---|---|---|
+| `LOCAL_RUN=1` (runner default) | **on** | on | **skipped** |
+| `DRY_RUN=1` | suppressed | suppressed | (n/a) |
+
+`run_scan.ps1` sets `LOCAL_RUN=1` by default, so the VM alerts to Telegram but never touches git
+(there is no push credential configured yet). Pass `-Push` to commit + push `data/` once a git
+remote token is set up. Schedule it with Task Scheduler, e.g. every 15 minutes:
+
+```powershell
+schtasks /Create /SC MINUTE /MO 15 /TN soccer-papi-scan /TR ^
+  "powershell -ExecutionPolicy Bypass -File C:\bots\soccer-papi\scripts\run_scan.ps1"
 ```
 
 ---

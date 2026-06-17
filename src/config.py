@@ -65,6 +65,10 @@ class Config:
     cache_dir: str = DEFAULT_CACHE_DIR
     csv_path: str = DEFAULT_CSV_PATH
     dry_run: bool = False
+    # LOCAL_RUN: the VM is the sole scanner. Telegram alerts stay ON (unlike dry_run, which suppresses
+    # them); only the git add/commit/push of data/ is skipped — that is the runner script's job (see
+    # scripts/run_scan.ps1), so Python just records the mode for the logs. Independent of dry_run.
+    local_run: bool = False
 
     # -- convenience accessors -------------------------------------------------
     def get(self, *path: str, default: Any = None) -> Any:
@@ -78,6 +82,14 @@ class Config:
     @property
     def sport_id(self) -> int:
         return int(self.get("sport_id", default=10))
+
+    @property
+    def oddspapi_fetch_odds(self) -> bool:
+        """FREE PROFILE switch. When False the scan spends NO OddsPapi odds requests — per-scan odds
+        come only from the supplemental feeds (the-odds-api / kalshi / polymarket). OddsPapi is still
+        used for free for the budget guard and the cached catalog + name map. Defaults True (funded
+        profile: one billable odds request per granted book per scan)."""
+        return bool(self.get("oddspapi", "fetch_odds", default=True))
 
     # NOTE: NO hardcoded date fallback. load_config() resolves the scan window — a rolling 2-day
     # range from the current UTC instant, or a FROM_DATE/TO_DATE workflow_dispatch override — and
@@ -234,4 +246,5 @@ def load_config(config_path: str | None = None) -> Config:
         cache_dir=os.environ.get("CACHE_DIR", DEFAULT_CACHE_DIR),
         csv_path=os.environ.get("CSV_PATH", DEFAULT_CSV_PATH),
         dry_run=_truthy(os.environ.get("DRY_RUN")),
+        local_run=_truthy(os.environ.get("LOCAL_RUN")),
     )

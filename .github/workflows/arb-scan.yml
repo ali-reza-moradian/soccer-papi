@@ -4,12 +4,15 @@ name: arb-scan
 #   budget guard -> 1 billable odds-by-tournaments call -> detect arbs ->
 #   append CSV -> Telegram top 3 -> commit data/ back to main.
 on:
-  schedule:
-    # Every 15 minutes. NOTE: OddsPapi returns one bookmaker per odds call, so a cycle costs one
-    # request per granted book (no per-cycle cap — every scan fetches ALL usable books). If the key
-    # runs out (HTTP 429/403) the run prints "API Key exhausted" and exits cleanly. The scan window
-    # is a rolling 2-day range computed at runtime; dispatch manually only to override it.
-    - cron: "*/15 * * * *"
+  # SCAN CRON DISABLED — the 24/7 Windows VM is now the sole scanner (it runs src.run on its own
+  # schedule via scripts/run_scan.ps1). Leaving this GitHub schedule on would double-scan and burn
+  # OddsPapi/the-odds-api quota. Re-enable by uncommenting the block below if the VM is retired.
+  # schedule:
+  #   # Every 15 minutes. NOTE: OddsPapi returns one bookmaker per odds call, so a cycle costs one
+  #   # request per granted book (no per-cycle cap — every scan fetches ALL usable books). If the key
+  #   # runs out (HTTP 429/403) the run prints "API Key exhausted" and exits cleanly. The scan window
+  #   # is a rolling 2-day range computed at runtime; dispatch manually only to override it.
+  #   - cron: "*/15 * * * *"
   workflow_dispatch:
     inputs:
       from_date:

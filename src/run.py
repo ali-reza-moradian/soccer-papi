@@ -452,23 +452,42 @@ def _telegram_item(opp: Opportunity) -> dict[str, Any]:
 # --------------------------------------------------------------------------- #
 # Catalog loading / ensuring                                                    #
 # --------------------------------------------------------------------------- #
-def _ensure_catalogs(client, cfg: Config, acct: dict[str, Any], log) -> Optional[dict[str, Any]]:
-    """Load cached catalogs; auto-refresh once if missing and budget allows."""
+def _ensure_catalogs(client, cfg: Config, acct: dict[str, Any], now_epoch: float, log) -> Optional[dict[str, Any]]:
+    """Load cached catalogs; auto-refresh when MISSING or older than ``budget.catalog_cache_hours``.
+
+    The catalog (sports/bookmakers/markets/tournaments) is near-static for a fixed tournament, so its
+    TTL is long (default 14 days) and a refresh (~4 billable requests) is rare — the work that keeps
+    team names current as the window rolls forward is the SEPARATE names-map refresh in run_cycle. A
+    stale-but-present catalog is never discarded: if the budget is too low to refresh we keep using it
+    rather than fail the scan. Only a MISSING catalog with no budget is fatal."""
     markets = catalog.load_json(cfg.cache_dir, catalog.MARKETS_FILE)
     books = catalog.load_json(cfg.cache_dir, catalog.BOOKMAKERS_FILE)
     tours = catalog.load_json(cfg.cache_dir, catalog.TOURNAMENTS_FILE)
+    have_all = bool(markets) and bool(books) and tours is not None
+    cached = {"markets": markets, "bookmakers": books, "tournaments": tours}
 
-    if markets and books and tours is not None:
-        return {"markets": markets, "bookmakers": books, "tournaments": tours}
+    catalog_ttl = float(cfg.budget_opt("catalog_cache_hours", 336))
+    ages = [catalog.file_age_hours(cfg.cache_dir, f, now_epoch)
+            for f in (catalog.MARKETS_FILE, catalog.BOOKMAKERS_FILE, catalog.TOURNAMENTS_FILE)]
+    oldest = max((a for a in ages if a is not None), default=None)
+    stale = have_all and catalog_ttl > 0 and oldest is not None and oldest > catalog_ttl
+
+    if have_all and not stale:
+        return cached
 
     remaining = acct.get("remaining")
     min_remaining = int(cfg.budget_opt("refresh_min_remaining", 24))
     if remaining is not None and remaining < min_remaining:
+        if have_all:  # stale but usable — never throw away a working catalog to save names
+            log.warning("Catalog stale (oldest %.1fh > %.0fh) but only %s requests remain (< %s) — "
+                        "keeping the cached catalog this cycle.", oldest, catalog_ttl, remaining, min_remaining)
+            return cached
         log.error("Catalogs missing and only %s requests remain (< %s) — run refresh-catalog "
                   "workflow first. Exiting.", remaining, min_remaining)
         return None
 
-    log.warning("Catalogs missing — refreshing inline (run refresh-catalog workflow to avoid this).")
+    why = "missing" if not have_all else f"stale (oldest {oldest:.1f}h > {catalog_ttl:.0f}h TTL)"
+    log.warning("Refreshing catalogs inline — %s (~4 billable requests).", why)
     catalog.refresh_catalogs(client, cfg.cache_dir, cfg.sport_id, log)
     return {
         "markets": catalog.load_json(cfg.cache_dir, catalog.MARKETS_FILE),
@@ -673,6 +692,15 @@ def run_cycle(cfg: Config, log) -> int:
     from_utc, to_utc = cfg.from_utc, cfg.to_utc
     log.info("=" * 78)
     log.info("SCAN @ %s | window %s -> %s UTC", fmt.fmt_dt(now), from_utc, to_utc)
+    mode = []
+    if not cfg.oddspapi_fetch_odds:
+        mode.append("FREE-PROFILE (no OddsPapi odds; odds from the-odds-api/kalshi/polymarket)")
+    if cfg.local_run:
+        mode.append("LOCAL_RUN (Telegram on, git skipped by runner)")
+    if cfg.dry_run:
+        mode.append("DRY_RUN (Telegram + CSV suppressed)")
+    if mode:
+        log.info("MODE: %s", " | ".join(mode))
 
     if not cfg.secrets.odds_papi_key:
         log.error("ODDS_PAPI_KEY not set — cannot run.")
@@ -693,7 +721,7 @@ def run_cycle(cfg: Config, log) -> int:
         return 0
 
     # 2) Catalogs ----------------------------------------------------------------
-    cats = _ensure_catalogs(client, cfg, acct, log)
+    cats = _ensure_catalogs(client, cfg, acct, now.timestamp(), log)
     if not cats or not cats.get("markets") or not cats.get("bookmakers"):
         log.error("Required catalogs unavailable. Exiting.")
         return 0
@@ -712,35 +740,42 @@ def run_cycle(cfg: Config, log) -> int:
         return 0
 
     # 3b) Which books can we query, and afford this cycle? -----------------------
-    # Free/standard plans return ONE bookmaker per odds call, so each book = 1 request.
-    granted = acct.get("bookmakers")
-    if granted:
-        log.info("Plan grants %s bookmaker(s): %s", len(granted), ", ".join(granted))
+    # Free/standard plans return ONE bookmaker per odds call, so each book = 1 request. In the FREE
+    # PROFILE (oddspapi.fetch_odds=false) we spend ZERO OddsPapi odds requests — every book's prices
+    # come from the supplemental feeds instead — so this whole section is skipped (to_fetch empty).
+    to_fetch: list[str] = []
+    if cfg.oddspapi_fetch_odds:
+        granted = acct.get("bookmakers")
+        if granted:
+            log.info("Plan grants %s bookmaker(s): %s", len(granted), ", ".join(granted))
+        else:
+            log.info("Plan does not enumerate bookmakers; will try the configured ones.")
+        # Actionable books first (they drive real arbs), then any extra tracked books.
+        fetch_order = cfg.actionable_books + [b for b in cfg.tracked_books if b not in cfg.actionable_books]
+        if granted:
+            grant_set = set(granted)
+            usable = [b for b in fetch_order if b in grant_set]
+            blocked = [b for b in fetch_order if b not in grant_set]
+            if blocked:
+                log.info("Configured books NOT in your plan (skipped): %s", blocked)
+        else:
+            usable = list(fetch_order)
+        if len(usable) < 2:
+            log.warning("Only %s usable bookmaker(s): %s. Arbitrage needs >=2 distinct books, so there is "
+                        "nothing to compute. Upgrade the plan / enable more books, then re-run. "
+                        "Exiting now (0 billable odds requests spent).", len(usable), usable or "none")
+            return 0
+        # No per-cycle cap: fetch EVERY usable book so any pair can form an arb (one request each).
+        to_fetch = usable
+        log.info("Fetching all %s usable book(s) this cycle: %s", len(to_fetch), to_fetch)
     else:
-        log.info("Plan does not enumerate bookmakers; will try the configured ones.")
-    # Actionable books first (they drive real arbs), then any extra tracked books.
-    fetch_order = cfg.actionable_books + [b for b in cfg.tracked_books if b not in cfg.actionable_books]
-    if granted:
-        grant_set = set(granted)
-        usable = [b for b in fetch_order if b in grant_set]
-        blocked = [b for b in fetch_order if b not in grant_set]
-        if blocked:
-            log.info("Configured books NOT in your plan (skipped): %s", blocked)
-    else:
-        usable = list(fetch_order)
-    if len(usable) < 2:
-        log.warning("Only %s usable bookmaker(s): %s. Arbitrage needs >=2 distinct books, so there is "
-                    "nothing to compute. Upgrade the plan / enable more books, then re-run. "
-                    "Exiting now (0 billable odds requests spent).", len(usable), usable or "none")
-        return 0
-    # No per-cycle cap: fetch EVERY usable book so any pair can form an arb (one request each).
-    to_fetch = usable
-    log.info("Fetching all %s usable book(s) this cycle: %s", len(to_fetch), to_fetch)
+        log.info("FREE PROFILE: skipping OddsPapi odds fetch (0 billable odds requests). Odds will come "
+                 "from the-odds-api (Pinnacle + 1xBet), Kalshi-direct, and Polymarket-direct.")
 
     # 4) Names map (cached; refresh at most every names_cache_hours, budget permitting) --
     names = catalog.load_json(cfg.cache_dir, catalog.NAMES_FILE) or {}
     names_age = catalog.file_age_hours(cfg.cache_dir, catalog.NAMES_FILE, now.timestamp())
-    names_ttl = float(cfg.budget_opt("names_cache_hours", 6))
+    names_ttl = float(cfg.budget_opt("names_cache_hours", 12))
     remaining = acct.get("remaining")
     if names_age is None or names_age > names_ttl:
         if remaining is not None and (remaining - client.billable_count) <= safety + len(to_fetch):
@@ -754,11 +789,14 @@ def run_cycle(cfg: Config, log) -> int:
     by_fixture = names.get("by_fixture", {})
     by_participant = names.get("by_participant", {})
 
-    # 5) Odds — ONE billable call per book, merged across books ------------------
-    raw_by_fixture, fetched_books, returning_books = _fetch_odds_per_book(
-        client, cfg, tournament_ids, to_fetch, log)
-    log.info("Odds fetch: %s book-call(s); %s returned odds (%s).",
-             len(fetched_books), len(returning_books), ", ".join(returning_books) or "none")
+    # 5) Odds — ONE billable call per book, merged across books (skipped in the FREE PROFILE) ------
+    if to_fetch:
+        raw_by_fixture, fetched_books, returning_books = _fetch_odds_per_book(
+            client, cfg, tournament_ids, to_fetch, log)
+        log.info("Odds fetch: %s book-call(s); %s returned odds (%s).",
+                 len(fetched_books), len(returning_books), ", ".join(returning_books) or "none")
+    else:
+        raw_by_fixture, fetched_books, returning_books = {}, [], []
 
     # 5b) Supplemental: the-odds-api gap-fill (shadow-only until theoddsapi.actionable is true) ----
     toa_books_by_fixture = _merge_theoddsapi(cfg, cats, by_fixture, raw_by_fixture, log)
@@ -770,9 +808,12 @@ def run_cycle(cfg: Config, log) -> int:
     poly_books_by_fixture = _merge_polymarket(cfg, cats, by_fixture, raw_by_fixture, now, log)
 
     feeds = normalize.parse_odds_payload(list(raw_by_fixture.values()))
-    if len(returning_books) < 2:
-        log.warning("Fewer than 2 books returned odds this cycle (%s) -> no cross-book arbitrage possible.",
-                    returning_books or "none")
+    # Count books across the MERGED feed (OddsPapi + supplemental), not just OddsPapi's returning_books,
+    # so the warning is correct in the FREE PROFILE where all odds arrive via the supplemental sources.
+    feed_books = set().union(*(fx.books_present for fx in feeds)) if feeds else set()
+    if len(feed_books) < 2:
+        log.warning("Fewer than 2 books priced this cycle (%s) -> no cross-book arbitrage possible.",
+                    ", ".join(sorted(feed_books)) or "none")
 
     seen_mids = normalize.seen_market_ids(feeds)
     log.info("Feed: %s fixtures with odds. Distinct marketIds seen: %s", len(feeds), sorted(seen_mids))
