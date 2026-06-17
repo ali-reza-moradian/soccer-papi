@@ -140,8 +140,14 @@ def test_free_profile_skips_oddspapi_odds_fetch(monkeypatch, tmp_path):
         fetched["called"] = True
         return {}, [], []
 
-    # Fresh names cache so no names refresh is attempted (would be a billable OddsPapi call).
-    catalog.save_json(str(tmp_path), catalog.NAMES_FILE, {"by_fixture": {}, "by_participant": {}})
+    # Fresh names cache with a MATCHING fingerprint (tournament 16, overlapping window) so no names
+    # refresh is attempted — that would be a billable OddsPapi call (and the fake client has no
+    # fixtures()). Fresh mtime alone is not enough now: the fingerprint must match too.
+    catalog.save_json(str(tmp_path), catalog.NAMES_FILE, {
+        "by_fixture": {}, "by_participant": {},
+        "fingerprint": {"tournament_ids": [16],
+                        "window": {"from": "2026-06-16T00:00:00Z", "to": "2026-06-18T23:59:59Z"}},
+    })
 
     monkeypatch.setattr(run, "OddsPapiClient", _FakeClient)
     monkeypatch.setattr(run, "_ensure_catalogs",
@@ -163,3 +169,56 @@ def test_free_profile_skips_oddspapi_odds_fetch(monkeypatch, tmp_path):
     rc = run.run_cycle(cfg, get_logger("t"))
     assert rc == 0
     assert fetched["called"] is False                  # free profile: NEVER fetch OddsPapi odds
+
+
+# --------------------------------------------------------------------------- #
+# Names-cache fingerprint invalidation (stale content + fresh mtime guard)     #
+# --------------------------------------------------------------------------- #
+def _fp_names(tournament_ids, win_from, win_to):
+    return {"by_fixture": {}, "by_participant": {},
+            "fingerprint": {"tournament_ids": tournament_ids,
+                            "window": {"from": win_from, "to": win_to}}}
+
+
+def test_fingerprint_match_is_not_stale():
+    names = _fp_names([16], "2026-06-16T00:00:00Z", "2026-06-18T23:59:59Z")
+    # Same tournament, gently rolled-forward (still overlapping) window -> not stale.
+    assert catalog.names_fingerprint_stale(
+        names, [16], "2026-06-16T12:00:00Z", "2026-06-18T23:59:59Z") is None
+
+
+def test_fingerprint_tournament_change_is_stale():
+    names = _fp_names([5], "2026-06-05T00:00:00Z", "2026-06-08T23:59:59Z")
+    reason = catalog.names_fingerprint_stale(
+        names, [16], "2026-06-17T00:00:00Z", "2026-06-19T23:59:59Z")
+    assert reason and "tournament set changed" in reason
+
+
+def test_fingerprint_disjoint_window_is_stale():
+    # Same tournament, but the cached window (early June) is disjoint from the current one (mid June):
+    # this is the friendlies->World Cup silent-failure case the guard exists for.
+    names = _fp_names([16], "2026-06-05T00:00:00Z", "2026-06-08T23:59:59Z")
+    reason = catalog.names_fingerprint_stale(
+        names, [16], "2026-06-17T00:00:00Z", "2026-06-19T23:59:59Z")
+    assert reason and "disjoint" in reason
+
+
+def test_pre_fingerprint_cache_is_stale():
+    names = {"by_fixture": {}, "by_participant": {}}     # no fingerprint key (old cache)
+    assert catalog.names_fingerprint_stale(
+        names, [16], "2026-06-17T00:00:00Z", "2026-06-19T23:59:59Z") == "pre-fingerprint cache"
+
+
+def test_refresh_names_writes_fingerprint(tmp_path):
+    class _C:
+        def fixtures(self, **k):
+            return [{"fixtureId": "id1", "participant1Id": 1, "participant1Name": "A",
+                     "participant2Id": 2, "participant2Name": "B", "startTime": "2026-06-17T18:00:00Z"}]
+
+    nm = catalog.refresh_names(_C(), str(tmp_path), 10, [16],
+                               "2026-06-17T00:00:00Z", "2026-06-19T23:59:59Z", NOW_EPOCH)
+    assert nm["fingerprint"]["tournament_ids"] == [16]
+    assert nm["fingerprint"]["window"] == {"from": "2026-06-17T00:00:00Z", "to": "2026-06-19T23:59:59Z"}
+    # And a map just written for the current scope is, by construction, not stale.
+    assert catalog.names_fingerprint_stale(
+        nm, [16], "2026-06-17T00:00:00Z", "2026-06-19T23:59:59Z") is None

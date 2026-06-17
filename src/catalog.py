@@ -312,8 +312,42 @@ def refresh_names(client, cache_dir: str, sport_id: int, tournament_ids: list[in
             all_fixtures.extend(fx)
     name_map = build_name_map(all_fixtures)
     name_map["saved_at"] = now_epoch
+    # Fingerprint the scope this map was built for, so a fresh-mtime-but-stale-content cache (e.g. a
+    # committed map for an old tournament/window) is detected and refreshed instead of silently
+    # matching nothing. See names_fingerprint_stale().
+    name_map["fingerprint"] = {
+        "tournament_ids": sorted(int(t) for t in tournament_ids),
+        "window": {"from": from_utc, "to": to_utc},
+    }
     save_json(cache_dir, NAMES_FILE, name_map)
     return name_map
+
+
+def names_fingerprint_stale(names: dict[str, Any], tournament_ids: list[int],
+                            from_utc: str, to_utc: str) -> Optional[str]:
+    """Return a reason string if the cached name map was built for a different scope/window than the
+    current scan (so it must be refreshed even when its file mtime is fresh), else None.
+
+    Guards the silent-failure mode where a committed cache holds fixtures for an old tournament/window
+    but has a recent mtime, so the TTL never fires and every supplemental event is unmatched. We
+    invalidate on:
+      * a missing fingerprint (a pre-fingerprint cache — refresh once to upgrade it), or
+      * a tournament-id set mismatch (the pinned scope changed), or
+      * disjoint windows — the cached window does not overlap the current one at all. A gentle
+        forward roll still overlaps, so this does NOT churn the TTL on every scan.
+    ISO-8601 Zulu timestamps compare correctly as strings (same fixed format)."""
+    fp = names.get("fingerprint") if isinstance(names, dict) else None
+    if not fp:
+        return "pre-fingerprint cache"
+    cached_ids = sorted(int(t) for t in fp.get("tournament_ids", []))
+    cur_ids = sorted(int(t) for t in (tournament_ids or []))
+    if cached_ids != cur_ids:
+        return f"tournament set changed {cached_ids} -> {cur_ids}"
+    cwin = fp.get("window") or {}
+    cf, ct = cwin.get("from"), cwin.get("to")
+    if cf and ct and from_utc and to_utc and (ct < from_utc or cf > to_utc):
+        return f"window {cf}..{ct} disjoint from {from_utc}..{to_utc}"
+    return None
 
 
 # --------------------------------------------------------------------------- #

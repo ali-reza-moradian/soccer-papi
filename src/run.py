@@ -772,18 +772,25 @@ def run_cycle(cfg: Config, log) -> int:
         log.info("FREE PROFILE: skipping OddsPapi odds fetch (0 billable odds requests). Odds will come "
                  "from the-odds-api (Pinnacle + 1xBet), Kalshi-direct, and Polymarket-direct.")
 
-    # 4) Names map (cached; refresh at most every names_cache_hours, budget permitting) --
+    # 4) Names map — refresh when the cache is older than names_cache_hours OR its fingerprint
+    #    (tournament set / window) no longer matches this scan. The fingerprint check is the guard
+    #    against a stale-content-but-fresh-mtime cache (e.g. a committed map for an old scope)
+    #    silently matching nothing — the mtime TTL alone never fires in that case.
     names = catalog.load_json(cfg.cache_dir, catalog.NAMES_FILE) or {}
     names_age = catalog.file_age_hours(cfg.cache_dir, catalog.NAMES_FILE, now.timestamp())
     names_ttl = float(cfg.budget_opt("names_cache_hours", 12))
+    fp_reason = (catalog.names_fingerprint_stale(names, tournament_ids, cfg.from_utc, cfg.to_utc)
+                 if names else None)
+    ttl_stale = names_age is None or names_age > names_ttl
     remaining = acct.get("remaining")
-    if names_age is None or names_age > names_ttl:
+    if ttl_stale or fp_reason:
         if remaining is not None and (remaining - client.billable_count) <= safety + len(to_fetch):
             log.warning("Skipping names refresh to preserve odds budget (remaining=%s).", remaining)
         else:
             # A quota/rate-limit error here means the key is dead; let it bubble up to main().
-            log.info("Refreshing fixtures name map (cache age=%s, ttl=%sh).",
-                     f"{names_age:.1f}h" if names_age is not None else "missing", names_ttl)
+            reason = fp_reason or (f"cache age {names_age:.1f}h > {names_ttl}h ttl"
+                                   if names_age is not None else "missing")
+            log.info("Refreshing fixtures name map (%s).", reason)
             names = catalog.refresh_names(client, cfg.cache_dir, cfg.sport_id, tournament_ids,
                                           cfg.from_utc, cfg.to_utc, now.timestamp())
     by_fixture = names.get("by_fixture", {})
