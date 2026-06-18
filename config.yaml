@@ -140,6 +140,13 @@ kalshi:
   # home win / Tie / away win, settled at 90 min + stoppage (regulation 1X2). NOT KXMENWORLDCUP
   # (the tournament winner outright, out of scope).
   series_ticker: KXWCGAME
+  # SAFE-TIER extra series (audit-confirmed identical regulation settlement — 90'+stoppage, no extra
+  # time — so they match standard bookmaker totals/BTTS). KXWCTOTAL = total goals O/U (Over X.5 from
+  # yes_ask, Under from no_ask); KXWCBTTS = both teams to score Yes/No. Blank to disable a tier.
+  # NOT here (settlement/scope risk, deferred): KXWCGOAL (anytime scorer — settles INCLUDING extra
+  # time, needs a player-name normalizer + settlement gate), KXWCFIRSTGOAL, KXWCCORNERS.
+  totals_series: KXWCTOTAL
+  btts_series: KXWCBTTS
   # SHADOW gate (separate from the `kalshi` slug already in bookmakers.actionable): while false, any
   # arb containing a kalshi-DIRECT leg is forced non-actionable, so kalshi-direct stays shadow-only
   # for verification across a few live runs — exactly like the the-odds-api rollout. Flip to true

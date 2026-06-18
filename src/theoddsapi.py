@@ -184,6 +184,7 @@ class MarketIndex:
     h2h: Optional[dict[str, Any]] = None                  # {marketId, home_oid, draw_oid, away_oid}
     totals: dict[float, dict[str, Any]] = field(default_factory=dict)   # line -> {marketId, over_oid, under_oid}
     spreads: dict[float, dict[str, Any]] = field(default_factory=dict)  # line -> {marketId, home_oid, away_oid}
+    btts: Optional[dict[str, Any]] = None                 # {marketId, yes_oid, no_oid} (Both Teams To Score)
     ambiguous: list[str] = field(default_factory=list)    # collisions we refused to index (logged)
 
 
@@ -238,6 +239,13 @@ def build_market_index(markets_json: list[dict[str, Any]], sport_id: int) -> Mar
                 idx.ambiguous.append(f"spreads {line}: {idx.spreads[line]['marketId']} vs {mid}")
             else:
                 idx.spreads[line] = cand
+
+        elif mtype == "bothteamsscore" and {"Yes", "No"} <= set(outs):
+            cand = {"marketId": mid, "yes_oid": outs["Yes"], "no_oid": outs["No"]}
+            if idx.btts and idx.btts["marketId"] != mid:
+                idx.ambiguous.append(f"btts: {idx.btts['marketId']} vs {mid}")
+            else:
+                idx.btts = cand
 
     return idx
 

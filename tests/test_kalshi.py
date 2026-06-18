@@ -170,6 +170,76 @@ def test_merge_matches_cross_midnight_utc_fixture():
 
 
 # --------------------------------------------------------------------------- #
+# SAFE TIER: total goals O/U (KXWCTOTAL) + BTTS (KXWCBTTS) injection             #
+# --------------------------------------------------------------------------- #
+# Canonical index extended with totals 2.5 (1010/1011) and BTTS (104/105).
+MARKETS_FULL = MARKETS_JSON + [
+    {"marketId": 1010, "sportId": 10, "marketType": "totals", "period": "fulltime", "handicap": 2.5,
+     "marketName": "Over Under Full Time",
+     "outcomes": [{"outcomeId": 1010, "outcomeName": "Over"}, {"outcomeId": 1011, "outcomeName": "Under"}]},
+    {"marketId": 104, "sportId": 10, "marketType": "bothteamsscore", "period": "fulltime", "handicap": 0,
+     "marketName": "Both Teams To Score",
+     "outcomes": [{"outcomeId": 104, "outcomeName": "Yes"}, {"outcomeId": 105, "outcomeName": "No"}]},
+]
+INDEX_FULL = kalshi.build_market_index(MARKETS_FULL, 10)
+
+
+def _total_mkt(line, yes_ask, yes_size, no_ask, no_size, *, status="active"):
+    ev = "KXWCTOTAL-26JUN13USAPAR"
+    return {"event_ticker": ev, "ticker": f"{ev}-{line}", "status": status,
+            "yes_sub_title": f"Over {line} goals scored", "title": f"Will over {line} goals be scored?",
+            "yes_ask_dollars": yes_ask, "yes_ask_size_fp": yes_size,
+            "no_ask_dollars": no_ask, "no_ask_size_fp": no_size}
+
+
+def _btts_mkt(yes_ask, yes_size, no_ask, no_size, *, status="active"):
+    ev = "KXWCBTTS-26JUN13USAPAR"
+    return {"event_ticker": ev, "ticker": f"{ev}-BTTS", "status": status,
+            "yes_sub_title": "Both Teams To Score", "title": "Will both teams score?",
+            "yes_ask_dollars": yes_ask, "yes_ask_size_fp": yes_size,
+            "no_ask_dollars": no_ask, "no_ask_size_fp": no_size}
+
+
+def test_build_market_index_indexes_btts():
+    assert INDEX_FULL.btts == {"marketId": 104, "yes_oid": 104, "no_oid": 105}
+    assert 2.5 in INDEX_FULL.totals
+
+
+def test_merge_injects_totals_and_btts_on_the_matched_fixture():
+    raw: dict = {}
+    markets = _usa_par_markets("normal") + [
+        _total_mkt("2.5", "0.5000", "400", "0.5200", "300"),   # Over 1/.50=2.0, Under 1/.52
+        _total_mkt("9.5", "0.0100", "100", "0.9900", "50"),    # line not in index -> skipped
+        _btts_mkt("0.4000", "250", "0.6500", None),            # No has no size -> UNVERIFIED limit 0
+    ]
+    cov, kbooks = kalshi.merge_into(raw, BY_FIXTURE, INDEX_FULL, markets, now=NOW, log=LOG)
+    assert cov.recovered == 1 and kbooks == {"idBBB": {"kalshi"}}
+    assert cov.totals_fixtures == 1 and cov.totals_lines == 1   # only the indexed 2.5 line
+    assert cov.btts_fixtures == 1
+
+    mkts = raw["idBBB"]["bookmakerOdds"]["kalshi"]["markets"]
+    assert "101" in mkts                                        # 1x2 still injected
+    t = mkts["1010"]["outcomes"]
+    assert t["1010"]["players"]["0"]["price"] == 2.0           # Over from yes_ask
+    assert abs(t["1011"]["players"]["0"]["price"] - 1 / 0.52) < 1e-9   # Under from no_ask
+    assert t["1010"]["players"]["0"]["limit"] == 400 * 0.50    # real size×price = 200
+    b = mkts["104"]["outcomes"]
+    assert b["104"]["players"]["0"]["price"] == 2.5            # BTTS Yes from yes_ask
+    assert abs(b["105"]["players"]["0"]["price"] - 1 / 0.65) < 1e-9    # BTTS No from no_ask
+    assert b["105"]["players"]["0"]["limit"] == 0.0           # no_ask_size_fp None -> UNVERIFIED
+
+
+def test_totals_skipped_when_result_unmatched():
+    """Totals/BTTS ride on the 1x2 fixture match; with no matching fixture, nothing is injected."""
+    by_fixture = {"idAAA": {"p1": "Australia", "p2": "Turkiye",
+                            "start_time": "2026-06-13T19:00:00.000Z", "status_id": 0}}
+    raw: dict = {}
+    markets = _usa_par_markets("normal") + [_total_mkt("2.5", "0.5000", "400", "0.5200", "300")]
+    cov, kbooks = kalshi.merge_into(raw, by_fixture, INDEX_FULL, markets, now=NOW, log=LOG)
+    assert cov.recovered == 0 and cov.totals_lines == 0 and raw == {}
+
+
+# --------------------------------------------------------------------------- #
 # Shadow rollout gate in run._scan                                              #
 # --------------------------------------------------------------------------- #
 def _cfg(kalshi_actionable=False):

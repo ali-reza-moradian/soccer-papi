@@ -29,6 +29,7 @@ not actionable) until verified across a few live runs.
 """
 from __future__ import annotations
 
+import re
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -232,6 +233,88 @@ def _add_leg(entry: dict[str, Any], mid: int, oid: int, price: float, limit: flo
 
 
 # --------------------------------------------------------------------------- #
+# SAFE-TIER extras: total goals O/U (KXWCTOTAL) + Both Teams To Score (KXWCBTTS) #
+# --------------------------------------------------------------------------- #
+# These match-level markets settle on the SAME basis as Kalshi's 1x2 — "90 minutes plus stoppage
+# time (does not include extra time or penalties)" — which is exactly how standard bookmaker
+# totals/BTTS settle, so they are settlement-compatible and safe to make actionable (see the audit).
+# Each Kalshi market is binary: BACK the Over/Yes by buying Yes (yes_ask), BACK the Under/No by
+# buying No (no_ask). no_ask_size_fp is often null -> limit 0 -> the engine treats that leg as
+# UNVERIFIED via the assumed cap (never a fantasy size).
+_TOTAL_LINE_RE = re.compile(r"over\s+(\d+(?:\.\d+)?)", re.IGNORECASE)
+
+
+def _no_leg_price_limit(market: dict[str, Any]) -> Optional[tuple[float, float]]:
+    """(decimal_odds, limit) to BACK the NO side (buy No at no_ask), or None if not active/priced."""
+    if str(market.get("status") or "").lower() != "active":
+        return None
+    dec = decimal_from_dollars(market.get("no_ask_dollars"))
+    if dec is None:
+        return None
+    return dec, leg_limit(market.get("no_ask_size_fp"), market.get("no_ask_dollars"))
+
+
+def _total_line(market: dict[str, Any]) -> Optional[float]:
+    """Parse the O/U line from a KXWCTOTAL market (yes_sub_title 'Over 2.5 goals scored')."""
+    mm = _TOTAL_LINE_RE.search(str(market.get("yes_sub_title") or market.get("title") or ""))
+    if not mm:
+        return None
+    try:
+        return float(mm.group(1))
+    except ValueError:
+        return None
+
+
+def _game_key(event_ticker: str) -> str:
+    """Game suffix shared across series: KXWCTOTAL-26JUN18CZERSA -> 26JUN18CZERSA."""
+    return event_ticker.split("-", 1)[1] if "-" in event_ticker else event_ticker
+
+
+def _series_of(event_ticker: str) -> str:
+    """Series prefix: KXWCTOTAL-26JUN18CZERSA -> KXWCTOTAL."""
+    return event_ticker.split("-", 1)[0] if "-" in event_ticker else event_ticker
+
+
+def _inject_totals(entry: dict[str, Any], total_markets: list[dict[str, Any]],
+                   market_index: MarketIndex, changed_at: str) -> int:
+    """Inject Kalshi total-goals O/U legs (Over=yes_ask, Under=no_ask) for every line the canonical
+    index knows. Returns the number of lines injected (both outcomes present)."""
+    n = 0
+    for m in total_markets:
+        line = _total_line(m)
+        if line is None:
+            continue
+        tidx = market_index.totals.get(line)
+        if not tidx:
+            continue
+        over = _leg_price_limit(m)          # Yes side -> Over
+        under = _no_leg_price_limit(m)      # No side  -> Under
+        if over is None or under is None:
+            continue
+        _add_leg(entry, tidx["marketId"], tidx["over_oid"], over[0], over[1], changed_at)
+        _add_leg(entry, tidx["marketId"], tidx["under_oid"], under[0], under[1], changed_at)
+        n += 1
+    return n
+
+
+def _inject_btts(entry: dict[str, Any], btts_markets: list[dict[str, Any]],
+                 market_index: MarketIndex, changed_at: str) -> int:
+    """Inject the Kalshi Both-Teams-To-Score Yes/No leg (Yes=yes_ask, No=no_ask). Returns 1 if done."""
+    if not market_index.btts:
+        return 0
+    for m in btts_markets:
+        yes = _leg_price_limit(m)
+        no = _no_leg_price_limit(m)
+        if yes is None or no is None:
+            continue
+        b = market_index.btts
+        _add_leg(entry, b["marketId"], b["yes_oid"], yes[0], yes[1], changed_at)
+        _add_leg(entry, b["marketId"], b["no_oid"], no[0], no[1], changed_at)
+        return 1
+    return 0
+
+
+# --------------------------------------------------------------------------- #
 # Coverage report (mirrors theoddsapi.Coverage)                                 #
 # --------------------------------------------------------------------------- #
 @dataclass
@@ -244,13 +327,17 @@ class Coverage:
     recovered: int = 0                                       # #fixtures where kalshi was injected
     deferred: int = 0                                        # #fixtures OddsPapi already had active
     incomplete: list[str] = field(default_factory=list)      # matched but not exactly 1 Tie + 2 teams
+    totals_fixtures: int = 0                                  # #fixtures with >=1 total-goals line injected
+    totals_lines: int = 0                                     # total O/U lines injected across fixtures
+    btts_fixtures: int = 0                                    # #fixtures with a BTTS leg injected
 
     def lines(self) -> list[str]:
         out = [
             f"KALSHI: {self.matched}/{self.events_total} events mapped "
             f"(unmatched-name {len(self.unmatched_name)}, time-mismatch {len(self.time_mismatch)}, "
             f"ambiguous {len(self.ambiguous)}) | recovered {self.recovered} fixture(s), "
-            f"deferred {self.deferred}",
+            f"deferred {self.deferred} | SAFE-TIER: totals {self.totals_lines} line(s) on "
+            f"{self.totals_fixtures} fixture(s), BTTS on {self.btts_fixtures} fixture(s)",
         ]
         for label, names in (("unmatched-name", self.unmatched_name),
                              ("time-mismatch", self.time_mismatch), ("ambiguous", self.ambiguous),
@@ -291,14 +378,32 @@ def merge_into(
         log.warning("[KALSHI] no canonical Full Time Result (1x2) market in the index — cannot map; skipping.")
         return cov, kalshi_books
 
-    by_event: dict[str, list[dict[str, Any]]] = {}
+    # Group ALL markets by GAME KEY (the suffix shared across series) so the totals (KXWCTOTAL) and
+    # BTTS (KXWCBTTS) markets for a match ride on the SAME fixture the 1x2 (KXWCGAME) result anchored.
+    # Classify by series prefix; unknown series (e.g. KXWCGOAL/KXWCCORNERS) are ignored here.
+    by_game: dict[str, dict[str, Any]] = {}
     for m in markets:
-        if isinstance(m, dict):
-            by_event.setdefault(str(m.get("event_ticker") or ""), []).append(m)
-    cov.events_total = len(by_event)
+        if not isinstance(m, dict):
+            continue
+        et = str(m.get("event_ticker") or "")
+        g = by_game.setdefault(_game_key(et), {"result": [], "total": [], "btts": [], "ticker": None})
+        series = _series_of(et)
+        if series.endswith("TOTAL"):
+            g["total"].append(m)
+        elif series.endswith("BTTS"):
+            g["btts"].append(m)
+        elif series.endswith("GAME"):
+            g["result"].append(m)
+            if g["ticker"] is None and "-" in et:
+                g["ticker"] = et
+    # Only game keys with a 1x2 result group are matchable units.
+    matchable = {gk: g for gk, g in by_game.items() if g["result"]}
+    cov.events_total = len(matchable)
     changed_at = now.strftime("%Y-%m-%dT%H:%M:%SZ")
 
-    for ev_ticker, ms in by_event.items():
+    for gk, g in matchable.items():
+        ms = g["result"]
+        ev_ticker = g["ticker"] or gk
         label = ev_ticker or "(no event_ticker)"
         ev_commence = _event_commence_iso(ev_ticker)
         if ev_commence is None:
@@ -365,13 +470,25 @@ def merge_into(
         _add_leg(entry, h2h["marketId"], h2h["home_oid"], home_pl[0], home_pl[1], changed_at)
         _add_leg(entry, h2h["marketId"], h2h["draw_oid"], tie_leg[0], tie_leg[1], changed_at)
         _add_leg(entry, h2h["marketId"], h2h["away_oid"], away_pl[0], away_pl[1], changed_at)
+
+        # SAFE-TIER: add total-goals O/U and BTTS legs (same regulation settlement) onto this fixture.
+        nt = _inject_totals(entry, g["total"], market_index, changed_at)
+        if nt:
+            cov.totals_fixtures += 1
+            cov.totals_lines += nt
+        nb = _inject_btts(entry, g["btts"], market_index, changed_at)
+        if nb:
+            cov.btts_fixtures += 1
+
         book_odds["kalshi"] = entry      # override any suspended OddsPapi stub
         kalshi_books.setdefault(fid, set()).add("kalshi")
         cov.recovered += 1
 
         info = by_fixture.get(fid, {})
-        log.info("[KALSHI] %s -> %s vs %s | home %.3f ($%.0f) / draw %.3f ($%.0f) / away %.3f ($%.0f)",
+        log.info("[KALSHI] %s -> %s vs %s | home %.3f ($%.0f) / draw %.3f ($%.0f) / away %.3f ($%.0f)"
+                 " | +%d total line(s)%s",
                  label, info.get("p1"), info.get("p2"),
-                 home_pl[0], home_pl[1], tie_leg[0], tie_leg[1], away_pl[0], away_pl[1])
+                 home_pl[0], home_pl[1], tie_leg[0], tie_leg[1], away_pl[0], away_pl[1],
+                 nt, " + BTTS" if nb else "")
 
     return cov, kalshi_books
