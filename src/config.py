@@ -177,7 +177,17 @@ class Config:
     @property
     def heartbeat_min_interval_min(self) -> float:
         """Minimum minutes between heartbeats. 0 => ping on every scan."""
-        return float(self.get("telegram", "heartbeat_min_interval_min", default=60) or 0)
+        return float(self.get("telegram", "heartbeat_min_interval_min", default=30) or 0)
+
+    @property
+    def shadow_window_hours(self) -> float:
+        """Rolling window (hours) over which the shadow-book scoreboard aggregates arbs."""
+        return float(self.get("shadow_window_hours", default=48) or 48)
+
+    @property
+    def shadow_digest_hour(self) -> int:
+        """Local hour (0-23) at/after which the once-daily shadow-book digest is sent."""
+        return int(self.get("shadow_digest_hour", default=9))
 
     def budget_opt(self, key: str, default: Any) -> Any:
         return self.get("budget", key, default=default)

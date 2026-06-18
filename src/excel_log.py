@@ -67,6 +67,44 @@ def _prev_scan_arb_ids(ws, cols: list[str]) -> set[str]:
     return ids_by_scan.get(latest, set()) if latest is not None else set()
 
 
+_SCOREBOARD_SHEET = "shadow_scoreboard"
+_SB_COLS = ["rank", "book", "unlock_count", "total_appearances", "distinct_games",
+            "avg_roi_pct", "best_roi_pct", "window_hours", "updated_utc"]
+
+
+def write_scoreboard(path: str, rows: list[dict[str, Any]], window_hours: float,
+                     updated_utc: str, log: logging.Logger) -> int:
+    """(Re)write the 'shadow_scoreboard' sheet — fully refreshed each scan, ranked rows already
+    sorted by the caller. Creates the workbook (with an empty 'arbs' sheet) if it does not exist yet.
+    Returns rows written (0 on error)."""
+    try:
+        from openpyxl import Workbook, load_workbook
+    except ImportError:  # pragma: no cover - dependency missing
+        log.error("openpyxl not installed — cannot write scoreboard to %s.", path)
+        return 0
+    try:
+        if os.path.exists(path):
+            wb = load_workbook(path)
+        else:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            wb = Workbook()
+            wb.active.title = "arbs"          # keep the arbs sheet present + headed for consistency
+            wb.active.append(columns())
+        if _SCOREBOARD_SHEET in wb.sheetnames:
+            del wb[_SCOREBOARD_SHEET]
+        ws = wb.create_sheet(_SCOREBOARD_SHEET)
+        ws.append(_SB_COLS)
+        for i, r in enumerate(rows, 1):
+            ws.append([i, r["book"], r["unlock_count"], r["total_appearances"],
+                       r["distinct_games"], r["avg_roi_pct"], r["best_roi_pct"],
+                       int(window_hours), updated_utc])
+        wb.save(path)
+        return len(rows)
+    except Exception as exc:  # pragma: no cover - disk / openpyxl error
+        log.error("Failed to write scoreboard sheet to %s: %s", path, exc)
+        return 0
+
+
 def append_arbs(path: str, rows: list[dict[str, Any]], log: logging.Logger) -> int:
     """Append ``rows`` (structured arb dicts) to the xlsx, creating it with a header if missing.
 

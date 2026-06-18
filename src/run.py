@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-from . import catalog, excel_log, formatting as fmt, kalshi, normalize, polymarket, theoddsapi
+from . import catalog, excel_log, formatting as fmt, kalshi, normalize, polymarket, scoreboard, theoddsapi
 from .arbitrage import (ArbResult, Candidate, cap_total_investment, compute_arb, make_arb_id,
                         make_signature, select_legs)
 from .config import Config, load_config
@@ -952,6 +952,7 @@ def _scan(feeds, specs, ctx, cfg, by_fixture, by_participant, now, log, toa_book
         "shadow_book_counter": Counter(),
         "mapping_suspect_flags": Counter(),
         "funded_arbs": [],   # (roi_pct, S, match, market, books, t_max, above_floor) — funded-only
+        "suspicious_arbs": 0,  # log-only: never alert, never count as real/shadow
     }
 
     for fx in feeds:
@@ -1096,8 +1097,14 @@ def _scan(feeds, specs, ctx, cfg, by_fixture, by_participant, now, log, toa_book
                 if prev is None or (actionable and not prev.actionable):
                     opportunities[sig] = opp
 
-    # Tally after dedup so each opportunity counts once.
+    # Tally after dedup so each opportunity counts once. SUSPICIOUS arbs (ROI above the suspicious
+    # ceiling — almost always a thin longshot / stale-line artifact) are LOG-ONLY: they never count
+    # as a real OR shadow arb and never reach Telegram (see _emit). They are still logged + written
+    # to the CSV/xlsx for the record.
     for opp in opportunities.values():
+        if opp.suspicious:
+            stats["suspicious_arbs"] += 1
+            continue
         if opp.actionable:
             stats["real_arbs"] += 1
         else:
@@ -1211,6 +1218,34 @@ def _send_heartbeat(opportunities, stats, cfg: Config, now: datetime, log, local
     return 0, "heartbeat send FAILED"
 
 
+def _maybe_send_shadow_digest(sb_rows, cfg: Config, now: datetime, log) -> str:
+    """Send the 'books to fund next' digest once per local day, at/after shadow_digest_hour.
+
+    Independent of the real-arb alert and heartbeat. Throttled via notify_state
+    last_shadow_digest_date (local calendar date). Returns a status string for the log."""
+    local_tz = str(cfg.telegram_opt("local_tz", "America/Toronto"))
+    now_local = fmt.to_local(now, local_tz)
+    if now_local.hour < cfg.shadow_digest_hour:
+        return f"before digest hour ({now_local.hour}h < {cfg.shadow_digest_hour}h)"
+    today = now_local.strftime("%Y-%m-%d")
+    state = _load_notify_state(cfg)
+    if state.get("last_shadow_digest_date") == today:
+        return "already sent today"
+    msg = scoreboard.format_digest(sb_rows, cfg.shadow_window_hours)
+    if msg is None:
+        return "no unlock books to suggest yet"
+    if cfg.dry_run:
+        log.info("[dry_run] Would send shadow digest:\n%s", msg)
+        return "dry-run (not sent)"
+    if not cfg.secrets.telegram_ready:
+        return "telegram not configured"
+    if send_message(cfg.secrets.telegram_bot_key, cfg.secrets.telegram_group_id, msg, log):
+        state["last_shadow_digest_date"] = today
+        _save_notify_state(cfg, state)
+        return "sent"
+    return "send FAILED"
+
+
 def _emit(opportunities, stats, cfg: Config, now, client, log):
     # --- CSV ---
     # dry_run is verification-only: never mutate the opportunities CSV (mirrors the Telegram guards).
@@ -1233,15 +1268,33 @@ def _emit(opportunities, stats, cfg: Config, now, client, log):
         n = excel_log.append_arbs(cfg.xlsx_path, [_xlsx_row(o, now) for o in opportunities], log)
         log.info("XLSX: appended %s arb row(s) -> %s", n, cfg.xlsx_path)
 
+    # --- Shadow-book scoreboard (which non-funded book to open next; refreshed every scan) ---
+    # Built from the CSV (it carries suspicious + per-leg books over history), written AFTER the CSV
+    # write above so this scan's arbs are included.
+    funded = set(cfg.actionable_books)
+    sb_rows = scoreboard.build_scoreboard(cfg.csv_path, funded, cfg.shadow_window_hours, now)
+    if cfg.dry_run:
+        log.info("[dry_run] Would refresh shadow_scoreboard (%s book(s)) in %s.",
+                 len(sb_rows), cfg.xlsx_path)
+    else:
+        excel_log.write_scoreboard(cfg.xlsx_path, sb_rows, cfg.shadow_window_hours,
+                                   now.strftime("%Y-%m-%dT%H:%M:%SZ"), log)
+        log.info("SCOREBOARD: %s non-funded book(s) over %.0fh -> %s sheet.",
+                 len(sb_rows), cfg.shadow_window_hours, "shadow_scoreboard")
+    top_unlock = [r for r in sb_rows if r["unlock_count"] > 0][:5]
+    if top_unlock:
+        log.info("         Top unlock books: " + " | ".join(
+            f"{r['book']} ({r['unlock_count']} arbs, avg ROI {r['avg_roi_pct']:.2f}%)" for r in top_unlock))
+
     # --- Telegram ---
     # A window banner heads every message so the group always knows the range we covered.
     window_line = f"📅 Scanning: {fmt.window_label(cfg.from_utc, cfg.to_utc)}"
     rank = _rank_key(cfg)
-    # Prefer actionable, non-suspicious arbs for the headline three.
-    preferred = [o for o in opportunities if o.actionable and not o.suspicious]
-    rest = [o for o in opportunities if o not in preferred]
-    ordered = sorted(preferred, key=rank, reverse=True) + sorted(rest, key=rank, reverse=True)
-    top = ordered[:3]
+    # SENDABLE = actionable AND NOT suspicious. Suspicious arbs (huge ROI from thin longshot
+    # liquidity) are NEVER alerted — they can never enter `top`, so they can't ride along in a real
+    # alert. Shadow arbs are surfaced via the heartbeat / scoreboard, not the per-arb alert.
+    sendable = [o for o in opportunities if o.actionable and not o.suspicious]
+    top = sorted(sendable, key=rank, reverse=True)[:3]
 
     header = (f"{window_line}\n"
               f"⚽ <b>Arb scan</b> — {fmt.fmt_dt(now)}\n"
@@ -1252,13 +1305,14 @@ def _emit(opportunities, stats, cfg: Config, now, client, log):
     sent = 0
     suppressed = 0
     if cfg.dry_run:
-        # Verification: render exactly what WOULD be sent (real or shadow), send nothing.
+        # Verification: render exactly what WOULD be sent (real arbs only), send nothing.
         if top:
             preview = build_message([_telegram_item(o) for o in top], header, local_tz)
-            log.info("[dry_run] Telegram preview (%s arb(s)):\n%s", len(top), preview)
-            reason = f"dry-run (would send {len(top)} arb alert(s))"
+            log.info("[dry_run] Telegram preview (%s real arb(s)):\n%s", len(top), preview)
+            reason = f"dry-run (would send {len(top)} real-arb alert(s))"
         else:
-            reason = "dry-run (no arbs to preview)"
+            _send_heartbeat(opportunities, stats, cfg, now, log, local_tz)  # logs would-send heartbeat
+            reason = "dry-run (0 real arbs; heartbeat path)"
     elif stats["real_arbs"] >= 1:
         # At least one real (actionable) arb -> ALWAYS send the top-3 alert immediately (no throttle).
         if not cfg.secrets.telegram_ready:
@@ -1285,14 +1339,18 @@ def _emit(opportunities, stats, cfg: Config, now, client, log):
         tg_state = "OFF (no token)"
     log.info("TELEGRAM: %s | %s sent | %s suppressed | %s", tg_state, sent, suppressed, reason)
 
+    # Once-daily shadow-book digest (independent of the arb alert / heartbeat).
+    log.info("SHADOW DIGEST: %s", _maybe_send_shadow_digest(sb_rows, cfg, now, log))
+
     # --- Summary ---
     log.info("-" * 78)
     log.info("SUMMARY: %s fixtures in window | %s skipped(status) | %s markets scanned (%s complete)",
              stats["fixtures_in_window"], stats["fixtures_skipped_status"],
              stats["markets_scanned"], stats.get("markets_complete", 0))
-    log.info("         %s real arbs | %s shadow arbs | %s near-misses | %s arb(s) below ROI/stake floor | %s sent",
-             stats["real_arbs"], stats["shadow_arbs"], stats["near_misses"],
-             stats.get("arbs_below_threshold", 0), sent)
+    log.info("         %s real arbs | %s shadow arbs | %s suspicious (log-only, never alerted) | "
+             "%s near-misses | %s arb(s) below ROI/stake floor | %s sent",
+             stats["real_arbs"], stats["shadow_arbs"], stats.get("suspicious_arbs", 0),
+             stats["near_misses"], stats.get("arbs_below_threshold", 0), sent)
     # FUNDED-ONLY arbs (kalshi/polymarket/pinnacle/1xbet only), incl. below floor — so a real
     # bettable arb is never invisible behind a better shadow-book leg.
     funded = sorted(stats.get("funded_arbs", []), key=lambda t: t[0], reverse=True)

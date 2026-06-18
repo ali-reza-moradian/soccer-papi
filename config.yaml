@@ -10,6 +10,13 @@ sport_id: 10                         # OddsPapi soccer sportId (confirm via /v4/
 # arb is already smaller than this (limited by real book limits), it is left untouched.
 bankroll_total: 30000
 
+# SHADOW-BOOK SCOREBOARD — "which non-funded book should I open an account at next?". Each scan
+# aggregates arbs over a rolling window and ranks non-funded books by how many arbs they would
+# directly UNLOCK (every OTHER leg already on a funded book). Written to the "shadow_scoreboard"
+# sheet of data/arbs_log.xlsx and sent as a once-daily Telegram digest. Suspicious arbs are excluded.
+shadow_window_hours: 48              # rolling aggregation window
+shadow_digest_hour: 9               # local hour (0-23) to send the once-daily "fund next" digest
+
 oddspapi:
   # FREE PROFILE. When false, the scan spends ZERO OddsPapi odds requests: per-scan odds come
   # ONLY from the supplemental sources (the-odds-api Pinnacle + 1xBet, Kalshi-direct,
@@ -246,7 +253,7 @@ telegram:
   # EVERY scan. REAL arbs always alert immediately, independent of this throttle. Last-sent time is
   # tracked in data/cache/notify_state.json (last_heartbeat_utc).
   heartbeat_enabled: true
-  heartbeat_min_interval_min: 60
+  heartbeat_min_interval_min: 30
 
 budget:
   safety_margin: 15                  # pre-flight guard: if (limit - count) <= this, skip the scan (exit 0)

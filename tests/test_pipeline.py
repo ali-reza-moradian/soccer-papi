@@ -217,6 +217,38 @@ def test_shadow_arb_when_best_leg_is_unfunded():
     assert stats["shadow_book_counter"]["stake"] == 1
 
 
+def test_suspicious_arb_is_log_only_never_real_never_sent():
+    """A huge-ROI (>roi_suspicious_pct) arb from thin longshot pricing is LOG-ONLY: it never counts
+    as a real (or shadow) arb and is excluded from the Telegram sendable set."""
+    payload = [{
+        "fixtureId": "fxsusp", "participant1Id": 35, "participant2Id": 34, "tournamentId": 17,
+        "statusId": 0, "hasOdds": True, "startTime": KICKOFF, "updatedAt": RECENT,
+        "bookmakerOdds": {
+            "kalshi": {"bookmakerIsActive": True, "suspended": False, "fixturePath": "k",
+                       "markets": {"106": {"marketActive": True, "outcomes": {
+                           "1": {"players": _player(2.50, 1000)},
+                           "2": {"players": _player(1.20, 1000)}}}}},
+            "polymarket": {"bookmakerIsActive": True, "suspended": False, "fixturePath": "p",
+                           "markets": {"106": {"marketActive": True, "outcomes": {
+                               "1": {"players": _player(1.20, 1000)},
+                               "2": {"players": _player(2.50, 1000)}}}}},
+        },
+    }]
+    feeds = parse_odds_payload(payload)
+    specs, _ = build_market_specs(MARKETS_JSON, 10, ["double chance"])
+    group_of = build_clone_group_fn(BOOKS_JSON)
+    ctx = _ctx(group_of, ["kalshi", "polymarket"], ["kalshi", "polymarket"])
+    opps, stats = _scan(feeds, specs, ctx, _cfg(), {}, {"35": "USA", "34": "Germany"},
+                        NOW, get_logger("test"))
+    # The arb exists (S = 1/2.5 + 1/2.5 = 0.8, ROI 25% > 8% suspicious ceiling) but is log-only.
+    assert any(o.suspicious for o in opps)
+    assert stats["real_arbs"] == 0 and stats["shadow_arbs"] == 0
+    assert stats["suspicious_arbs"] == 1
+    # Sendable set (actionable AND not suspicious) is empty -> nothing would be alerted.
+    sendable = [o for o in opps if o.actionable and not o.suspicious]
+    assert sendable == []
+
+
 def test_low_confidence_arb_kept_below_stake_floor():
     """A thin-liquidity arb (tiny limits, T_max < min_total_stake) is kept because it is
     low_confidence — the human judges it; it is NOT discarded (polish item)."""
@@ -548,14 +580,15 @@ def test_scan_drops_flipped_book_phantom_arb():
     names = {"35": "Switzerland", "34": "Australia"}
 
     # Guard OFF: the swapped book's 'home @ 5.0' pairs with the real 'away @ 5.0' -> phantom arb.
+    # Its ROI is huge so it lands in the suspicious (log-only) bucket, but it DID survive detection.
     ctx_off = _ctx(group_of, ["pinnacle", "bcgame"], ["pinnacle", "bcgame"])
     _, stats_off = _scan(feeds, specs, ctx_off, _cfg(), {}, names, NOW, get_logger("test"))
-    assert stats_off["real_arbs"] + stats_off["shadow_arbs"] >= 1
+    assert stats_off["real_arbs"] + stats_off["shadow_arbs"] + stats_off["suspicious_arbs"] >= 1
 
-    # Guard ON (Pinnacle reference): bcgame flagged + dropped -> no phantom arb survives.
+    # Guard ON (Pinnacle reference): bcgame flagged + dropped -> no phantom arb survives at all.
     ctx_on = _ctx(group_of, ["pinnacle", "bcgame"], ["pinnacle", "bcgame"], reference_books=["pinnacle"])
     _, stats_on = _scan(feeds, specs, ctx_on, _cfg(), {}, names, NOW, get_logger("test"))
-    assert stats_on["real_arbs"] == 0 and stats_on["shadow_arbs"] == 0
+    assert stats_on["real_arbs"] == 0 and stats_on["shadow_arbs"] == 0 and stats_on["suspicious_arbs"] == 0
     assert stats_on["mapping_suspect_flags"]["bcgame"] == 1
 
 
