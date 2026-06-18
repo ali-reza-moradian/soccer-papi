@@ -394,6 +394,185 @@ def test_merge_injects_polymarket_totals_and_btts():
 
 
 # --------------------------------------------------------------------------- #
+# STEP 4: spreads/handicap line-for-line + sign gate + no-push half-lines       #
+# --------------------------------------------------------------------------- #
+from src import theoddsapi  # noqa: E402
+
+# Catalog with 1x2, totals 2.5/3.5, AH -1.5/+1.5 (half) and AH -1.0 (whole-number, push-prone).
+SPREAD_MARKETS = MARKETS_JSON + [
+    {"marketId": 1010, "sportId": 10, "marketType": "totals", "period": "fulltime", "handicap": 2.5,
+     "marketName": "Over Under Full Time",
+     "outcomes": [{"outcomeId": 1010, "outcomeName": "Over"}, {"outcomeId": 1011, "outcomeName": "Under"}]},
+    {"marketId": 1012, "sportId": 10, "marketType": "totals", "period": "fulltime", "handicap": 3.5,
+     "marketName": "Over Under Full Time",
+     "outcomes": [{"outcomeId": 1012, "outcomeName": "Over"}, {"outcomeId": 1013, "outcomeName": "Under"}]},
+    {"marketId": 1500, "sportId": 10, "marketType": "spreads", "period": "fulltime", "handicap": -1.5,
+     "marketName": "Asian Handicap",
+     "outcomes": [{"outcomeId": 1500, "outcomeName": "1"}, {"outcomeId": 1501, "outcomeName": "2"}]},
+    {"marketId": 1502, "sportId": 10, "marketType": "spreads", "period": "fulltime", "handicap": 1.5,
+     "marketName": "Asian Handicap",
+     "outcomes": [{"outcomeId": 1502, "outcomeName": "1"}, {"outcomeId": 1503, "outcomeName": "2"}]},
+    {"marketId": 1600, "sportId": 10, "marketType": "spreads", "period": "fulltime", "handicap": -1.0,
+     "marketName": "Asian Handicap",
+     "outcomes": [{"outcomeId": 1600, "outcomeName": "1"}, {"outcomeId": 1601, "outcomeName": "2"}]},
+]
+INDEX_SPREADS = polymarket.build_market_index(SPREAD_MARKETS, 10)
+BY_FIXTURE_CZE = {"idCZE": {"p1": "Czechia", "p2": "South Africa",
+                            "start_time": "2026-06-14T23:00:00.000Z", "status_id": 0, "tournament": "WC"}}
+
+
+def _spread_leg(d, l):
+    return polymarket.Leg(role="spread", decimal=d, limit=l)
+
+
+def _cze_event_with_spreads(spreads):
+    ev = _priced_event("Czechia vs. South Africa",
+                       [("team", "Czechia", 1.9, 500.0), ("team", "South Africa", 4.2, 500.0),
+                        ("draw", None, 3.6, 500.0)], commence="2026-06-14T12:00:00Z")
+    ev.spreads = spreads
+    return ev
+
+
+def test_parse_spread_markets_extracts_team_and_line():
+    ev = {"markets": [
+        _binary_market("Czechia (-1.5)", '["Czechia", "South Africa"]', '["t_cze", "t_rsa"]'),
+        _binary_market("South Africa (-2.5)", '["Czechia", "South Africa"]', '["t_cze2", "t_rsa2"]'),
+        _binary_market("O/U 2.5", '["Over", "Under"]', '["t_o", "t_u"]'),    # not a spread
+    ]}
+    sp = polymarket.parse_spread_markets(ev)
+    assert {(s["named"], s["line"]) for s in sp} == {("Czechia", -1.5), ("South Africa", -2.5)}
+    cze = next(s for s in sp if s["named"] == "Czechia")
+    assert cze["named_token"] == "t_cze" and cze["opp_token"] == "t_rsa" and cze["opp"] == "South Africa"
+
+
+def test_spread_maps_line_for_line_both_directions():
+    # Czechia (-1.5): Czechia=p1 covers -1.5 -> canonical spreads[-1.5] (mid 1500), home=Czechia.
+    ev = _cze_event_with_spreads([{"named": "Czechia", "line": -1.5, "opp": "South Africa",
+                                   "named_leg": _spread_leg(2.10, 500), "opp_leg": _spread_leg(1.95, 500)}])
+    raw: dict = {}
+    cov, _ = polymarket.merge_into(raw, BY_FIXTURE_CZE, INDEX_SPREADS, [ev], now=NOW, log=LOG)
+    assert cov.spreads_lines == 1 and cov.spreads_fixtures == 1
+    o = raw["idCZE"]["bookmakerOdds"]["polymarket"]["markets"]["1500"]["outcomes"]
+    assert o["1500"]["players"]["0"]["price"] == 2.10   # Czechia covers -1.5 -> home_oid
+    assert o["1501"]["players"]["0"]["price"] == 1.95   # South Africa covers +1.5 -> away_oid
+
+    # South Africa (-1.5): SA=p2 covers -1.5 -> p1(Czechia) covers +1.5 -> spreads[+1.5] (mid 1502).
+    ev2 = _cze_event_with_spreads([{"named": "South Africa", "line": -1.5, "opp": "Czechia",
+                                    "named_leg": _spread_leg(3.0, 500), "opp_leg": _spread_leg(1.4, 500)}])
+    raw2: dict = {}
+    polymarket.merge_into(raw2, BY_FIXTURE_CZE, INDEX_SPREADS, [ev2], now=NOW, log=LOG)
+    o2 = raw2["idCZE"]["bookmakerOdds"]["polymarket"]["markets"]["1502"]["outcomes"]
+    assert o2["1502"]["players"]["0"]["price"] == 1.4   # Czechia covers +1.5 -> home_oid
+    assert o2["1503"]["players"]["0"]["price"] == 3.0   # South Africa covers -1.5 -> away_oid
+
+
+def test_spread_sign_gate_rejects_wrong_teams():
+    """A flipped/mislabelled pair whose two outcomes are NOT exactly this fixture's two teams is
+    rejected — it can never land on a complementary canonical outcome (no phantom)."""
+    ev = _cze_event_with_spreads([{"named": "Czechia", "line": -1.5, "opp": "Mexico",   # wrong opponent
+                                   "named_leg": _spread_leg(2.0, 500), "opp_leg": _spread_leg(2.0, 500)}])
+    raw: dict = {}
+    cov, _ = polymarket.merge_into(raw, BY_FIXTURE_CZE, INDEX_SPREADS, [ev], now=NOW, log=LOG)
+    assert cov.spreads_lines == 0
+    assert "1500" not in raw["idCZE"]["bookmakerOdds"]["polymarket"]["markets"]
+
+
+def test_spread_whole_number_line_rejected_at_mapping():
+    """No-push rule: a whole-number handicap (-1.0) is never ingested (push refunds the stake)."""
+    ev = _cze_event_with_spreads([{"named": "Czechia", "line": -1.0, "opp": "South Africa",
+                                   "named_leg": _spread_leg(2.0, 500), "opp_leg": _spread_leg(2.0, 500)}])
+    raw: dict = {}
+    cov, _ = polymarket.merge_into(raw, BY_FIXTURE_CZE, INDEX_SPREADS, [ev], now=NOW, log=LOG)
+    assert cov.spreads_lines == 0 and "1600" not in raw["idCZE"]["bookmakerOdds"]["polymarket"]["markets"]
+
+
+# --------------------------------------------------------------------------- #
+# Engine-level: no-push half-line guard + scope + totals same/diff line          #
+# --------------------------------------------------------------------------- #
+def _scan_cfg():
+    return Config(raw={
+        "target_window": {"from_utc": "2026-06-10T00:00:00Z", "to_utc": "2026-06-16T23:59:59Z"},
+        "thresholds": {"min_roi_pct": 0.5, "roi_suspicious_pct": 8.0, "min_total_stake": 20,
+                       "max_leg_age_far_minutes": 360, "max_leg_age_mid_minutes": 60,
+                       "max_leg_age_near_minutes": 20, "stale_far_horizon_hours": 6,
+                       "stale_near_horizon_hours": 1, "near_miss_ceiling_S": 1.02},
+        "markets": {"allow_quarter_lines": False},
+    }, secrets=Secrets(None, None, None))
+
+
+def _scan_ctx():
+    return EngineCtx(actionable={"kalshi", "polymarket"}, tracked={"kalshi", "polymarket"},
+                     exchanges=set(), commission={}, clone_group_of=build_clone_group_fn([]),
+                     reference_books=[])
+
+
+def _two_book_market(mid, oid_a, price_a, oid_b, price_b, book_a="kalshi", book_b="polymarket"):
+    """Raw feed: book_a prices outcome oid_a, book_b prices oid_b, on the SAME fixture/marketId."""
+    cu = "2026-06-14T09:50:00Z"
+
+    def leg(p):
+        return {"players": {"0": {"price": p, "limit": 500, "changedAt": cu, "mainLine": True, "active": True}}}
+    return [{"fixtureId": "idCZE", "startTime": "2026-06-14T23:00:00.000Z", "statusId": 0, "hasOdds": True,
+             "bookmakerOdds": {
+                 book_a: {"bookmakerIsActive": True, "suspended": False,
+                          "markets": {str(mid): {"marketActive": True, "outcomes": {str(oid_a): leg(price_a)}}}},
+                 book_b: {"bookmakerIsActive": True, "suspended": False,
+                          "markets": {str(mid): {"marketActive": True, "outcomes": {str(oid_b): leg(price_b)}}}}}}]
+
+
+def test_totals_same_line_emits_balanced_reg_time_arb():
+    specs, _ = build_market_specs(SPREAD_MARKETS, 10, [], [])
+    # kalshi Over 2.5 @2.10 + polymarket Under 2.5 @2.10 on mid 1010 -> S=0.952 -> arb.
+    feeds = parse_odds_payload(_two_book_market(1010, 1010, 2.10, 1011, 2.10))
+    opps, stats = _scan(feeds, specs, _scan_ctx(), _scan_cfg(), BY_FIXTURE_CZE, {}, NOW, LOG, {}, {}, {})
+    assert stats["real_arbs"] + stats["shadow_arbs"] >= 1
+    arb = opps[0].res
+    assert arb.is_arb and abs(sum(l.stake for l in arb.legs) - arb.t_max) < 1.0   # balanced
+
+
+def test_totals_mismatched_lines_never_pair():
+    specs, _ = build_market_specs(SPREAD_MARKETS, 10, [], [])
+    # kalshi Over 2.5 (mid 1010) + polymarket Under 3.5 (mid 1012) -> different markets, each incomplete.
+    feeds = parse_odds_payload([
+        {"fixtureId": "idCZE", "startTime": "2026-06-14T23:00:00.000Z", "statusId": 0, "hasOdds": True,
+         "bookmakerOdds": {
+             "kalshi": {"bookmakerIsActive": True, "suspended": False, "markets": {"1010": {"marketActive": True,
+                 "outcomes": {"1010": {"players": {"0": {"price": 2.10, "limit": 500,
+                     "changedAt": "2026-06-14T09:50:00Z", "active": True}}}}}}},
+             "polymarket": {"bookmakerIsActive": True, "suspended": False, "markets": {"1012": {"marketActive": True,
+                 "outcomes": {"1013": {"players": {"0": {"price": 2.10, "limit": 500,
+                     "changedAt": "2026-06-14T09:50:00Z", "active": True}}}}}}}}}])
+    opps, stats = _scan(feeds, specs, _scan_ctx(), _scan_cfg(), BY_FIXTURE_CZE, {}, NOW, LOG, {}, {}, {})
+    assert stats["real_arbs"] == 0 and stats["shadow_arbs"] == 0   # different lines never pair
+
+
+def test_scan_skips_whole_number_handicap_even_if_priced():
+    """No-push guard: a whole-number AH (mid 1600, line -1.0) with BOTH outcomes priced and a
+    crossing S<1 is still NOT scanned (push-prone), so no arb is emitted."""
+    specs, _ = build_market_specs(SPREAD_MARKETS, 10, [], [])
+    assert specs[1600].family == "asian_handicap" and specs[1600].is_whole_line   # sanity
+    feeds = parse_odds_payload(_two_book_market(1600, 1600, 2.10, 1601, 2.10))    # S=0.952 if scanned
+    opps, stats = _scan(feeds, specs, _scan_ctx(), _scan_cfg(), BY_FIXTURE_CZE, {}, NOW, LOG, {}, {}, {})
+    assert stats["real_arbs"] == 0 and stats["shadow_arbs"] == 0
+    # the half-line market (1500) WOULD scan, proving it's the whole-line that's excluded:
+    feeds2 = parse_odds_payload(_two_book_market(1500, 1500, 2.10, 1501, 2.10))
+    _, stats2 = _scan(feeds2, specs, _scan_ctx(), _scan_cfg(), BY_FIXTURE_CZE, {}, NOW, LOG, {}, {}, {})
+    assert stats2["real_arbs"] + stats2["shadow_arbs"] >= 1
+
+
+def test_scope_rule_tournament_event_not_ingested():
+    """PER-GAME SCOPE: a tournament-long event (World Cup Winner: many team markets, no draw) is not a
+    valid per-game event -> parse_event_legs returns None -> never ingested."""
+    tournament = {"id": "30615", "slug": "world-cup-winner", "title": "World Cup Winner",
+                  "markets": [
+                      {"groupItemTitle": "Brazil", "question": "Will Brazil win the World Cup?",
+                       "outcomes": '["Yes", "No"]', "clobTokenIds": '["a", "b"]'},
+                      {"groupItemTitle": "Argentina", "question": "Will Argentina win the World Cup?",
+                       "outcomes": '["Yes", "No"]', "clobTokenIds": '["c", "d"]'}]}
+    assert polymarket.parse_event_legs(tournament) is None
+
+
+# --------------------------------------------------------------------------- #
 # Shadow rollout gate in run._scan                                              #
 # --------------------------------------------------------------------------- #
 def _cfg(poly_actionable=False):

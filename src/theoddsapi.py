@@ -32,6 +32,21 @@ import requests
 
 BASE_URL = "https://api.the-odds-api.com/v4"
 
+# --------------------------------------------------------------------------- #
+# Market SCOPE — a permanent safety rule (per-game vs tournament)                #
+# --------------------------------------------------------------------------- #
+# The engine may ONLY ingest and pair markets scoped to a SPECIFIC fixture. Every canonical
+# reverse-indexed market type here (1x2 / totals / spreads / BTTS) is a per-MATCH market, so it is
+# tagged SCOPE_PER_GAME. Tournament-long / outright / futures markets (World Cup winner, top
+# goalscorer, "<player> to score during the tournament", stage-of-elimination, total tournament
+# goals) are SCOPE_TOURNAMENT and must NEVER be ingested or paired — their resolution spans the whole
+# tournament, not one fixture, so a "[player] to score in the World Cup" leg can never be the
+# counterparty to a per-game "[player] to score vs <opponent>" leg. Supplemental sources enforce this
+# by pulling ONLY from a game's siblings (fifwc-<game> / -more-markets / -player-props), never from
+# tournament events; the merges additionally refuse to inject into anything not tagged per_game.
+SCOPE_PER_GAME = "per_game"
+SCOPE_TOURNAMENT = "tournament"
+
 
 # --------------------------------------------------------------------------- #
 # HTTP client                                                                   #
@@ -213,7 +228,8 @@ def build_market_index(markets_json: list[dict[str, Any]], sport_id: int) -> Mar
         outs = _outs(m)
 
         if mtype == "1x2" and {"1", "X", "2"} <= set(outs):
-            cand = {"marketId": mid, "home_oid": outs["1"], "draw_oid": outs["X"], "away_oid": outs["2"]}
+            cand = {"marketId": mid, "home_oid": outs["1"], "draw_oid": outs["X"], "away_oid": outs["2"],
+                    "scope": SCOPE_PER_GAME}
             if idx.h2h and idx.h2h["marketId"] != mid:
                 idx.ambiguous.append(f"h2h: {idx.h2h['marketId']} vs {mid}")
             else:
@@ -224,7 +240,8 @@ def build_market_index(markets_json: list[dict[str, Any]], sport_id: int) -> Mar
             line = _line_key(m.get("handicap"))
             if line is None:
                 continue
-            cand = {"marketId": mid, "over_oid": outs["Over"], "under_oid": outs["Under"]}
+            cand = {"marketId": mid, "over_oid": outs["Over"], "under_oid": outs["Under"],
+                    "scope": SCOPE_PER_GAME}
             if line in idx.totals and idx.totals[line]["marketId"] != mid:
                 idx.ambiguous.append(f"totals {line}: {idx.totals[line]['marketId']} vs {mid}")
             else:
@@ -234,14 +251,14 @@ def build_market_index(markets_json: list[dict[str, Any]], sport_id: int) -> Mar
             line = _line_key(m.get("handicap"))
             if line is None:
                 continue
-            cand = {"marketId": mid, "home_oid": outs["1"], "away_oid": outs["2"]}
+            cand = {"marketId": mid, "home_oid": outs["1"], "away_oid": outs["2"], "scope": SCOPE_PER_GAME}
             if line in idx.spreads and idx.spreads[line]["marketId"] != mid:
                 idx.ambiguous.append(f"spreads {line}: {idx.spreads[line]['marketId']} vs {mid}")
             else:
                 idx.spreads[line] = cand
 
         elif mtype == "bothteamsscore" and {"Yes", "No"} <= set(outs):
-            cand = {"marketId": mid, "yes_oid": outs["Yes"], "no_oid": outs["No"]}
+            cand = {"marketId": mid, "yes_oid": outs["Yes"], "no_oid": outs["No"], "scope": SCOPE_PER_GAME}
             if idx.btts and idx.btts["marketId"] != mid:
                 idx.ambiguous.append(f"btts: {idx.btts['marketId']} vs {mid}")
             else:

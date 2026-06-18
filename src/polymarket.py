@@ -54,6 +54,7 @@ from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_ex
 # corrected "override OddsPapi's suspended/missing book" gate (_oddspapi_has_active). JSON-string
 # array parsing (Gamma encodes outcomes/clobTokenIds as JSON strings) lives in _as_list below.
 from .theoddsapi import (  # noqa: F401  (re-exported for the merge + tests)
+    SCOPE_PER_GAME,
     FixtureMatch,
     MarketIndex,
     _oddspapi_has_active,
@@ -259,6 +260,42 @@ def parse_more_markets_tokens(event: dict[str, Any]) -> tuple[dict[float, tuple[
     return totals, btts
 
 
+# FULL-GAME spread/handicap: groupItemTitle "Czechia (-1.5)" / "South Africa (-2.5)". The two
+# outcomes are the two TEAM names (named team covers its line; the other covers the negation). Half
+# variants would carry a prefix and are excluded by the team-identity check in the merge.
+_SPREAD_GIT_RE = re.compile(r"^\s*(?P<team>.+?)\s*\((?P<line>[+-]?\d+(?:\.\d+)?)\)\s*$")
+
+
+def parse_spread_markets(event: dict[str, Any]) -> list[dict[str, Any]]:
+    """From a '<game>-more-markets' event, extract full-game spread markets as
+    [{named, line, opp, named_token, opp_token}]. `named` covers `line`; `opp` covers -line. The
+    merge resolves named/opp to the canonical fixture's p1/p2 and refuses anything else."""
+    out: list[dict[str, Any]] = []
+    for m in (event.get("markets") or []):
+        if not isinstance(m, dict):
+            continue
+        mo = _SPREAD_GIT_RE.match(str(m.get("groupItemTitle") or "").strip())
+        if not mo:
+            continue
+        try:
+            line = float(mo.group("line"))
+        except ValueError:
+            continue
+        named = mo.group("team").strip()
+        outs, toks = _as_list(m.get("outcomes")), _as_list(m.get("clobTokenIds"))
+        if len(outs) != 2 or len(toks) < 2:
+            continue
+        named_i = next((i for i, o in enumerate(outs) if str(o).strip().lower() == named.lower()), None)
+        if named_i is None:
+            continue
+        opp_i = 1 - named_i
+        if not toks[named_i] or not toks[opp_i]:
+            continue
+        out.append({"named": named, "line": line, "opp": str(outs[opp_i]),
+                    "named_token": str(toks[named_i]), "opp_token": str(toks[opp_i])})
+    return out
+
+
 _DATE_RE = re.compile(r"(\d{4})-(\d{2})-(\d{2})")
 
 
@@ -358,6 +395,8 @@ class PolyEvent:
     # SAFE-TIER extras priced from the sibling 'Game Lines' event (full-game, reg-time):
     totals: dict[float, tuple[Leg, Leg]] = field(default_factory=dict)  # line -> (over_leg, under_leg)
     btts: Optional[tuple[Leg, Leg]] = None                              # (yes_leg, no_leg)
+    # Each: {named, line, opp, named_leg, opp_leg} — named covers line, opp covers -line (priced).
+    spreads: list[dict[str, Any]] = field(default_factory=list)
 
 
 def parse_event_legs(event: dict[str, Any]) -> Optional[PolyEvent]:
@@ -419,6 +458,20 @@ def fetch_more_markets(client: PolymarketClient, parsed: PolyEvent, market_index
         if py and pn:
             parsed.btts = (Leg(role="yes", decimal=py[0], limit=py[1]),
                            Leg(role="no", decimal=pn[0], limit=pn[1]))
+    # Spreads: price only no-push half-lines whose canonical marketId exists (bounds CLOB calls).
+    for sp in parse_spread_markets(sib):
+        line = sp["line"]
+        if abs(line * 2 - round(line * 2)) > 1e-9 or round(line * 2) % 2 == 0:
+            continue                                  # quarter or whole-number line -> push risk, skip
+        if market_index.spreads.get(round(line, 2)) is None \
+                and market_index.spreads.get(round(-line, 2)) is None:
+            continue
+        pn_, po_ = price_leg(client, sp["named_token"]), price_leg(client, sp["opp_token"])
+        if pn_ and po_:
+            parsed.spreads.append({
+                "named": sp["named"], "line": line, "opp": sp["opp"],
+                "named_leg": Leg(role="spread", decimal=pn_[0], limit=pn_[1]),
+                "opp_leg": Leg(role="spread", decimal=po_[0], limit=po_[1])})
 
 
 def price_leg(client: PolymarketClient, token: str) -> Optional[tuple[float, float]]:
@@ -484,7 +537,7 @@ def fetch_wc_events(client: PolymarketClient, by_fixture: dict[str, dict[str, An
     unpriceable 1x2 leg is dropped (drop-safe)."""
     candidates = _discover_events(client, by_fixture, log)
     out: list[PolyEvent] = []
-    tot_lines = btts_n = 0
+    tot_lines = btts_n = spread_lines = 0
     for ev in candidates.values():
         if len(out) >= MAX_EVENTS:
             log.warning("[POLYMARKET] hit MAX_EVENTS=%s — not pricing further candidates.", MAX_EVENTS)
@@ -505,10 +558,11 @@ def fetch_wc_events(client: PolymarketClient, by_fixture: dict[str, dict[str, An
             fetch_more_markets(client, parsed, market_index, log)
             tot_lines += len(parsed.totals)
             btts_n += 1 if parsed.btts else 0
+            spread_lines += len(parsed.spreads)
         out.append(parsed)
     log.info("[POLYMARKET] discovered %s candidate event(s); %s priced with full 1x2 legs"
-             " (+ %s total line(s), %s BTTS from -more-markets siblings).",
-             len(candidates), len(out), tot_lines, btts_n)
+             " (+ %s total line(s), %s BTTS, %s spread line(s) from -more-markets siblings).",
+             len(candidates), len(out), tot_lines, btts_n, spread_lines)
     return out
 
 
@@ -527,6 +581,41 @@ def _add_leg(entry: dict[str, Any], mid: int, oid: int, price: float, limit: flo
     mkt["outcomes"][str(oid)] = {"players": {"0": _player_line(price, limit, changed_at)}}
 
 
+def _is_no_push_half_line(line: float) -> bool:
+    """True only for half-lines (±0.5, ±1.5, ±2.5 …): line*2 is an ODD integer. Whole-number lines
+    (push on exact margin) and quarter-lines are rejected."""
+    return abs(line * 2 - round(line * 2)) < 1e-9 and round(line * 2) % 2 != 0
+
+
+def _inject_spreads(entry: dict[str, Any], spreads: list[dict[str, Any]], fm: FixtureMatch,
+                    market_index: MarketIndex, changed_at: str) -> int:
+    """Map Poly handicap markets to canonical spreads[line-on-p1], home=p1-covers / away=p2-covers.
+    Returns #lines injected. SIGN GATE: the canonical line is derived from the fixture's p1/p2
+    IDENTITY, and we require the market's two outcomes to be EXACTLY this fixture's two teams — so a
+    mislabelled/flipped pair can never land on a complementary canonical outcome (it is skipped, or
+    lands on a different line that the counterparty does not share)."""
+    n = 0
+    pair = {fm.p1_norm, fm.p2_norm}
+    for sp in spreads:
+        line = sp["line"]
+        if not _is_no_push_half_line(line):
+            continue
+        named, opp = normalize_team(sp["named"]), normalize_team(sp["opp"])
+        if named == opp or {named, opp} != pair:        # must be exactly this fixture's two teams
+            continue
+        if named == fm.p1_norm:                          # p1 covers `line`
+            p1_pt, p1_leg, p2_leg = line, sp["named_leg"], sp["opp_leg"]
+        else:                                            # named is p2 -> p1 covers the negation
+            p1_pt, p1_leg, p2_leg = -line, sp["opp_leg"], sp["named_leg"]
+        spec = market_index.spreads.get(round(p1_pt, 2))
+        if not spec or spec.get("scope") != SCOPE_PER_GAME:
+            continue
+        _add_leg(entry, spec["marketId"], spec["home_oid"], p1_leg.decimal, p1_leg.limit, changed_at)
+        _add_leg(entry, spec["marketId"], spec["away_oid"], p2_leg.decimal, p2_leg.limit, changed_at)
+        n += 1
+    return n
+
+
 # --------------------------------------------------------------------------- #
 # Coverage report (mirrors kalshi.Coverage)                                     #
 # --------------------------------------------------------------------------- #
@@ -543,6 +632,8 @@ class Coverage:
     totals_fixtures: int = 0                                  # #fixtures with >=1 total-goals line injected
     totals_lines: int = 0                                     # total O/U lines injected across fixtures
     btts_fixtures: int = 0                                    # #fixtures with a BTTS leg injected
+    spreads_fixtures: int = 0                                 # #fixtures with >=1 spread line injected
+    spreads_lines: int = 0                                    # spread (handicap) lines injected across fixtures
 
     def lines(self) -> list[str]:
         out = [
@@ -550,7 +641,8 @@ class Coverage:
             f"(unmatched-name {len(self.unmatched_name)}, time-mismatch {len(self.time_mismatch)}, "
             f"ambiguous {len(self.ambiguous)}) | recovered {self.recovered} fixture(s), "
             f"deferred {self.deferred} | SAFE-TIER: totals {self.totals_lines} line(s) on "
-            f"{self.totals_fixtures} fixture(s), BTTS on {self.btts_fixtures} fixture(s)",
+            f"{self.totals_fixtures} fixture(s), BTTS on {self.btts_fixtures} fixture(s), "
+            f"spreads {self.spreads_lines} line(s) on {self.spreads_fixtures} fixture(s)",
         ]
         for label, names in (("unmatched-name", self.unmatched_name),
                              ("time-mismatch", self.time_mismatch), ("ambiguous", self.ambiguous),
@@ -679,15 +771,24 @@ def merge_into(
             cov.btts_fixtures += 1
             nb = 1
 
+        # SAFE-TIER spreads (reg-time): map each Poly handicap line-for-line to the canonical
+        # marketId (keyed by the line on p1/home). Sign is resolved from the fixture's p1/p2 IDENTITY
+        # (never a Poly tag): named==p1 -> p1_pt = line; named==p2 -> p1_pt = -line. Only no-push
+        # half-lines, only this fixture's exact two teams, only per_game-scoped canonical markets.
+        ns = _inject_spreads(entry, ev.spreads, fm, market_index, changed_at)
+        if ns:
+            cov.spreads_fixtures += 1
+            cov.spreads_lines += ns
+
         book_odds["polymarket"] = entry      # fill the (missing/stale) OddsPapi polymarket slug
         poly_books.setdefault(fid, set()).add("polymarket")
         cov.recovered += 1
 
         info = by_fixture.get(fid, {})
         log.info("[POLYMARKET] %s -> %s vs %s | home %.3f ($%.0f) / draw %.3f ($%.0f) / away %.3f ($%.0f)"
-                 " | +%d total line(s)%s",
+                 " | +%d total line(s)%s + %d spread line(s)",
                  label, info.get("p1"), info.get("p2"),
                  home_leg.decimal, home_leg.limit, draw_leg.decimal, draw_leg.limit,
-                 away_leg.decimal, away_leg.limit, nt, " + BTTS" if nb else "")
+                 away_leg.decimal, away_leg.limit, nt, " + BTTS" if nb else "", ns)
 
     return cov, poly_books

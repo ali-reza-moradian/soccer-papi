@@ -995,6 +995,10 @@ def _scan(feeds, specs, ctx, cfg, by_fixture, by_participant, now, log, toa_book
                 continue
             if spec.has_quarter_line and not cfg.allow_quarter_lines:
                 continue
+            # No-push rule: a HANDICAP on a whole-number line refunds on an exact-margin result, so a
+            # such a pair is not a riskless arb. Only no-push half-lines (±1.5, ±2.5, …) may pair.
+            if spec.family in ("asian_handicap", "euro_handicap") and spec.is_whole_line:
+                continue
             stats["markets_scanned"] += 1
 
             # Outcome-mapping guard: drop books whose favourite/underdog look swapped (see above).

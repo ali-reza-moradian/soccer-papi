@@ -71,6 +71,14 @@ class MarketSpec:
     def has_quarter_line(self) -> bool:
         return self.line is not None and abs(self.line * 2 - round(self.line * 2)) > 1e-9
 
+    @property
+    def is_whole_line(self) -> bool:
+        """True if the line is a whole number (e.g. -1.0, 2.0). On a HANDICAP this is push-prone — an
+        exact-margin result refunds the stake, so a Handicap(-1.0)/(+1.0) pair is NOT a riskless arb.
+        Half-lines (±1.5, ±2.5) and quarter-lines never push to a full refund. None-line families
+        (1x2/btts) are not whole-line."""
+        return self.line is not None and abs(self.line - round(self.line)) < 1e-9
+
 
 # Families where the `line` (handicap) is meaningful.
 _LINE_FAMILIES = {"totals", "team_totals", "asian_handicap", "euro_handicap"}

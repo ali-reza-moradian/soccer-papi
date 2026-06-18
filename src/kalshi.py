@@ -41,6 +41,7 @@ from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_ex
 # Reused verbatim from the the-odds-api source — same normalization, matcher, market index, and the
 # "override OddsPapi's suspended book" gate (_oddspapi_has_active).
 from .theoddsapi import (  # noqa: F401  (re-exported for B2 + tests)
+    SCOPE_PER_GAME,
     FixtureMatch,
     MarketIndex,
     _oddspapi_has_active,
@@ -285,7 +286,7 @@ def _inject_totals(entry: dict[str, Any], total_markets: list[dict[str, Any]],
         if line is None:
             continue
         tidx = market_index.totals.get(line)
-        if not tidx:
+        if not tidx or tidx.get("scope") != SCOPE_PER_GAME:
             continue
         over = _leg_price_limit(m)          # Yes side -> Over
         under = _no_leg_price_limit(m)      # No side  -> Under
@@ -300,7 +301,7 @@ def _inject_totals(entry: dict[str, Any], total_markets: list[dict[str, Any]],
 def _inject_btts(entry: dict[str, Any], btts_markets: list[dict[str, Any]],
                  market_index: MarketIndex, changed_at: str) -> int:
     """Inject the Kalshi Both-Teams-To-Score Yes/No leg (Yes=yes_ask, No=no_ask). Returns 1 if done."""
-    if not market_index.btts:
+    if not market_index.btts or market_index.btts.get("scope") != SCOPE_PER_GAME:
         return 0
     for m in btts_markets:
         yes = _leg_price_limit(m)

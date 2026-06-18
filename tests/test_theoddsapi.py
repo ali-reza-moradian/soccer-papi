@@ -65,9 +65,11 @@ def test_book_alias():
 # --------------------------------------------------------------------------- #
 def test_market_index():
     idx = toa.build_market_index(MARKETS_JSON, sport_id=10)
-    assert idx.h2h == {"marketId": 101, "home_oid": 101, "draw_oid": 102, "away_oid": 103}
-    assert idx.totals[2.5]["marketId"] == 1010
-    assert idx.spreads[-1.5] == {"marketId": 1500, "home_oid": 1500, "away_oid": 1501}
+    assert idx.h2h == {"marketId": 101, "home_oid": 101, "draw_oid": 102, "away_oid": 103,
+                       "scope": toa.SCOPE_PER_GAME}
+    assert idx.totals[2.5]["marketId"] == 1010 and idx.totals[2.5]["scope"] == toa.SCOPE_PER_GAME
+    assert idx.spreads[-1.5] == {"marketId": 1500, "home_oid": 1500, "away_oid": 1501,
+                                 "scope": toa.SCOPE_PER_GAME}
     assert not idx.ambiguous
 
 

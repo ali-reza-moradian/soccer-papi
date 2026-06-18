@@ -201,7 +201,8 @@ def _btts_mkt(yes_ask, yes_size, no_ask, no_size, *, status="active"):
 
 
 def test_build_market_index_indexes_btts():
-    assert INDEX_FULL.btts == {"marketId": 104, "yes_oid": 104, "no_oid": 105}
+    assert INDEX_FULL.btts == {"marketId": 104, "yes_oid": 104, "no_oid": 105,
+                               "scope": kalshi.SCOPE_PER_GAME}
     assert 2.5 in INDEX_FULL.totals
 
 
