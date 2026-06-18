@@ -674,7 +674,9 @@ def _merge_polymarket(cfg, cats, by_fixture, raw_by_fixture, now, log) -> dict[s
         client = polymarket.PolymarketClient(
             gamma_base=str(cfg.polymarket_opt("gamma_base", polymarket.GAMMA_BASE)),
             clob_base=str(cfg.polymarket_opt("clob_base", polymarket.CLOB_BASE)))
-        events = polymarket.fetch_wc_events(client, by_fixture, log)
+        # Pass the index so fetch also pulls each game's '-more-markets' sibling and prices the
+        # SAFE-TIER full-game totals O/U + BTTS (reg-time) — the priority Kalshi<->Polymarket surface.
+        events = polymarket.fetch_wc_events(client, by_fixture, log, market_index=index)
         cov, poly_books = polymarket.merge_into(raw_by_fixture, by_fixture, index, events, now=now, log=log)
         for line in cov.lines():
             log.info("%s", line)

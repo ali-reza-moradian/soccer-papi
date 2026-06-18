@@ -328,6 +328,72 @@ def test_merge_fills_when_oddspapi_polymarket_suspended():
 
 
 # --------------------------------------------------------------------------- #
+# SAFE TIER: parse the '-more-markets' sibling (full-game totals O/U + BTTS)     #
+# --------------------------------------------------------------------------- #
+# Index extended with totals 2.5 (1010/1011) and BTTS (104/105) like test_kalshi.
+MARKETS_FULL = MARKETS_JSON + [
+    {"marketId": 1010, "sportId": 10, "marketType": "totals", "period": "fulltime", "handicap": 2.5,
+     "marketName": "Over Under Full Time",
+     "outcomes": [{"outcomeId": 1010, "outcomeName": "Over"}, {"outcomeId": 1011, "outcomeName": "Under"}]},
+    {"marketId": 104, "sportId": 10, "marketType": "bothteamsscore", "period": "fulltime", "handicap": 0,
+     "marketName": "Both Teams To Score",
+     "outcomes": [{"outcomeId": 104, "outcomeName": "Yes"}, {"outcomeId": 105, "outcomeName": "No"}]},
+]
+INDEX_FULL = polymarket.build_market_index(MARKETS_FULL, 10)
+
+
+def _binary_market(git, out_labels, tokens):
+    return {"groupItemTitle": git, "question": f"Czechia vs. South Africa: {git}",
+            "outcomes": out_labels, "clobTokenIds": tokens}
+
+
+def _more_markets_event():
+    """A '-more-markets' sibling holding full-game O/U + BTTS plus half/team variants that MUST be
+    excluded (different scope)."""
+    return {"markets": [
+        _binary_market("O/U 2.5", '["Over", "Under"]', '["t_o25", "t_u25"]'),
+        _binary_market("O/U 4.5", '["Over", "Under"]', '["t_o45", "t_u45"]'),
+        _binary_market("Both Teams to Score", '["Yes", "No"]', '["t_btts_y", "t_btts_n"]'),
+        # excluded: half + team variants
+        _binary_market("1st Half O/U 2.5", '["Over", "Under"]', '["t_h1", "t_h2"]'),
+        _binary_market("Czechia O/U 1.5", '["Over", "Under"]', '["t_ct1", "t_ct2"]'),
+        _binary_market("Both Teams to Score in First Half", '["Yes", "No"]', '["t_hb1", "t_hb2"]'),
+    ]}
+
+
+def test_parse_more_markets_tokens_full_game_only():
+    totals, btts = polymarket.parse_more_markets_tokens(_more_markets_event())
+    assert totals == {2.5: ("t_o25", "t_u25"), 4.5: ("t_o45", "t_u45")}   # half/team excluded
+    assert btts == ("t_btts_y", "t_btts_n")                               # half BTTS excluded
+
+
+def test_merge_injects_polymarket_totals_and_btts():
+    """A PolyEvent carrying priced totals + BTTS legs injects them onto the matched fixture's
+    polymarket book under the canonical totals/BTTS marketIds (only index-known lines)."""
+    ev = _civ_priced()
+    ev.totals = {
+        2.5: (polymarket.Leg(role="over", decimal=2.27, limit=112000.0),
+              polymarket.Leg(role="under", decimal=1.75, limit=130000.0)),
+        9.5: (polymarket.Leg(role="over", decimal=50.0, limit=10.0),       # line not in index -> dropped
+              polymarket.Leg(role="under", decimal=1.01, limit=5.0)),
+    }
+    ev.btts = (polymarket.Leg(role="yes", decimal=2.0, limit=151000.0),
+               polymarket.Leg(role="no", decimal=1.96, limit=66000.0))
+    raw: dict = {}
+    cov, pbooks = polymarket.merge_into(raw, BY_FIXTURE, INDEX_FULL, [ev], now=NOW, log=LOG)
+    assert cov.recovered == 1 and pbooks == {"idCIV": {"polymarket"}}
+    assert cov.totals_fixtures == 1 and cov.totals_lines == 1 and cov.btts_fixtures == 1
+    mkts = raw["idCIV"]["bookmakerOdds"]["polymarket"]["markets"]
+    assert "101" in mkts                                          # 1x2 still present
+    t = mkts["1010"]["outcomes"]
+    assert t["1010"]["players"]["0"]["price"] == 2.27 and t["1010"]["players"]["0"]["limit"] == 112000.0
+    assert t["1011"]["players"]["0"]["price"] == 1.75            # Under
+    assert "9.5" not in str(mkts)                                # uncatalogued line not injected
+    b = mkts["104"]["outcomes"]
+    assert b["104"]["players"]["0"]["price"] == 2.0 and b["105"]["players"]["0"]["price"] == 1.96
+
+
+# --------------------------------------------------------------------------- #
 # Shadow rollout gate in run._scan                                              #
 # --------------------------------------------------------------------------- #
 def _cfg(poly_actionable=False):

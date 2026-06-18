@@ -120,6 +120,13 @@ class PolymarketClient:
         is only needed if a future Gamma change drops `question` from search results."""
         return self._get(self.gamma_base + f"/events/{event_id}", {})
 
+    def events_by_slug(self, slug: str) -> Any:
+        """GET /events?slug= — the event(s) with that exact slug, full nested markets. Used to reach
+        a game's SIBLING events: the per-match "Game Lines" (totals/BTTS/spreads) live in a separate
+        event whose slug is the 1x2 game slug + a suffix (e.g. '<game-slug>-more-markets'), NOT in the
+        1x2 negRisk event and NOT surfaced by /public-search."""
+        return self._get(self.gamma_base + "/events", {"slug": slug})
+
     # -- CLOB (prices + depth) ----------------------------------------------
     def book(self, token_id: str) -> Any:
         """GET /book?token_id= — full resting order book (bids/asks each {price,size}). Best ask =
@@ -204,6 +211,52 @@ def leg_role(market: dict[str, Any]) -> Optional[tuple[str, Optional[str]]]:
     if m:
         return "team", m.group(1).strip()
     return None
+
+
+# FULL-GAME total goals only: groupItemTitle "O/U 2.5". The half/team variants carry a prefix
+# ("1st Half O/U 2.5", "2nd Half O/U 0.5", "Czechia O/U 1.5", "South Africa O/U 2.5") and are
+# deliberately EXCLUDED — different scope from the canonical full-time totals.
+_OU_FULL_RE = re.compile(r"^\s*O/U\s+(\d+(?:\.\d+)?)\s*$", re.IGNORECASE)
+
+
+def _outcome_token(market: dict[str, Any], want_label: str) -> Optional[str]:
+    """The clobTokenId paired with the outcome labelled `want_label` (e.g. 'over'/'under'/'yes'/'no').
+    None if absent or the market isn't on the CLOB yet."""
+    outs = _as_list(market.get("outcomes"))
+    toks = _as_list(market.get("clobTokenIds"))
+    for i, lab in enumerate(outs):
+        if str(lab).strip().lower() == want_label and i < len(toks) and toks[i]:
+            return str(toks[i])
+    return None
+
+
+def parse_more_markets_tokens(event: dict[str, Any]) -> tuple[dict[float, tuple[str, str]], Optional[tuple[str, str]]]:
+    """From a '<game>-more-markets' Gamma event, extract the CLOB tokens for FULL-GAME total goals
+    O/U and Both-Teams-To-Score only. Returns (totals, btts):
+      totals = {line: (over_token, under_token)}
+      btts   = (yes_token, no_token) | None
+    Half/team O/U and half BTTS are excluded (different scope). Each is a binary Yes/No-style market
+    with parallel outcomes/clobTokenIds arrays."""
+    totals: dict[float, tuple[str, str]] = {}
+    btts: Optional[tuple[str, str]] = None
+    for m in (event.get("markets") or []):
+        if not isinstance(m, dict):
+            continue
+        git = str(m.get("groupItemTitle") or "").strip()
+        mo = _OU_FULL_RE.match(git)
+        if mo:
+            try:
+                line = float(mo.group(1))
+            except ValueError:
+                continue
+            over, under = _outcome_token(m, "over"), _outcome_token(m, "under")
+            if over and under:
+                totals[line] = (over, under)
+        elif git.lower() == "both teams to score":     # exact -> full game (halves have a suffix)
+            yes, no = _outcome_token(m, "yes"), _outcome_token(m, "no")
+            if yes and no:
+                btts = (yes, no)
+    return totals, btts
 
 
 _DATE_RE = re.compile(r"(\d{4})-(\d{2})-(\d{2})")
@@ -301,6 +354,10 @@ class PolyEvent:
     title: str
     commence_iso: Optional[str]
     legs: list[Leg]                   # the Yes legs (a valid WC event has exactly 1 draw + 2 team)
+    slug: str = ""                    # game slug, used to reach the '<slug>-more-markets' siblings
+    # SAFE-TIER extras priced from the sibling 'Game Lines' event (full-game, reg-time):
+    totals: dict[float, tuple[Leg, Leg]] = field(default_factory=dict)  # line -> (over_leg, under_leg)
+    btts: Optional[tuple[Leg, Leg]] = None                              # (yes_leg, no_leg)
 
 
 def parse_event_legs(event: dict[str, Any]) -> Optional[PolyEvent]:
@@ -331,7 +388,37 @@ def parse_event_legs(event: dict[str, Any]) -> Optional[PolyEvent]:
         title=str(event.get("title") or ""),
         commence_iso=_commence_iso(event, markets),
         legs=legs,
+        slug=str(event.get("slug") or ""),
     )
+
+
+def fetch_more_markets(client: PolymarketClient, parsed: PolyEvent, market_index, log) -> None:
+    """Fetch parsed's '<slug>-more-markets' sibling and attach priced FULL-GAME total-goals O/U +
+    BTTS legs (parsed.totals / parsed.btts). Only lines the canonical index knows are priced (bounds
+    CLOB calls). Drop-safe: any failure leaves the 1x2-only event untouched."""
+    if not parsed.slug:
+        return
+    try:
+        sib = client.events_by_slug(f"{parsed.slug}-more-markets")
+    except PolymarketError as exc:
+        log.warning("[POLYMARKET] %s-more-markets fetch failed (%s) — 1x2 only.", parsed.slug, exc)
+        return
+    sib = (sib[0] if isinstance(sib, list) and sib else sib)
+    if not isinstance(sib, dict):
+        return
+    tot_tokens, btts_tokens = parse_more_markets_tokens(sib)
+    for line, (over_tok, under_tok) in tot_tokens.items():
+        if market_index.totals.get(line) is None:     # only price lines we can map -> fewer CLOB calls
+            continue
+        po, pu = price_leg(client, over_tok), price_leg(client, under_tok)
+        if po and pu:
+            parsed.totals[line] = (Leg(role="over", decimal=po[0], limit=po[1]),
+                                   Leg(role="under", decimal=pu[0], limit=pu[1]))
+    if btts_tokens and market_index.btts:
+        py, pn = price_leg(client, btts_tokens[0]), price_leg(client, btts_tokens[1])
+        if py and pn:
+            parsed.btts = (Leg(role="yes", decimal=py[0], limit=py[1]),
+                           Leg(role="no", decimal=pn[0], limit=pn[1]))
 
 
 def price_leg(client: PolymarketClient, token: str) -> Optional[tuple[float, float]]:
@@ -388,12 +475,16 @@ def _discover_events(client: PolymarketClient, by_fixture: dict[str, dict[str, A
     return found
 
 
-def fetch_wc_events(client: PolymarketClient, by_fixture: dict[str, dict[str, Any]], log) -> list[PolyEvent]:
+def fetch_wc_events(client: PolymarketClient, by_fixture: dict[str, dict[str, Any]], log,
+                    market_index=None) -> list[PolyEvent]:
     """Discover WC match events via Gamma search, keep the well-formed ones (1 draw + 2 team-win
-    markets), and price each Yes leg from the CLOB best ask. Returns the fully-priced PolyEvents the
-    merge maps to fixtures. An event with any unpriceable leg is dropped (drop-safe)."""
+    markets), and price each Yes leg from the CLOB best ask. When `market_index` is given, ALSO pull
+    each game's '<slug>-more-markets' sibling and price its full-game total-goals O/U + BTTS legs
+    (SAFE tier). Returns the priced PolyEvents the merge maps to fixtures; an event with any
+    unpriceable 1x2 leg is dropped (drop-safe)."""
     candidates = _discover_events(client, by_fixture, log)
     out: list[PolyEvent] = []
+    tot_lines = btts_n = 0
     for ev in candidates.values():
         if len(out) >= MAX_EVENTS:
             log.warning("[POLYMARKET] hit MAX_EVENTS=%s — not pricing further candidates.", MAX_EVENTS)
@@ -408,10 +499,16 @@ def fetch_wc_events(client: PolymarketClient, by_fixture: dict[str, dict[str, An
                 ok = False
                 break
             leg.decimal, leg.limit = pl
-        if ok:
-            out.append(parsed)
-    log.info("[POLYMARKET] discovered %s candidate event(s); %s priced with full 1x2 legs.",
-             len(candidates), len(out))
+        if not ok:
+            continue
+        if market_index is not None:
+            fetch_more_markets(client, parsed, market_index, log)
+            tot_lines += len(parsed.totals)
+            btts_n += 1 if parsed.btts else 0
+        out.append(parsed)
+    log.info("[POLYMARKET] discovered %s candidate event(s); %s priced with full 1x2 legs"
+             " (+ %s total line(s), %s BTTS from -more-markets siblings).",
+             len(candidates), len(out), tot_lines, btts_n)
     return out
 
 
@@ -443,13 +540,17 @@ class Coverage:
     recovered: int = 0                                       # #fixtures where polymarket was injected
     deferred: int = 0                                        # #fixtures OddsPapi already had active
     incomplete: list[str] = field(default_factory=list)      # matched but not exactly 1 draw + 2 teams
+    totals_fixtures: int = 0                                  # #fixtures with >=1 total-goals line injected
+    totals_lines: int = 0                                     # total O/U lines injected across fixtures
+    btts_fixtures: int = 0                                    # #fixtures with a BTTS leg injected
 
     def lines(self) -> list[str]:
         out = [
             f"POLYMARKET: {self.matched}/{self.events_total} events mapped "
             f"(unmatched-name {len(self.unmatched_name)}, time-mismatch {len(self.time_mismatch)}, "
             f"ambiguous {len(self.ambiguous)}) | recovered {self.recovered} fixture(s), "
-            f"deferred {self.deferred}",
+            f"deferred {self.deferred} | SAFE-TIER: totals {self.totals_lines} line(s) on "
+            f"{self.totals_fixtures} fixture(s), BTTS on {self.btts_fixtures} fixture(s)",
         ]
         for label, names in (("unmatched-name", self.unmatched_name),
                              ("time-mismatch", self.time_mismatch), ("ambiguous", self.ambiguous),
@@ -556,14 +657,37 @@ def merge_into(
         _add_leg(entry, h2h["marketId"], h2h["home_oid"], home_leg.decimal, home_leg.limit, changed_at)
         _add_leg(entry, h2h["marketId"], h2h["draw_oid"], draw_leg.decimal, draw_leg.limit, changed_at)
         _add_leg(entry, h2h["marketId"], h2h["away_oid"], away_leg.decimal, away_leg.limit, changed_at)
+
+        # SAFE-TIER: full-game total-goals O/U + BTTS (reg-time, same basis as the 1x2) onto this fixture.
+        nt = 0
+        for line, (over_leg, under_leg) in ev.totals.items():
+            tidx = market_index.totals.get(line)
+            if not tidx:
+                continue
+            _add_leg(entry, tidx["marketId"], tidx["over_oid"], over_leg.decimal, over_leg.limit, changed_at)
+            _add_leg(entry, tidx["marketId"], tidx["under_oid"], under_leg.decimal, under_leg.limit, changed_at)
+            nt += 1
+        if nt:
+            cov.totals_fixtures += 1
+            cov.totals_lines += nt
+        nb = 0
+        if ev.btts and market_index.btts:
+            yes_leg, no_leg = ev.btts
+            b = market_index.btts
+            _add_leg(entry, b["marketId"], b["yes_oid"], yes_leg.decimal, yes_leg.limit, changed_at)
+            _add_leg(entry, b["marketId"], b["no_oid"], no_leg.decimal, no_leg.limit, changed_at)
+            cov.btts_fixtures += 1
+            nb = 1
+
         book_odds["polymarket"] = entry      # fill the (missing/stale) OddsPapi polymarket slug
         poly_books.setdefault(fid, set()).add("polymarket")
         cov.recovered += 1
 
         info = by_fixture.get(fid, {})
-        log.info("[POLYMARKET] %s -> %s vs %s | home %.3f ($%.0f) / draw %.3f ($%.0f) / away %.3f ($%.0f)",
+        log.info("[POLYMARKET] %s -> %s vs %s | home %.3f ($%.0f) / draw %.3f ($%.0f) / away %.3f ($%.0f)"
+                 " | +%d total line(s)%s",
                  label, info.get("p1"), info.get("p2"),
                  home_leg.decimal, home_leg.limit, draw_leg.decimal, draw_leg.limit,
-                 away_leg.decimal, away_leg.limit)
+                 away_leg.decimal, away_leg.limit, nt, " + BTTS" if nb else "")
 
     return cov, poly_books
