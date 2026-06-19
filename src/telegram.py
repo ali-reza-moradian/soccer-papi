@@ -83,7 +83,12 @@ def format_opportunity(arb: dict[str, Any], local_tz: str = fmt.LOCAL_TZ_NAME) -
         lines.append(_esc(UNVERIFIED_NOTE))
     lockup = arb.get("capital_lockup_days")
     if lockup is not None:
-        lines.append(f"🔒 Capital locked ~{int(lockup)} days (group stage) — resolves at group end.")
+        resolves_by = arb.get("resolves_by_utc")
+        # "%b %d" is portable (Windows lacks %-d); strip a leading zero on the day for readability.
+        by = fmt.fmt_dt(resolves_by, local_tz, "%b %d").replace(" 0", " ") if resolves_by else "group end"
+        lines.append(f"🔒 resolves by {by} (~{int(lockup)} days)")
+        if arb.get("early_within_window"):
+            lines.append("⚡ may resolve within your 3-day window — verify before betting")
     return "\n".join(lines)
 
 

@@ -28,9 +28,13 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Optional
 
-from . import catalog, kalshi as kalshi_mod, polymarket as poly_mod
+from . import catalog, group_resolution, kalshi as kalshi_mod, polymarket as poly_mod
 from .arbitrage import Candidate, cap_total_investment, compute_arb, make_signature, select_legs
 from .theoddsapi import SCOPE_GROUP, normalize_team
+
+# group market name -> the outcome kind the clinch math understands ('winner'/'bottom'); other types
+# (qualify) get schedule-based resolution only (no clinch).
+_KIND = {"group_winner": "winner", "group_bottom": "bottom"}
 
 DEFAULT_GROUP_STAGE_END_UTC = "2026-06-27T23:59:59Z"
 
@@ -191,18 +195,24 @@ def _enumerate_poly_slugs(pc, tag_id: str, log) -> list[str]:
     return slugs
 
 
-def _make_opp(spec, res, group_letter, mtype, team_raw, lockup_days, actionable, group_end, cfg):
+def _make_opp(spec, res, group_letter, mtype, team_raw, est, fallback_lockup, fallback_end,
+              actionable, cfg):
+    """est = group_resolution.resolution_estimate(...) or None (schedule unknown -> coarse fallback)."""
     from .run import Opportunity
     suspicious = res.roi_pct > float(cfg.threshold("roi_suspicious_pct", 8.0))
     sig = make_signature(f"group-{group_letter}-{mtype.name}", spec.market_id, None, res.legs)
+    resolves_by = est["resolves_by_utc"] if est else fallback_end
     opp = Opportunity(
         fixture_id=f"group-{group_letter}-{mtype.name}-{normalize_team(team_raw)}",
         match=f"Group {group_letter.upper()}: {team_raw} — {mtype.label}",
         home_team=team_raw, away_team="", tournament="World Cup (group stage)",
-        kickoff_utc=group_end, spec=spec, res=res, actionable=actionable,
+        kickoff_utc=resolves_by, spec=spec, res=res, actionable=actionable,
         shadow_books=[] if actionable else ["kalshi", "polymarket"], suspicious=suspicious,
         bet_links={}, signature=sig)
-    opp.capital_lockup_days = lockup_days
+    opp.capital_lockup_days = est["resolves_by_days"] if est else fallback_lockup
+    opp.resolves_by_utc = resolves_by
+    opp.early_resolution = bool(est and est["early"])
+    opp.early_within_window = bool(est and est["within_window"])
     return opp
 
 
@@ -219,6 +229,13 @@ def detect(cfg, now: datetime, log) -> list:
     pc = poly_mod.PolymarketClient(gamma_base=str(cfg.polymarket_opt("gamma_base", poly_mod.GAMMA_BASE)),
                                    clob_base=str(cfg.polymarket_opt("clob_base", poly_mod.CLOB_BASE)))
     all_slugs = _enumerate_poly_slugs(pc, str(cfg.group_markets_opt("poly_tag_id", "102232")), log)
+
+    # Per-group resolution schedule: KXWCGAME match dates (ticker) + results (settled markets).
+    game_series = str(cfg.kalshi_opt("series_ticker", "KXWCGAME") or "KXWCGAME")
+    game_markets = (kc.iter_markets(series_ticker=game_series, status="open")
+                    + kc.iter_markets(series_ticker=game_series, status="settled"))
+    games = group_resolution.parse_game_schedule(game_markets)
+    within_days = cfg.alert_max_days_out or 3
 
     n_safe = n_danger = 0
     for mt in MARKET_TYPES:
@@ -257,7 +274,10 @@ def detect(cfg, now: datetime, log) -> list:
                     continue
                 spec, res = built
                 actionable = actionable_for(mt, actionable_safe)   # DANGEROUS -> always False
-                out.append(_make_opp(spec, res, letter, mt, kd["raw"], lockup, actionable, group_end, cfg))
+                est = group_resolution.resolution_estimate(
+                    frozenset(kteams), _KIND.get(mt.name, mt.name), tnorm, games, now, within_days)
+                out.append(_make_opp(spec, res, letter, mt, kd["raw"], est, lockup, group_end,
+                                     actionable, cfg))
                 if mt.settlement_class == SAFE:
                     n_safe += 1
                 else:

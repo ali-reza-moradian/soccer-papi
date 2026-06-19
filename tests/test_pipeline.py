@@ -374,7 +374,7 @@ def test_group_arbs_use_their_own_lower_alert_floor(monkeypatch, tmp_path):
     assert len(sent) == 1
     assert "GroupBottomH CapeVerde" in sent[0]        # group floor $15/1% -> passes (window-exempt)
     assert "PerGame Small" not in sent[0]             # $20 < $25 per-game floor -> filtered
-    assert "Capital locked ~8 days" in sent[0]        # lockup surfaced in the alert
+    assert "resolves by" in sent[0] and "~8 days" in sent[0]   # resolution estimate surfaced
 
 
 def test_scan_lock_acquire_skip_and_stale_override(tmp_path):

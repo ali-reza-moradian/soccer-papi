@@ -106,9 +106,11 @@ class Opportunity:
     suspicious: bool
     bet_links: dict[str, str]
     signature: str
-    # SCOPE_GROUP arbs only: days the stake is frozen until the group stage resolves (~10d). None for
-    # per-game arbs. Surfaced in the alert + log because group markets lock capital for a long time.
-    capital_lockup_days: Optional[int] = None
+    # SCOPE_GROUP arbs only (None for per-game). Resolution estimate surfaced in the alert + log:
+    capital_lockup_days: Optional[int] = None   # days until resolves_by (the group's final match)
+    resolves_by_utc: Optional[str] = None       # latest possible resolution = group's final match
+    early_resolution: bool = False              # could resolve sooner (clinched / earlier match)
+    early_within_window: bool = False           # earliest possible resolution is <= alert window (⚡)
 
     @property
     def is_group_scope(self) -> bool:
@@ -465,6 +467,8 @@ def _telegram_item(opp: Opportunity) -> dict[str, Any]:
         "low_confidence": res.low_confidence,
         "involves_exchange": res.involves_exchange,
         "capital_lockup_days": opp.capital_lockup_days,   # group-scope arbs only (None otherwise)
+        "resolves_by_utc": opp.resolves_by_utc,
+        "early_within_window": opp.early_within_window,
         "legs": [
             {"book": leg.book, "outcome": leg.outcome_name,
              "decimal_odds": leg.decimal_odds, "limit": leg.limit,
