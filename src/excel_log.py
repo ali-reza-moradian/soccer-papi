@@ -18,7 +18,7 @@ MAX_LEGS = 3
 _BASE_HEAD = ["scan_time_local", "scan_time_utc", "game", "kickoff_time", "tournament", "market"]
 _LEG_HEAD = ["book", "outcome", "odds", "limit", "stake"]
 _TAIL_HEAD = ["S", "ROI_pct", "T_max", "total_investment", "guaranteed_profit", "type",
-              "low_confidence", "unverified_limit_books", "new_or_repeat", "arb_id"]
+              "low_confidence", "unverified_limit_books", "capital_lockup_days", "new_or_repeat", "arb_id"]
 
 
 def columns() -> list[str]:

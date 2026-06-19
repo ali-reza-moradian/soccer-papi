@@ -81,6 +81,9 @@ def format_opportunity(arb: dict[str, Any], local_tz: str = fmt.LOCAL_TZ_NAME) -
     )
     if any_unverified:
         lines.append(_esc(UNVERIFIED_NOTE))
+    lockup = arb.get("capital_lockup_days")
+    if lockup is not None:
+        lines.append(f"🔒 Capital locked ~{int(lockup)} days (group stage) — resolves at group end.")
     return "\n".join(lines)
 
 

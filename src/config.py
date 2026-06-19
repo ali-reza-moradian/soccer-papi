@@ -181,6 +181,14 @@ class Config:
     def player_props_opt(self, key: str, default: Any) -> Any:
         return self.get("player_props", key, default=default)
 
+    @property
+    def group_markets_enabled(self) -> bool:
+        """STEP/group tier: cross-exchange group-stage outcome markets (winner/bottom). Default OFF."""
+        return bool(self.get("group_markets", "enabled", default=False))
+
+    def group_markets_opt(self, key: str, default: Any) -> Any:
+        return self.get("group_markets", key, default=default)
+
     def threshold(self, key: str, default: Any) -> Any:
         return self.get("thresholds", key, default=default)
 

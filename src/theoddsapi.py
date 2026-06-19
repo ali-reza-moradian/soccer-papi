@@ -46,6 +46,10 @@ BASE_URL = "https://api.the-odds-api.com/v4"
 # tournament events; the merges additionally refuse to inject into anything not tagged per_game.
 SCOPE_PER_GAME = "per_game"
 SCOPE_TOURNAMENT = "tournament"
+# GROUP scope: a group-stage OUTCOME market (group winner / bottom / qualify) that resolves when the
+# whole group finishes, NOT one fixture. Kept STRICTLY separate from the per-game path: a group leg
+# may only ever pair with another group leg for the SAME group + the SAME settlement definition.
+SCOPE_GROUP = "group"
 
 
 # --------------------------------------------------------------------------- #

@@ -13,8 +13,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-from . import (catalog, excel_log, formatting as fmt, kalshi, normalize, player_props, polymarket,
-               scoreboard, theoddsapi)
+from . import (catalog, excel_log, formatting as fmt, group_markets, kalshi, normalize, player_props,
+               polymarket, scoreboard, theoddsapi)
 from .arbitrage import (ArbResult, Candidate, cap_total_investment, compute_arb, make_arb_id,
                         make_signature, select_legs)
 from .config import Config, load_config
@@ -105,6 +105,13 @@ class Opportunity:
     suspicious: bool
     bet_links: dict[str, str]
     signature: str
+    # SCOPE_GROUP arbs only: days the stake is frozen until the group stage resolves (~10d). None for
+    # per-game arbs. Surfaced in the alert + log because group markets lock capital for a long time.
+    capital_lockup_days: Optional[int] = None
+
+    @property
+    def is_group_scope(self) -> bool:
+        return self.spec.period == "group"
 
     @property
     def rank_profit(self) -> float:
@@ -456,6 +463,7 @@ def _telegram_item(opp: Opportunity) -> dict[str, Any]:
         "suspicious": opp.suspicious,
         "low_confidence": res.low_confidence,
         "involves_exchange": res.involves_exchange,
+        "capital_lockup_days": opp.capital_lockup_days,   # group-scope arbs only (None otherwise)
         "legs": [
             {"book": leg.book, "outcome": leg.outcome_name,
              "decimal_odds": leg.decimal_odds, "limit": leg.limit,
@@ -496,6 +504,7 @@ def _xlsx_row(opp: Opportunity, now: datetime) -> dict[str, Any]:
         "type": "REAL" if opp.actionable else "SHADOW",
         "low_confidence": "Y" if res.low_confidence else "N",
         "unverified_limit_books": ", ".join(res.unverified_books),
+        "capital_lockup_days": "" if opp.capital_lockup_days is None else opp.capital_lockup_days,
         "arb_id": make_arb_id(opp.match, market, res.legs),
     }
 
@@ -940,6 +949,23 @@ def run_cycle(cfg: Config, log) -> int:
             log.warning("player-props tier failed (%s: %s) — continuing without it.",
                         type(exc).__name__, exc)
 
+    # 6c) Group-stage outcome tier (SCOPE_GROUP, default OFF): cross-exchange group winner/bottom
+    # (SAFE) + qualify (DANGEROUS, logged-only). Appended like player props. Drop-safe.
+    if cfg.group_markets_enabled:
+        try:
+            gm = group_markets.detect(cfg, now, log)
+            for opp in gm:
+                if opp.suspicious:
+                    stats["suspicious_arbs"] += 1
+                elif opp.actionable:
+                    stats["real_arbs"] += 1
+                else:
+                    stats["shadow_arbs"] += 1
+            opportunities.extend(gm)
+        except Exception as exc:  # noqa: BLE001 - supplemental tier must never break the run
+            log.warning("group-markets tier failed (%s: %s) — continuing without it.",
+                        type(exc).__name__, exc)
+
     # 7) Output ------------------------------------------------------------------
     _emit(opportunities, stats, cfg, now, client, log)
     return 0
@@ -1330,8 +1356,8 @@ def _emit(opportunities, stats, cfg: Config, now, client, log):
     max_days, min_profit = cfg.alert_max_days_out, cfg.alert_min_profit
 
     def _within_window(o) -> bool:
-        if max_days <= 0:
-            return True
+        if max_days <= 0 or o.is_group_scope:
+            return True            # group-scope arbs resolve at group end (~10d) — window doesn't apply
         ko = fmt.parse_iso(o.kickoff_utc)
         return ko is not None and 0 <= (ko - now).total_seconds() <= max_days * 86400.0
 

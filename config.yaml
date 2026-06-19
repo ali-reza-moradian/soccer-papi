@@ -194,6 +194,18 @@ player_props:
   # 2026 World Cup group stage runs through ~Jun 27; the Round of 32 begins after.
   knockout_start_utc: "2026-06-28T00:00:00Z"
 
+group_markets:
+  # Cross-exchange GROUP-STAGE OUTCOME markets (Kalshi KXWCGROUP* <-> Polymarket group events).
+  # SCOPE_GROUP, kept separate from the per-game path. Default OFF (heavier: extra Kalshi/Poly/CLOB
+  # calls). SAFE types — Group Winner + Group Bottom (both venues: finishes 1st / last, FIFA tiebreak)
+  # — may be actionable. DANGEROUS qualify/advance markets are detected + logged but NEVER actionable
+  # (their resolution definitions differ across venues — see the audit). These freeze capital until
+  # the group stage ends, so every group arb is tagged capital_lockup_days.
+  enabled: false
+  actionable: false                  # SAFE group arbs only; flip true once you accept the ~10d lockup
+  group_stage_end_utc: "2026-06-27T23:59:59Z"   # when group markets resolve (capital-lockup anchor)
+  poly_tag_id: "102232"              # Polymarket FIFA World Cup tag
+
 markets:
   exclude: [double_chance]           # market families to never scan (overlap 1x2 → bad for arbing)
   exclude_names: ["double chance"]   # case-insensitive substrings of marketName to drop
