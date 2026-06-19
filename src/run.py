@@ -13,7 +13,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-from . import catalog, excel_log, formatting as fmt, kalshi, normalize, polymarket, scoreboard, theoddsapi
+from . import (catalog, excel_log, formatting as fmt, kalshi, normalize, player_props, polymarket,
+               scoreboard, theoddsapi)
 from .arbitrage import (ArbResult, Candidate, cap_total_investment, compute_arb, make_arb_id,
                         make_signature, select_legs)
 from .config import Config, load_config
@@ -921,6 +922,24 @@ def run_cycle(cfg: Config, log) -> int:
     opportunities, stats = _scan(feeds, specs, ctx, cfg, by_fixture, by_participant, now, log,
                                  toa_books_by_fixture, kalshi_books_by_fixture, poly_books_by_fixture)
 
+    # 6b) Player-goals tier (STEP 5, default OFF): Poly -player-props <-> Kalshi KXWCGOAL, group-stage
+    # only (settlement gate). Detected separately (synthetic per-player markets), appended to the
+    # opportunities so it flows through CSV/xlsx/alerts unchanged. Drop-safe — never breaks the run.
+    if cfg.player_props_enabled:
+        try:
+            pp = player_props.detect(cfg, by_fixture, now, log)
+            for opp in pp:
+                if opp.suspicious:                       # log-only, never alerted (mirrors _scan)
+                    stats["suspicious_arbs"] += 1
+                elif opp.actionable:
+                    stats["real_arbs"] += 1
+                else:
+                    stats["shadow_arbs"] += 1
+            opportunities.extend(pp)
+        except Exception as exc:  # noqa: BLE001 - supplemental tier must never break the run
+            log.warning("player-props tier failed (%s: %s) — continuing without it.",
+                        type(exc).__name__, exc)
+
     # 7) Output ------------------------------------------------------------------
     _emit(opportunities, stats, cfg, now, client, log)
     return 0
@@ -1304,10 +1323,22 @@ def _emit(opportunities, stats, cfg: Config, now, client, log):
     window_line = f"📅 Scanning: {fmt.window_label(cfg.from_utc, cfg.to_utc)}"
     rank = _rank_key(cfg)
     # SENDABLE = actionable AND NOT suspicious. Suspicious arbs (huge ROI from thin longshot
-    # liquidity) are NEVER alerted — they can never enter `top`, so they can't ride along in a real
-    # alert. Shadow arbs are surfaced via the heartbeat / scoreboard, not the per-arb alert.
+    # liquidity) are NEVER alerted. Shadow arbs are surfaced via the heartbeat / scoreboard.
     sendable = [o for o in opportunities if o.actionable and not o.suspicious]
-    top = sorted(sendable, key=rank, reverse=True)[:3]
+    # ALERT FILTERS (gate ALERTS only — CSV/xlsx above already logged ALL opportunities):
+    #   (1) fixture kicks off within alert_max_days_out days, (2) guaranteed profit >= alert_min_profit.
+    max_days, min_profit = cfg.alert_max_days_out, cfg.alert_min_profit
+
+    def _within_window(o) -> bool:
+        if max_days <= 0:
+            return True
+        ko = fmt.parse_iso(o.kickoff_utc)
+        return ko is not None and 0 <= (ko - now).total_seconds() <= max_days * 86400.0
+
+    alertable = [o for o in sendable if o.res.max_profit >= min_profit and _within_window(o)]
+    filtered = len(sendable) - len(alertable)
+    flt = (f"; {filtered} filtered (>{max_days:g}d out / <${min_profit:g})" if filtered else "")
+    top = sorted(alertable, key=rank, reverse=True)[:3]
 
     header = (f"{window_line}\n"
               f"⚽ <b>Arb scan</b> — {fmt.fmt_dt(now)}\n"
@@ -1318,28 +1349,29 @@ def _emit(opportunities, stats, cfg: Config, now, client, log):
     sent = 0
     suppressed = 0
     if cfg.dry_run:
-        # Verification: render exactly what WOULD be sent (real arbs only), send nothing.
+        # Verification: render exactly what WOULD be sent (post-filter), send nothing.
         if top:
             preview = build_message([_telegram_item(o) for o in top], header, local_tz)
-            log.info("[dry_run] Telegram preview (%s real arb(s)):\n%s", len(top), preview)
-            reason = f"dry-run (would send {len(top)} real-arb alert(s))"
+            log.info("[dry_run] Telegram preview (%s alertable arb(s)%s):\n%s", len(top), flt, preview)
+            reason = f"dry-run (would send {len(top)} alert(s){flt})"
         else:
             _send_heartbeat(opportunities, stats, cfg, now, log, local_tz)  # logs would-send heartbeat
-            reason = "dry-run (0 real arbs; heartbeat path)"
-    elif stats["real_arbs"] >= 1:
-        # At least one real (actionable) arb -> ALWAYS send the top-3 alert immediately (no throttle).
+            reason = f"dry-run (0 alertable arbs{flt}; heartbeat path)"
+    elif top:
+        # >=1 arb passes the filters -> ALWAYS send the top-3 alert immediately (no throttle).
         if not cfg.secrets.telegram_ready:
-            reason = f"{len(top)} real arb(s) found but TELEGRAM OFF (no token/chat_id)"
+            reason = f"{len(top)} alertable arb(s) but TELEGRAM OFF (no token/chat_id)"
         else:
             msg = build_message([_telegram_item(o) for o in top], header, local_tz)
             if send_message(cfg.secrets.telegram_bot_key, cfg.secrets.telegram_group_id, msg, log):
                 sent = len(top)
-                reason = f"{sent} real-arb alert(s) sent immediately"
+                reason = f"{sent} alert(s) sent immediately{flt}"
             else:
-                reason = f"{len(top)} real arb(s) found but Telegram send FAILED"
+                reason = f"{len(top)} alertable arb(s) but Telegram send FAILED"
     else:
-        # Zero real arbs -> a throttled heartbeat ('bot alive') ping.
+        # Nothing alertable (no real arbs, or all filtered out) -> a throttled heartbeat ping.
         sent, reason = _send_heartbeat(opportunities, stats, cfg, now, log, local_tz)
+        reason += flt
         if sent == 0 and ("throttled" in reason or "disabled" in reason):
             suppressed = 1
 

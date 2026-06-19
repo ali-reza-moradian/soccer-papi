@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import tempfile
+from collections import Counter
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -276,6 +277,56 @@ def test_low_confidence_arb_kept_below_stake_floor():
     assert stats["real_arbs"] == 1
     assert opps[0].res.t_max < 20
     assert opps[0].res.low_confidence
+
+
+def test_alert_filters_gate_by_window_and_min_profit(monkeypatch, tmp_path):
+    """alert_max_days_out + alert_min_profit gate ALERTS only: a near+big arb is sent; a far-off arb
+    and a tiny-profit arb are filtered out (but all are still written to the CSV)."""
+    import src.run as run
+    from src import catalog
+    from src.arbitrage import ArbResult, Leg
+    sent: list[str] = []
+    monkeypatch.setattr(run, "send_message", lambda tok, chat, text, log: bool(sent.append(text)) or True)
+
+    def _opp(match, profit, days_out):
+        ko = (NOW + timedelta(days=days_out)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        leg = Leg(outcome_id=1, outcome_name="1", book="pinnacle", decimal_odds=2.1, eff_odds=2.1,
+                  american_odds=None, limit=500, changed_at=None, is_exchange=False, commission=0.0,
+                  stake=100.0)
+        res = ArbResult(legs=[leg, leg], arb_sum_S=0.95, roi_decimal=0.05, t_max=1000.0,
+                        max_profit=profit, binding_book="pinnacle", min_leg_limit=500.0,
+                        involves_exchange=False, low_confidence=False)
+        spec = catalog.MarketSpec(market_id=101, label="Full Time Result", family="1x2",
+                                  period="fulltime", line=None, n_way=2, outcome_ids=[1, 2],
+                                  outcome_names={1: "1", 2: "2"})
+        return run.Opportunity(fixture_id="f" + match, match=match, home_team="A", away_team="B",
+                               tournament="WC", kickoff_utc=ko, spec=spec, res=res, actionable=True,
+                               shadow_books=[], suspicious=False, bet_links={},
+                               signature="sig-" + match)
+
+    opps = [_opp("NearBig", 50.0, 1), _opp("FarBig", 50.0, 10), _opp("NearSmall", 5.0, 1)]
+    stats = {"fixtures_in_window": 3, "fixtures_skipped_status": 0, "markets_scanned": 3,
+             "markets_complete": 3, "real_arbs": 3, "shadow_arbs": 0, "suspicious_arbs": 0,
+             "near_misses": 0, "arbs_below_threshold": 0, "shadow_book_counter": Counter(),
+             "mapping_suspect_flags": Counter(), "funded_arbs": []}
+    raw = {"alert_max_days_out": 3, "alert_min_profit": 25,
+           "target_window": {"from_utc": "2026-06-07T00:00:00Z", "to_utc": "2026-06-09T23:59:59Z"}}
+    cfg = Config(raw=raw, secrets=Secrets(None, "bot", "chat"),
+                 cache_dir=str(tmp_path), csv_path=str(tmp_path / "c.csv"),
+                 xlsx_path=str(tmp_path / "a.xlsx"))
+
+    class _Client:
+        billable_count = 0
+    run._emit(opps, stats, cfg, NOW, _Client(), get_logger("t"))
+
+    assert len(sent) == 1                       # one alert message went out
+    assert "NearBig" in sent[0]                 # within 3d AND profit >= $25
+    assert "FarBig" not in sent[0]              # 10 days out -> filtered
+    assert "NearSmall" not in sent[0]          # profit $5 < $25 -> filtered
+    # All three are still logged to the CSV (detection is not gated).
+    import csv as _csv
+    rows = list(_csv.DictReader(open(str(tmp_path / "c.csv"), encoding="utf-8")))
+    assert {r["match"] for r in rows} == {"NearBig", "FarBig", "NearSmall"}
 
 
 def test_heartbeat_throttled_to_once_per_interval(monkeypatch, tmp_path):

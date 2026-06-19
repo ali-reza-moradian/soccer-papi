@@ -163,6 +163,24 @@ class Config:
         raw = self.get("thresholds", "assumed_unknown_limit_by_book", default={}) or {}
         return {str(k): float(v) for k, v in raw.items()}
 
+    @property
+    def alert_max_days_out(self) -> float:
+        """Only ALERT fixtures kicking off within this many days (0/absent => no window gate)."""
+        return float(self.get("alert_max_days_out", default=0) or 0)
+
+    @property
+    def alert_min_profit(self) -> float:
+        """Only ALERT arbs whose guaranteed profit (post-cap) >= this many dollars (0 => no floor)."""
+        return float(self.get("alert_min_profit", default=0) or 0)
+
+    @property
+    def player_props_enabled(self) -> bool:
+        """STEP 5 player-goals tier (Polymarket -player-props <-> Kalshi KXWCGOAL). Default OFF."""
+        return bool(self.get("player_props", "enabled", default=False))
+
+    def player_props_opt(self, key: str, default: Any) -> Any:
+        return self.get("player_props", key, default=default)
+
     def threshold(self, key: str, default: Any) -> Any:
         return self.get("thresholds", key, default=default)
 
