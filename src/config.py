@@ -174,6 +174,21 @@ class Config:
         return float(self.get("alert_min_profit", default=0) or 0)
 
     @property
+    def group_alert_min_profit(self) -> float:
+        """Group-stage arbs' OWN profit floor (they're small but real, and lock capital ~10d)."""
+        return float(self.get("group_alert_min_profit", default=15) or 0)
+
+    @property
+    def group_alert_min_roi_pct(self) -> float:
+        """Group-stage arbs alert if profit >= group_alert_min_profit OR ROI >= this %."""
+        return float(self.get("group_alert_min_roi_pct", default=1.0) or 0)
+
+    @property
+    def scan_lock_max_age_s(self) -> float:
+        """A scan lock older than this (seconds) is treated as stale and overridden (crash recovery)."""
+        return float(self.get("scan_lock_max_age_s", default=1800) or 1800)
+
+    @property
     def player_props_enabled(self) -> bool:
         """STEP 5 player-goals tier (Polymarket -player-props <-> Kalshi KXWCGOAL). Default OFF."""
         return bool(self.get("player_props", "enabled", default=False))

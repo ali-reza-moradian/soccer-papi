@@ -329,6 +329,74 @@ def test_alert_filters_gate_by_window_and_min_profit(monkeypatch, tmp_path):
     assert {r["match"] for r in rows} == {"NearBig", "FarBig", "NearSmall"}
 
 
+def test_group_arbs_use_their_own_lower_alert_floor(monkeypatch, tmp_path):
+    """A $20 GROUP arb passes its own floor ($15 / 1% ROI) and is window-exempt; an identical $20
+    PER-GAME arb is filtered by the $25 per-game floor."""
+    import src.run as run
+    from src import catalog
+    from src.arbitrage import ArbResult, Leg
+    sent: list[str] = []
+    monkeypatch.setattr(run, "send_message", lambda tok, chat, text, log: bool(sent.append(text)) or True)
+
+    def _opp(match, profit, family, period, days_out, lockup=None):
+        ko = (NOW + timedelta(days=days_out)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        leg = Leg(outcome_id=1, outcome_name="Yes", book="kalshi", decimal_odds=2.0, eff_odds=2.0,
+                  american_odds=None, limit=500, changed_at=None, is_exchange=True, commission=0.0,
+                  stake=100.0)
+        res = ArbResult(legs=[leg, leg], arb_sum_S=0.987, roi_decimal=0.013, t_max=1500.0,
+                        max_profit=profit, binding_book="kalshi", min_leg_limit=500.0,
+                        involves_exchange=True, low_confidence=False)
+        spec = catalog.MarketSpec(market_id=hash(match) % 9999, label=match, family=family,
+                                  period=period, line=None, n_way=2, outcome_ids=[1, 2],
+                                  outcome_names={1: "Yes", 2: "No"})
+        return run.Opportunity(fixture_id="f" + match, match=match, home_team="A", away_team="",
+                               tournament="WC", kickoff_utc=ko, spec=spec, res=res, actionable=True,
+                               shadow_books=[], suspicious=False, bet_links={}, signature="s" + match,
+                               capital_lockup_days=lockup)
+
+    # group arb: $20, ROI 1.3%, kicks off 9 days out (window-exempt). per-game arb: $20, 1 day out.
+    opps = [_opp("GroupBottomH CapeVerde", 20.0, "group_bottom", "group", 9, lockup=8),
+            _opp("PerGame Small", 20.0, "1x2", "fulltime", 1)]
+    stats = {"fixtures_in_window": 2, "fixtures_skipped_status": 0, "markets_scanned": 2,
+             "markets_complete": 2, "real_arbs": 2, "shadow_arbs": 0, "suspicious_arbs": 0,
+             "near_misses": 0, "arbs_below_threshold": 0, "shadow_book_counter": Counter(),
+             "mapping_suspect_flags": Counter(), "funded_arbs": []}
+    raw = {"alert_max_days_out": 3, "alert_min_profit": 25,
+           "group_alert_min_profit": 15, "group_alert_min_roi_pct": 1.0,
+           "target_window": {"from_utc": "2026-06-07T00:00:00Z", "to_utc": "2026-06-09T23:59:59Z"}}
+    cfg = Config(raw=raw, secrets=Secrets(None, "bot", "chat"), cache_dir=str(tmp_path),
+                 csv_path=str(tmp_path / "c.csv"), xlsx_path=str(tmp_path / "a.xlsx"))
+
+    class _Client:
+        billable_count = 0
+    run._emit(opps, stats, cfg, NOW, _Client(), get_logger("t"))
+
+    assert len(sent) == 1
+    assert "GroupBottomH CapeVerde" in sent[0]        # group floor $15/1% -> passes (window-exempt)
+    assert "PerGame Small" not in sent[0]             # $20 < $25 per-game floor -> filtered
+    assert "Capital locked ~8 days" in sent[0]        # lockup surfaced in the alert
+
+
+def test_scan_lock_acquire_skip_and_stale_override(tmp_path):
+    """The single-instance lock: acquire when free; a fresh lock held by a live pid blocks (skip); an
+    aged-out lock is overridden so a crashed scan can't block forever."""
+    import json as _json
+    import src.run as run
+    log = get_logger("t")
+    p = str(tmp_path / "scan.lock")
+
+    assert run._acquire_scan_lock(p, 1800, log) is True       # free -> acquire (writes our pid + now)
+    assert os.path.exists(p)
+    assert run._acquire_scan_lock(p, 1800, log) is False      # our pid is alive + fresh -> SKIP
+
+    old = (NOW.replace(year=2020)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    with open(p, "w", encoding="utf-8") as fh:
+        _json.dump({"pid": 2147483646, "started_utc": old}, fh)   # very old -> stale regardless of pid
+    assert run._acquire_scan_lock(p, 1800, log) is True       # aged out -> OVERRIDE
+    run._release_scan_lock(p, log)
+    assert not os.path.exists(p)
+
+
 def test_heartbeat_throttled_to_once_per_interval(monkeypatch, tmp_path):
     """Zero real arbs -> at most one heartbeat ping per heartbeat_min_interval_min, tracked in
     notify_state.json (last_heartbeat_utc)."""

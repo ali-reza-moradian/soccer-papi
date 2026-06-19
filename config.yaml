@@ -22,7 +22,15 @@ shadow_digest_hour: 9               # local hour (0-23) to send the once-daily "
 #   * its fixture kicks off within alert_max_days_out days (skip far-off games — lines move first), and
 #   * its guaranteed profit (after the $30K bankroll cap + unknown-limit realism) >= alert_min_profit.
 alert_max_days_out: 3               # only alert fixtures kicking off within this many days
-alert_min_profit: 25               # only alert arbs with guaranteed profit >= this many dollars
+alert_min_profit: 25               # PER-GAME alert floor: guaranteed profit >= this many dollars
+# GROUP-STAGE arbs use their OWN, lower floor (they're small — ~$20 — but real, and window-exempt
+# since they resolve at group end). A group arb alerts if profit >= group_alert_min_profit OR its
+# ROI >= group_alert_min_roi_pct. Per-game arbs keep using alert_min_profit above.
+group_alert_min_profit: 15
+group_alert_min_roi_pct: 1.0
+# A scan lock (data/scan.lock) older than this many seconds is treated as stale and overridden, so a
+# crashed scan can't block all future scans. A healthy scan finishes in ~1-3 min.
+scan_lock_max_age_s: 1800
 
 oddspapi:
   # FREE PROFILE. When false, the scan spends ZERO OddsPapi odds requests: per-scan odds come

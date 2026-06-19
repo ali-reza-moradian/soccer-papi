@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import time
 from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -1352,8 +1353,11 @@ def _emit(opportunities, stats, cfg: Config, now, client, log):
     # liquidity) are NEVER alerted. Shadow arbs are surfaced via the heartbeat / scoreboard.
     sendable = [o for o in opportunities if o.actionable and not o.suspicious]
     # ALERT FILTERS (gate ALERTS only — CSV/xlsx above already logged ALL opportunities):
-    #   (1) fixture kicks off within alert_max_days_out days, (2) guaranteed profit >= alert_min_profit.
+    #   per-game: kicks off within alert_max_days_out days AND profit >= alert_min_profit;
+    #   group-stage: window-EXEMPT, and its OWN floor (profit >= group_alert_min_profit OR
+    #                ROI >= group_alert_min_roi_pct) — small but real, capital locked ~10d.
     max_days, min_profit = cfg.alert_max_days_out, cfg.alert_min_profit
+    g_min_profit, g_min_roi = cfg.group_alert_min_profit, cfg.group_alert_min_roi_pct
 
     def _within_window(o) -> bool:
         if max_days <= 0 or o.is_group_scope:
@@ -1361,9 +1365,15 @@ def _emit(opportunities, stats, cfg: Config, now, client, log):
         ko = fmt.parse_iso(o.kickoff_utc)
         return ko is not None and 0 <= (ko - now).total_seconds() <= max_days * 86400.0
 
-    alertable = [o for o in sendable if o.res.max_profit >= min_profit and _within_window(o)]
+    def _passes_profit(o) -> bool:
+        if o.is_group_scope:
+            return o.res.max_profit >= g_min_profit or o.res.roi_pct >= g_min_roi
+        return o.res.max_profit >= min_profit
+
+    alertable = [o for o in sendable if _passes_profit(o) and _within_window(o)]
     filtered = len(sendable) - len(alertable)
-    flt = (f"; {filtered} filtered (>{max_days:g}d out / <${min_profit:g})" if filtered else "")
+    flt = (f"; {filtered} filtered (per-game >{max_days:g}d / <${min_profit:g}; "
+           f"group <${g_min_profit:g} & <{g_min_roi:g}%)" if filtered else "")
     top = sorted(alertable, key=rank, reverse=True)[:3]
 
     header = (f"{window_line}\n"
@@ -1444,9 +1454,78 @@ def _emit(opportunities, stats, cfg: Config, now, client, log):
     log.info("=" * 78)
 
 
+# --------------------------------------------------------------------------- #
+# Single-instance scan lock (never overlap two scans)                           #
+# --------------------------------------------------------------------------- #
+SCAN_LOCK_FILE = "scan.lock"
+
+
+def _scan_lock_path(cfg: Config) -> str:
+    """data/scan.lock — alongside the committed data dir (parent of the cache dir)."""
+    data_dir = os.path.dirname(cfg.cache_dir.rstrip("/\\")) or "."
+    return os.path.join(data_dir, SCAN_LOCK_FILE)
+
+
+def _pid_alive(pid: int) -> bool:
+    """Best-effort liveness. Ambiguous errors (Windows / no permission) -> assume alive; the lock's
+    age is the real backstop, so we never block forever on a crashed scan."""
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except OSError:
+        return True
+
+
+def _acquire_scan_lock(path: str, max_age_s: float, log) -> bool:
+    """True if we may run (lock acquired). False if a prior scan is still running (caller exits).
+    A lock whose process is gone OR that is older than max_age_s is treated as stale and overridden."""
+    try:
+        if os.path.exists(path):
+            try:
+                with open(path, "r", encoding="utf-8") as fh:
+                    data = json.loads(fh.read() or "{}")
+            except (OSError, ValueError):
+                data = {}
+            pid = int(data.get("pid", 0) or 0)
+            started = _parse_iso(data.get("started_utc"))
+            age = (datetime.now(timezone.utc) - started).total_seconds() if started else None
+            alive = _pid_alive(pid)
+            fresh = age is None or age < max_age_s
+            if alive and fresh:
+                log.warning("skipped: prior scan still running (pid %s, age %ss) — not overlapping.",
+                            pid, int(age) if age is not None else "?")
+                return False
+            log.warning("Overriding stale scan lock (pid %s alive=%s age=%ss >= %ss).",
+                        pid, alive, int(age) if age is not None else "?", int(max_age_s))
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump({"pid": os.getpid(),
+                       "started_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}, fh)
+        return True
+    except OSError as exc:  # never let lock bookkeeping break a scan
+        log.warning("Could not manage scan lock (%s) — proceeding without it.", exc)
+        return True
+
+
+def _release_scan_lock(path: str, log) -> None:
+    try:
+        if os.path.exists(path):
+            os.remove(path)
+    except OSError as exc:  # pragma: no cover - disk error
+        log.warning("Could not remove scan lock %s (%s).", path, exc)
+
+
 def main() -> int:
     log = setup_logging()
     cfg = load_config()
+    lock_path = _scan_lock_path(cfg)
+    if not _acquire_scan_lock(lock_path, cfg.scan_lock_max_age_s, log):
+        return 0                                  # a prior scan is still running — exit, never overlap
+    start = time.monotonic()
     try:
         return run_cycle(cfg, log)
     except QuotaExceeded as exc:
@@ -1456,6 +1535,9 @@ def main() -> int:
     except Exception:  # noqa: BLE001 - report bugs loudly but don't mask the traceback
         log.exception("Unexpected error during scan cycle.")
         return 1
+    finally:
+        log.info("Scan wall-time: %.1fs", time.monotonic() - start)
+        _release_scan_lock(lock_path, log)
 
 
 if __name__ == "__main__":
