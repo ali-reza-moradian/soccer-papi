@@ -41,8 +41,10 @@ away come from the canonical fixture identity (never a provider tag), and the so
 """
 from __future__ import annotations
 
+import concurrent.futures
 import json
 import re
+import threading
 import time
 from dataclasses import dataclass, field
 from typing import Any, Optional
@@ -133,6 +135,55 @@ class PolymarketClient:
         """GET /book?token_id= — full resting order book (bids/asks each {price,size}). Best ask =
         lowest ask price = the buy price; its size is the real per-leg limit."""
         return self._get(self.clob_base + "/book", {"token_id": token_id})
+
+    def price_tokens(self, tokens: list[str], max_workers: int = 8) -> dict[str, Optional[tuple[float, float]]]:
+        """CONCURRENTLY price many CLOB tokens -> {token: (decimal_odds, limit) | None}. This is the
+        scan's hot path: pricing legs sequentially through the 0.5s throttle dominated wall-time, so
+        here we fan out up to `max_workers` GETs at once (bounded concurrency = the rate-limit cushion;
+        the per-request throttle is bypassed). Each worker has its own Session (Sessions are not
+        guaranteed thread-safe) and retries 429/5xx with bounded backoff. Drop-safe per token."""
+        uniq = [t for t in dict.fromkeys(tokens) if t]
+        out: dict[str, Optional[tuple[float, float]]] = {}
+        if not uniq:
+            return out
+        local = threading.local()
+
+        def _session() -> requests.Session:
+            s = getattr(local, "s", None)
+            if s is None:
+                s = requests.Session()
+                s.headers.setdefault("User-Agent", USER_AGENT)
+                local.s = s
+            return s
+
+        def _one(token: str) -> Optional[tuple[float, float]]:
+            for attempt in range(4):
+                try:
+                    r = _session().get(self.clob_base + "/book", params={"token_id": token},
+                                       timeout=self.timeout)
+                except (requests.ConnectionError, requests.Timeout):
+                    return None
+                if r.status_code == 429 or r.status_code >= 500:
+                    time.sleep(min(2 ** attempt, 8))
+                    continue
+                if r.status_code >= 400:
+                    return None
+                try:
+                    book = r.json()
+                except ValueError:
+                    return None
+                ask = best_ask(book)
+                if ask is None:
+                    return None
+                price, size = ask
+                dec = decimal_from_ask(price)
+                return None if dec is None else (dec, leg_limit(size, price))
+            return None
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, max_workers)) as ex:
+            for token, res in zip(uniq, ex.map(_one, uniq)):
+                out[token] = res
+        return out
 
     # -- transport (throttle + retry/backoff, mirrors KalshiClient) ----------
     def _throttle(self) -> None:
@@ -431,47 +482,61 @@ def parse_event_legs(event: dict[str, Any]) -> Optional[PolyEvent]:
     )
 
 
-def fetch_more_markets(client: PolymarketClient, parsed: PolyEvent, market_index, log) -> None:
-    """Fetch parsed's '<slug>-more-markets' sibling and attach priced FULL-GAME total-goals O/U +
-    BTTS legs (parsed.totals / parsed.btts). Only lines the canonical index knows are priced (bounds
-    CLOB calls). Drop-safe: any failure leaves the 1x2-only event untouched."""
+def _has_counterparty(raw_by_fixture: Optional[dict], fid: Optional[str], market_id: Any) -> bool:
+    """True if some OTHER book already priced this canonical marketId on this fixture — so a Poly leg
+    here has something to pair against. No counterparty -> don't waste a CLOB call (it can't arb)."""
+    if not raw_by_fixture or fid is None:
+        return False
+    fx = raw_by_fixture.get(fid) or {}
+    mid = str(market_id)
+    return any(mid in (book.get("markets") or {}) for book in (fx.get("bookmakerOdds") or {}).values())
+
+
+def _match_fid(parsed: PolyEvent, by_fixture: dict[str, dict[str, Any]]) -> Optional[str]:
+    """The canonical fixtureId this event maps to (team identity + date), or None — computed BEFORE
+    any pricing so we never CLOB-price an event that won't merge."""
+    teams = [l.team for l in parsed.legs if l.role == "team" and l.team]
+    if len(teams) != 2 or not parsed.commence_iso:
+        return None
+    fm, _ = match_event_to_fixture(teams[0], teams[1], parsed.commence_iso, by_fixture,
+                                   _DAY_MATCH_TOLERANCE_MIN)
+    return fm.fixture_id if fm is not None else None
+
+
+def _spread_canonical(line: float, market_index) -> Optional[dict]:
+    """The canonical spreads entry for a Poly handicap line (either sign), or None."""
+    if abs(line * 2 - round(line * 2)) > 1e-9 or round(line * 2) % 2 == 0:
+        return None                                    # quarter / whole-number -> push risk, skip
+    return market_index.spreads.get(round(line, 2)) or market_index.spreads.get(round(-line, 2))
+
+
+def _plan_extra_markets(client, parsed, market_index, fid, raw_by_fixture, log) -> dict[str, Any]:
+    """Fetch the '<slug>-more-markets' sibling and return UNPRICED token plans for the totals / BTTS /
+    spreads lines that (a) map to a canonical marketId AND (b) have a live counterparty on this
+    fixture. No CLOB calls here — pricing happens later in one concurrent batch."""
+    plan: dict[str, Any] = {"totals": {}, "btts": None, "spreads": []}
     if not parsed.slug:
-        return
+        return plan
     try:
         sib = client.events_by_slug(f"{parsed.slug}-more-markets")
     except PolymarketError as exc:
         log.warning("[POLYMARKET] %s-more-markets fetch failed (%s) — 1x2 only.", parsed.slug, exc)
-        return
+        return plan
     sib = (sib[0] if isinstance(sib, list) and sib else sib)
     if not isinstance(sib, dict):
-        return
+        return plan
     tot_tokens, btts_tokens = parse_more_markets_tokens(sib)
-    for line, (over_tok, under_tok) in tot_tokens.items():
-        if market_index.totals.get(line) is None:     # only price lines we can map -> fewer CLOB calls
-            continue
-        po, pu = price_leg(client, over_tok), price_leg(client, under_tok)
-        if po and pu:
-            parsed.totals[line] = (Leg(role="over", decimal=po[0], limit=po[1]),
-                                   Leg(role="under", decimal=pu[0], limit=pu[1]))
-    if btts_tokens and market_index.btts:
-        py, pn = price_leg(client, btts_tokens[0]), price_leg(client, btts_tokens[1])
-        if py and pn:
-            parsed.btts = (Leg(role="yes", decimal=py[0], limit=py[1]),
-                           Leg(role="no", decimal=pn[0], limit=pn[1]))
-    # Spreads: price only no-push half-lines whose canonical marketId exists (bounds CLOB calls).
+    for line, toks in tot_tokens.items():
+        spec = market_index.totals.get(line)
+        if spec and _has_counterparty(raw_by_fixture, fid, spec["marketId"]):
+            plan["totals"][line] = toks
+    if btts_tokens and market_index.btts and _has_counterparty(raw_by_fixture, fid, market_index.btts["marketId"]):
+        plan["btts"] = btts_tokens
     for sp in parse_spread_markets(sib):
-        line = sp["line"]
-        if abs(line * 2 - round(line * 2)) > 1e-9 or round(line * 2) % 2 == 0:
-            continue                                  # quarter or whole-number line -> push risk, skip
-        if market_index.spreads.get(round(line, 2)) is None \
-                and market_index.spreads.get(round(-line, 2)) is None:
-            continue
-        pn_, po_ = price_leg(client, sp["named_token"]), price_leg(client, sp["opp_token"])
-        if pn_ and po_:
-            parsed.spreads.append({
-                "named": sp["named"], "line": line, "opp": sp["opp"],
-                "named_leg": Leg(role="spread", decimal=pn_[0], limit=pn_[1]),
-                "opp_leg": Leg(role="spread", decimal=po_[0], limit=po_[1])})
+        spec = _spread_canonical(sp["line"], market_index)
+        if spec and _has_counterparty(raw_by_fixture, fid, spec["marketId"]):
+            plan["spreads"].append(sp)
+    return plan
 
 
 def price_leg(client: PolymarketClient, token: str) -> Optional[tuple[float, float]]:
@@ -529,40 +594,82 @@ def _discover_events(client: PolymarketClient, by_fixture: dict[str, dict[str, A
 
 
 def fetch_wc_events(client: PolymarketClient, by_fixture: dict[str, dict[str, Any]], log,
-                    market_index=None) -> list[PolyEvent]:
-    """Discover WC match events via Gamma search, keep the well-formed ones (1 draw + 2 team-win
-    markets), and price each Yes leg from the CLOB best ask. When `market_index` is given, ALSO pull
-    each game's '<slug>-more-markets' sibling and price its full-game total-goals O/U + BTTS legs
-    (SAFE tier). Returns the priced PolyEvents the merge maps to fixtures; an event with any
-    unpriceable 1x2 leg is dropped (drop-safe)."""
+                    market_index=None, raw_by_fixture: Optional[dict] = None,
+                    max_workers: int = 8) -> list[PolyEvent]:
+    """Discover WC match events and return priced PolyEvents the merge maps to fixtures. FAST PATH:
+      1. parse + MATCH each event to a fixture FIRST (no network) — skip events that won't merge;
+      2. plan which extra (totals/BTTS/spreads) lines to price — only canonical lines that have a
+         live counterparty on this fixture (no counterparty -> can't arb -> don't price it);
+      3. price EVERY needed CLOB token in ONE bounded-concurrency batch (the big speedup vs the old
+         per-leg sequential throttle);
+      4. assemble. An event with any unpriceable 1x2 leg is dropped (drop-safe)."""
     candidates = _discover_events(client, by_fixture, log)
-    out: list[PolyEvent] = []
-    tot_lines = btts_n = spread_lines = 0
+    plans: list[dict[str, Any]] = []
+    skipped_unmatched = 0
     for ev in candidates.values():
-        if len(out) >= MAX_EVENTS:
-            log.warning("[POLYMARKET] hit MAX_EVENTS=%s — not pricing further candidates.", MAX_EVENTS)
+        if len(plans) >= MAX_EVENTS:
+            log.warning("[POLYMARKET] hit MAX_EVENTS=%s — not planning further candidates.", MAX_EVENTS)
             break
         parsed = parse_event_legs(ev)
         if parsed is None:
             continue
+        fid = _match_fid(parsed, by_fixture)
+        if fid is None:                                # won't merge -> never price it
+            skipped_unmatched += 1
+            continue
+        extra = (_plan_extra_markets(client, parsed, market_index, fid, raw_by_fixture, log)
+                 if market_index is not None else {"totals": {}, "btts": None, "spreads": []})
+        plans.append({"parsed": parsed, "extra": extra})
+
+    # Collect every token to price, then fetch them all concurrently in one batch.
+    tokens: list[str] = []
+    for pl in plans:
+        tokens += [leg.yes_token for leg in pl["parsed"].legs if leg.yes_token]
+        for over_tok, under_tok in pl["extra"]["totals"].values():
+            tokens += [over_tok, under_tok]
+        if pl["extra"]["btts"]:
+            tokens += list(pl["extra"]["btts"])
+        for sp in pl["extra"]["spreads"]:
+            tokens += [sp["named_token"], sp["opp_token"]]
+    priced = client.price_tokens(tokens, max_workers=max_workers)
+
+    out: list[PolyEvent] = []
+    tot_lines = btts_n = spread_lines = 0
+    for pl in plans:
+        parsed, extra = pl["parsed"], pl["extra"]
         ok = True
         for leg in parsed.legs:
-            pl = price_leg(client, leg.yes_token or "")
-            if pl is None:
+            v = priced.get(leg.yes_token)
+            if v is None:
                 ok = False
                 break
-            leg.decimal, leg.limit = pl
+            leg.decimal, leg.limit = v
         if not ok:
             continue
-        if market_index is not None:
-            fetch_more_markets(client, parsed, market_index, log)
-            tot_lines += len(parsed.totals)
-            btts_n += 1 if parsed.btts else 0
-            spread_lines += len(parsed.spreads)
+        for line, (over_tok, under_tok) in extra["totals"].items():
+            vo, vu = priced.get(over_tok), priced.get(under_tok)
+            if vo and vu:
+                parsed.totals[line] = (Leg(role="over", decimal=vo[0], limit=vo[1]),
+                                       Leg(role="under", decimal=vu[0], limit=vu[1]))
+                tot_lines += 1
+        if extra["btts"]:
+            vy, vn = priced.get(extra["btts"][0]), priced.get(extra["btts"][1])
+            if vy and vn:
+                parsed.btts = (Leg(role="yes", decimal=vy[0], limit=vy[1]),
+                               Leg(role="no", decimal=vn[0], limit=vn[1]))
+                btts_n += 1
+        for sp in extra["spreads"]:
+            vn_, vo_ = priced.get(sp["named_token"]), priced.get(sp["opp_token"])
+            if vn_ and vo_:
+                parsed.spreads.append({
+                    "named": sp["named"], "line": sp["line"], "opp": sp["opp"],
+                    "named_leg": Leg(role="spread", decimal=vn_[0], limit=vn_[1]),
+                    "opp_leg": Leg(role="spread", decimal=vo_[0], limit=vo_[1])})
+                spread_lines += 1
         out.append(parsed)
-    log.info("[POLYMARKET] discovered %s candidate event(s); %s priced with full 1x2 legs"
-             " (+ %s total line(s), %s BTTS, %s spread line(s) from -more-markets siblings).",
-             len(candidates), len(out), tot_lines, btts_n, spread_lines)
+    log.info("[POLYMARKET] discovered %s candidate(s); %s matched & priced (%s unmatched skipped) "
+             "| %s CLOB token(s) priced concurrently (+%s total, %s BTTS, %s spread line(s)).",
+             len(candidates), len(out), skipped_unmatched, len(priced), tot_lines, btts_n, spread_lines)
     return out
 
 

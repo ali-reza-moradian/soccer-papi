@@ -35,3 +35,5 @@ scripts/secrets.local.ps1
 data/arbs_log.xlsx
 # Transient single-instance scan lock (pid + start time); never commit.
 data/scan.lock
+# Derived group-tier slug/token cache (rebuilt on its own TTL); only written when group_markets on.
+data/cache/group_slugmap.json

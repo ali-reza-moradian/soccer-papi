@@ -163,10 +163,48 @@ class _FakeClient:
             raise polymarket.PolymarketError(f"404 no book for {token_id}")
         return b
 
+    def price_tokens(self, tokens, max_workers=8):
+        """Mirror PolymarketClient.price_tokens over the canned books (sequential; no network)."""
+        out = {}
+        for t in dict.fromkeys(tokens):
+            if not t:
+                continue
+            out[t] = polymarket.price_leg(self, t)
+        return out
+
 
 def _book(ask_price, ask_size):
     return {"asks": [{"price": str(ask_price), "size": str(ask_size)}],
             "bids": [{"price": "0.01", "size": "10"}]}
+
+
+def test_price_tokens_concurrent_dedups_and_prices(monkeypatch):
+    """The concurrent CLOB pricer returns (decimal, limit) per token, de-duplicates, and drops empties
+    and tokens with no live ask — without the per-request throttle."""
+    import src.polymarket as pm
+    canned = {"a": _book(0.50, 100), "b": _book(0.25, 200), "empty": {"asks": []}}
+
+    class _Resp:
+        status_code = 200
+
+        def __init__(self, j):
+            self._j = j
+
+        def json(self):
+            return self._j
+
+    class _Sess:
+        def __init__(self):
+            self.headers = {}
+
+        def get(self, url, params=None, timeout=None):
+            return _Resp(canned.get((params or {}).get("token_id"), {"asks": []}))
+
+    monkeypatch.setattr(pm.requests, "Session", lambda: _Sess())
+    res = pm.PolymarketClient().price_tokens(["a", "b", "a", "", "empty", "missing"], max_workers=4)
+    assert set(res) == {"a", "b", "empty", "missing"}        # de-duped 'a'; '' dropped
+    assert res["a"] == (2.0, 50.0) and res["b"] == (4.0, 50.0)
+    assert res["empty"] is None and res["missing"] is None
 
 
 # civ 0.275->3.636 ($275), ecu 0.395->2.532 ($395), draw 0.335->2.985 ($335).
@@ -243,12 +281,14 @@ def test_fetch_then_merge_maps_soccer_and_drops_cross_sport_noise():
         books_by_token=books)
 
     events = polymarket.fetch_wc_events(client, BY_FIXTURE, LOG)
-    assert len(events) == 2                                   # both well-formed & priced
+    # FAST PATH: the cricket noise has no in-window fixture match, so it is dropped at fetch (never
+    # priced) — only the soccer event survives.
+    assert len(events) == 1
+    assert "Sierra Leone" not in events[0].title            # cricket noise excluded before pricing
 
     raw: dict = {}
     cov, pbooks = polymarket.merge_into(raw, BY_FIXTURE, INDEX, events, now=NOW, log=LOG)
     assert cov.recovered == 1 and cov.matched == 1           # only the soccer event maps
-    assert "Sierra Leone vs Ivory Coast" in cov.unmatched_name  # cricket dropped by team-set + date
     assert pbooks == {"idCIV": {"polymarket"}}
 
     outs = raw["idCIV"]["bookmakerOdds"]["polymarket"]["markets"]["101"]["outcomes"]

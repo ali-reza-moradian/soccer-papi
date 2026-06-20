@@ -180,6 +180,7 @@ polymarket:
   enabled: true                      # fetch gate ON; polymarket.actionable below keeps it SHADOW-only
   gamma_base: https://gamma-api.polymarket.com
   clob_base: https://clob.polymarket.com
+  clob_max_workers: 8                # concurrent CLOB best-ask fetches (the per-game speed fix)
   # SHADOW gate (separate from the `polymarket` slug already in bookmakers.actionable): while false,
   # any arb containing a polymarket-DIRECT leg is forced non-actionable, so polymarket-direct stays
   # shadow-only for verification across a few live runs — exactly like the kalshi / the-odds-api
@@ -213,6 +214,8 @@ group_markets:
   actionable: false                  # SAFE group arbs only; flip true once you accept the ~10d lockup
   group_stage_end_utc: "2026-06-27T23:59:59Z"   # when group markets resolve (capital-lockup anchor)
   poly_tag_id: "102232"              # Polymarket FIFA World Cup tag
+  max_clob_calls: 60                 # per-scan CLOB budget for the group tier (stops early + logs)
+  slugmap_cache_hours: 6             # cache the (static) Kalshi-group<->Poly-event slug/token map
 
 markets:
   exclude: [double_chance]           # market families to never scan (overlap 1x2 → bad for arbing)

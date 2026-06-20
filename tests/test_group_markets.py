@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 
 from src import group_markets as gm
 from src.config import Config, Secrets
+from src.logsetup import get_logger
 
 NOW = datetime(2026, 6, 19, 12, 0, 0, tzinfo=timezone.utc)
 
@@ -94,3 +95,54 @@ def test_build_group_arb_2way_yes_no():
 def test_build_group_arb_none_when_no_arb():
     assert gm.build_group_arb("a", _type("group_winner"), "X", (1.5, 1000), (1.5, 1000),
                               (1.5, 1000), (1.5, 1000), cfg=_cfg(), commission={}) is None
+
+
+# --------------------------------------------------------------------------- #
+# Slug/token map cache (the group-tier speed fix)                              #
+# --------------------------------------------------------------------------- #
+def _cfg_cache(tmp):
+    return Config(raw={"group_markets": {"slugmap_cache_hours": 6, "poly_tag_id": "102232"}},
+                  secrets=Secrets(None, None, None), cache_dir=str(tmp))
+
+
+class _RaisingPC:
+    """Any network call is a test failure — used to prove a cache HIT touches no network."""
+    def _get(self, *a, **k):
+        raise AssertionError("network called on cache hit")
+
+    def events_by_slug(self, *a, **k):
+        raise AssertionError("events_by_slug called on cache hit")
+
+
+def test_slug_map_cache_hit_skips_network(tmp_path):
+    import time
+    from src import catalog
+    cached = {"saved_at": time.time(),
+              "by_type": {"group_winner": {"per_group": {"a": {"mexico": {"raw": "Mexico",
+                          "yes_token": "y", "no_token": "n"}}}, "global": {}}}}
+    catalog.save_json(str(tmp_path), gm.SLUGMAP_CACHE_FILE, cached)
+    tm = gm._poly_token_map(_cfg_cache(tmp_path), _RaisingPC(), time.time(), get_logger("t"))
+    assert tm["group_winner"]["per_group"]["a"]["mexico"]["yes_token"] == "y"
+
+
+class _BuildPC:
+    """Cache MISS: serves one page of slugs then events_by_slug payloads."""
+    def __init__(self, slugs, events):
+        self.slugs, self.events = slugs, events
+
+    def _get(self, url, params):
+        return [{"slug": s} for s in self.slugs] if params.get("offset", 0) == 0 else []
+
+    def events_by_slug(self, slug):
+        return self.events.get(slug)
+
+
+def test_slug_map_cache_miss_builds_and_writes(tmp_path):
+    import time
+    from src import catalog
+    ev = {"markets": [{"groupItemTitle": "Mexico", "outcomes": '["Yes","No"]',
+                       "clobTokenIds": '["mx_y","mx_n"]'}]}
+    pc = _BuildPC(["world-cup-group-a-winner"], {"world-cup-group-a-winner": ev})
+    tm = gm._poly_token_map(_cfg_cache(tmp_path), pc, time.time(), get_logger("t"))
+    assert tm["group_winner"]["per_group"]["a"]["mexico"]["yes_token"] == "mx_y"
+    assert catalog.load_json(str(tmp_path), gm.SLUGMAP_CACHE_FILE)["by_type"]   # cache written

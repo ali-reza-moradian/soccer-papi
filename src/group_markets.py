@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import collections
 import hashlib
+import itertools
 import re
 from dataclasses import dataclass
 from datetime import datetime
@@ -216,32 +217,26 @@ def _make_opp(spec, res, group_letter, mtype, team_raw, est, fallback_lockup, fa
     return opp
 
 
-def detect(cfg, now: datetime, log) -> list:
-    """Discover Kalshi + Polymarket group-outcome markets, classify by settlement, and return group
-    arb Opportunities. SAFE types may be actionable (config); DANGEROUS types are detected + logged
-    but FORCED non-actionable. Default OFF; drop-safe."""
-    out: list = []
-    actionable_safe = bool(cfg.group_markets_opt("actionable", False))
-    group_end = str(cfg.group_markets_opt("group_stage_end_utc", DEFAULT_GROUP_STAGE_END_UTC))
-    lockup = capital_lockup_days(now, group_end)
+SLUGMAP_CACHE_FILE = "group_slugmap.json"
 
-    kc = kalshi_mod.KalshiClient(base_url=str(cfg.kalshi_opt("base_url", kalshi_mod.DEFAULT_BASE_URL)))
-    pc = poly_mod.PolymarketClient(gamma_base=str(cfg.polymarket_opt("gamma_base", poly_mod.GAMMA_BASE)),
-                                   clob_base=str(cfg.polymarket_opt("clob_base", poly_mod.CLOB_BASE)))
+
+def _poly_token_map(cfg, pc, now_epoch, log) -> dict[str, dict]:
+    """{type_name: {"per_group": {letter: {team_norm: {raw, yes_token, no_token}}}, "global": {...}}}.
+
+    Polymarket group event slugs + their clobTokenIds are STATIC for the tournament, so this map
+    (the expensive part: enumerating ~500 events + fetching each group event) is CACHED to
+    data/cache/group_slugmap.json and refreshed only every group_markets.slugmap_cache_hours. Prices
+    are NOT cached — they are re-fetched (concurrently) every scan."""
+    ttl = float(cfg.group_markets_opt("slugmap_cache_hours", 6))
+    cached = catalog.load_json(cfg.cache_dir, SLUGMAP_CACHE_FILE)
+    age = catalog.file_age_hours(cfg.cache_dir, SLUGMAP_CACHE_FILE, now_epoch)
+    if cached and age is not None and age <= ttl and cached.get("by_type"):
+        log.info("[GROUP] using cached Poly slug map (age %.1fh <= %.0fh).", age, ttl)
+        return cached["by_type"]
+
     all_slugs = _enumerate_poly_slugs(pc, str(cfg.group_markets_opt("poly_tag_id", "102232")), log)
-
-    # Per-group resolution schedule: KXWCGAME match dates (ticker) + results (settled markets).
-    game_series = str(cfg.kalshi_opt("series_ticker", "KXWCGAME") or "KXWCGAME")
-    game_markets = (kc.iter_markets(series_ticker=game_series, status="open")
-                    + kc.iter_markets(series_ticker=game_series, status="settled"))
-    games = group_resolution.parse_game_schedule(game_markets)
-    within_days = cfg.alert_max_days_out or 3
-
-    n_safe = n_danger = 0
+    by_type: dict[str, dict] = {}
     for mt in MARKET_TYPES:
-        kgroups = parse_kalshi_group(kc.iter_markets(series_ticker=mt.kalshi_series, status="open"))
-        if not kgroups:
-            continue
         rx = re.compile(mt.poly_slug_re)
         per_group: dict[str, dict] = {}
         global_tokens: dict[str, dict] = {}
@@ -258,32 +253,94 @@ def detect(cfg, now: datetime, log) -> list:
             if m.groups():
                 per_group[m.group(1).lower()] = toks
             else:
-                global_tokens.update(toks)               # group-agnostic event (one 48-team list)
+                global_tokens.update(toks)
+        by_type[mt.name] = {"per_group": per_group, "global": global_tokens}
+    catalog.save_json(cfg.cache_dir, SLUGMAP_CACHE_FILE, {"saved_at": now_epoch, "by_type": by_type})
+    log.info("[GROUP] rebuilt Poly slug map from %s event(s) (cached %sh).", len(all_slugs),
+             int(ttl))
+    return by_type
 
+
+def detect(cfg, now: datetime, log) -> list:
+    """Discover Kalshi + Polymarket group-outcome markets, classify by settlement, and return group
+    arb Opportunities. SAFE types may be actionable (config); DANGEROUS types are detected + logged
+    but FORCED non-actionable. Default OFF; drop-safe.
+
+    Speed: the Poly slug->token map is cached (static for the tournament); only teams matched on BOTH
+    venues are CLOB-priced, concurrently, capped at group_markets.max_clob_calls per scan."""
+    out: list = []
+    actionable_safe = bool(cfg.group_markets_opt("actionable", False))
+    group_end = str(cfg.group_markets_opt("group_stage_end_utc", DEFAULT_GROUP_STAGE_END_UTC))
+    lockup = capital_lockup_days(now, group_end)
+    within_days = cfg.alert_max_days_out or 3
+    max_clob = int(cfg.group_markets_opt("max_clob_calls", 60))
+    max_workers = int(cfg.polymarket_opt("clob_max_workers", 8))
+
+    kc = kalshi_mod.KalshiClient(base_url=str(cfg.kalshi_opt("base_url", kalshi_mod.DEFAULT_BASE_URL)))
+    pc = poly_mod.PolymarketClient(gamma_base=str(cfg.polymarket_opt("gamma_base", poly_mod.GAMMA_BASE)),
+                                   clob_base=str(cfg.polymarket_opt("clob_base", poly_mod.CLOB_BASE)))
+    token_map = _poly_token_map(cfg, pc, now.timestamp(), log)
+
+    # Resolution schedule: KXWCGAME match dates (ticker) + results (settled). Kalshi /markets, no CLOB.
+    game_series = str(cfg.kalshi_opt("series_ticker", "KXWCGAME") or "KXWCGAME")
+    games = group_resolution.parse_game_schedule(
+        kc.iter_markets(series_ticker=game_series, status="open")
+        + kc.iter_markets(series_ticker=game_series, status="settled"))
+
+    # PLAN: only (type, group, team) matched on BOTH venues. Collect per type, then INTERLEAVE across
+    # types (round-robin) before applying the CLOB budget, so the cap covers a representative mix
+    # (winner + bottom + qualify) rather than exhausting on whichever type is iterated first.
+    buckets: list[list[tuple]] = []
+    for mt in MARKET_TYPES:
+        kgroups = parse_kalshi_group(kc.iter_markets(series_ticker=mt.kalshi_series, status="open"))
+        tm = token_map.get(mt.name, {})
+        items: list[tuple] = []
         for letter, kteams in kgroups.items():
-            ptoks = per_group.get(letter) or global_tokens
+            ptoks = tm.get("per_group", {}).get(letter) or tm.get("global", {})
             for tnorm, kd in kteams.items():
-                if tnorm not in ptoks:                    # exact team match within the SAME group
-                    continue
-                py = poly_mod.price_leg(pc, ptoks[tnorm]["yes_token"])
-                pno = poly_mod.price_leg(pc, ptoks[tnorm]["no_token"])
-                if py is None or pno is None:
-                    continue
-                built = build_group_arb(letter, mt, kd["raw"], kd["yes"], kd["no"], py, pno, cfg, cfg.commission)
-                if built is None:
-                    continue
-                spec, res = built
-                actionable = actionable_for(mt, actionable_safe)   # DANGEROUS -> always False
-                est = group_resolution.resolution_estimate(
-                    frozenset(kteams), _KIND.get(mt.name, mt.name), tnorm, games, now, within_days)
-                out.append(_make_opp(spec, res, letter, mt, kd["raw"], est, lockup, group_end,
-                                     actionable, cfg))
-                if mt.settlement_class == SAFE:
-                    n_safe += 1
-                else:
-                    n_danger += 1
-                    log.info("[GROUP] DANGEROUS %s %s/%s arb detected -> LOGGED, NEVER actionable "
-                             "(settlement unverified).", mt.label, letter.upper(), kd["raw"])
-    log.info("[GROUP] SAFE arbs %s (actionable=%s), DANGEROUS logged-only %s, capital lockup ~%sd.",
-             n_safe, actionable_safe, n_danger, lockup)
+                pt = ptoks.get(tnorm)
+                if pt:                                    # matched on both venues
+                    items.append((mt, letter, tnorm, kd, frozenset(kteams), pt))
+        buckets.append(items)
+
+    plan: list[tuple] = []
+    capped = False
+    for row in itertools.zip_longest(*buckets):           # round-robin across the market types
+        for item in row:
+            if item is None:
+                continue
+            if len(plan) * 2 + 2 > max_clob:              # 2 CLOB tokens (yes/no) per team
+                capped = True
+                break
+            plan.append(item)
+        if capped:
+            break
+
+    tokens: list[str] = []
+    for _mt, _l, _t, _kd, _ts, pt in plan:
+        tokens += [pt["yes_token"], pt["no_token"]]
+    priced = pc.price_tokens(tokens, max_workers=max_workers)
+
+    n_safe = n_danger = 0
+    for mt, letter, tnorm, kd, team_set, pt in plan:
+        py, pno = priced.get(pt["yes_token"]), priced.get(pt["no_token"])
+        if py is None or pno is None:
+            continue
+        built = build_group_arb(letter, mt, kd["raw"], kd["yes"], kd["no"], py, pno, cfg, cfg.commission)
+        if built is None:
+            continue
+        spec, res = built
+        actionable = actionable_for(mt, actionable_safe)   # DANGEROUS -> always False
+        est = group_resolution.resolution_estimate(
+            team_set, _KIND.get(mt.name, mt.name), tnorm, games, now, within_days)
+        out.append(_make_opp(spec, res, letter, mt, kd["raw"], est, lockup, group_end, actionable, cfg))
+        if mt.settlement_class == SAFE:
+            n_safe += 1
+        else:
+            n_danger += 1
+            log.info("[GROUP] DANGEROUS %s %s/%s arb detected -> LOGGED, NEVER actionable "
+                     "(settlement unverified).", mt.label, letter.upper(), kd["raw"])
+    log.info("[GROUP] SAFE arbs %s (actionable=%s), DANGEROUS logged-only %s | %s team(s) priced "
+             "(%s CLOB tokens%s), capital lockup ~%sd.", n_safe, actionable_safe, n_danger,
+             len(plan), len(tokens), " — CAPPED at max_clob_calls" if capped else "", lockup)
     return out
