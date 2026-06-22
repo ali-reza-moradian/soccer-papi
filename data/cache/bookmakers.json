@@ -104,7 +104,7 @@
   {
     "bookmakerName": "888Sport",
     "cloneOf": null,
-    "liveOdds": true,
+    "liveOdds": false,
     "slug": "888sport"
   },
   {
@@ -116,19 +116,19 @@
   {
     "bookmakerName": "888Sport DE",
     "cloneOf": null,
-    "liveOdds": true,
+    "liveOdds": false,
     "slug": "888sport.de"
   },
   {
     "bookmakerName": "888Sport DK",
     "cloneOf": null,
-    "liveOdds": true,
+    "liveOdds": false,
     "slug": "888sport.dk"
   },
   {
     "bookmakerName": "888Sport ES",
     "cloneOf": null,
-    "liveOdds": true,
+    "liveOdds": false,
     "slug": "888sport.es"
   },
   {
@@ -140,7 +140,7 @@
   {
     "bookmakerName": "888Sport RO",
     "cloneOf": null,
-    "liveOdds": true,
+    "liveOdds": false,
     "slug": "888sport.ro"
   },
   {
@@ -236,7 +236,7 @@
   {
     "bookmakerName": "bet365",
     "cloneOf": null,
-    "liveOdds": true,
+    "liveOdds": false,
     "slug": "bet365"
   },
   {
@@ -502,6 +502,12 @@
     "cloneOf": "roobet",
     "liveOdds": true,
     "slug": "betplay.io"
+  },
+  {
+    "bookmakerName": "Betr",
+    "cloneOf": null,
+    "liveOdds": null,
+    "slug": "betr"
   },
   {
     "bookmakerName": "BetRivers",
@@ -1316,13 +1322,13 @@
   {
     "bookmakerName": "MrGreen",
     "cloneOf": null,
-    "liveOdds": true,
+    "liveOdds": false,
     "slug": "mrgreen"
   },
   {
     "bookmakerName": "Mr Green DK",
     "cloneOf": null,
-    "liveOdds": true,
+    "liveOdds": false,
     "slug": "mrgreen.dk"
   },
   {
