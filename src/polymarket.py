@@ -434,6 +434,11 @@ class Leg:
     yes_token: Optional[str] = None
     decimal: Optional[float] = None
     limit: Optional[float] = None
+    # Execution metadata (additive): the CLOB token is `yes_token`; these are the order params the
+    # executor needs. Populated best-effort at parse/price time; None where Gamma did not supply them
+    # (the executor re-fetches tick_size/neg_risk at call time as a fallback).
+    neg_risk: Optional[bool] = None
+    tick_size: Optional[float] = None
 
 
 @dataclass
@@ -455,6 +460,7 @@ def parse_event_legs(event: dict[str, Any]) -> Optional[PolyEvent]:
     well-formed WC match: EXACTLY one draw market and two team-win markets, each binary with a Yes
     token. (This shape check also drops cross-sport search noise before any CLOB call.)"""
     markets = [m for m in (event.get("markets") or []) if isinstance(m, dict)]
+    event_neg = event.get("negRisk")
     legs: list[Leg] = []
     draws = teams = 0
     for m in markets:
@@ -465,11 +471,14 @@ def parse_event_legs(event: dict[str, Any]) -> Optional[PolyEvent]:
         tok = yes_token(m)
         if tok is None:
             continue
+        neg = m.get("negRisk")
+        neg = bool(neg) if neg is not None else (bool(event_neg) if event_neg is not None else None)
+        tick = _num(m.get("orderPriceMinTickSize"))
         if kind == "draw":
-            legs.append(Leg(role="draw", yes_token=tok))
+            legs.append(Leg(role="draw", yes_token=tok, neg_risk=neg, tick_size=tick))
             draws += 1
         else:
-            legs.append(Leg(role="team", team=team, yes_token=tok))
+            legs.append(Leg(role="team", team=team, yes_token=tok, neg_risk=neg, tick_size=tick))
             teams += 1
     if draws != 1 or teams != 2:
         return None
@@ -649,22 +658,22 @@ def fetch_wc_events(client: PolymarketClient, by_fixture: dict[str, dict[str, An
         for line, (over_tok, under_tok) in extra["totals"].items():
             vo, vu = priced.get(over_tok), priced.get(under_tok)
             if vo and vu:
-                parsed.totals[line] = (Leg(role="over", decimal=vo[0], limit=vo[1]),
-                                       Leg(role="under", decimal=vu[0], limit=vu[1]))
+                parsed.totals[line] = (Leg(role="over", yes_token=over_tok, decimal=vo[0], limit=vo[1]),
+                                       Leg(role="under", yes_token=under_tok, decimal=vu[0], limit=vu[1]))
                 tot_lines += 1
         if extra["btts"]:
             vy, vn = priced.get(extra["btts"][0]), priced.get(extra["btts"][1])
             if vy and vn:
-                parsed.btts = (Leg(role="yes", decimal=vy[0], limit=vy[1]),
-                               Leg(role="no", decimal=vn[0], limit=vn[1]))
+                parsed.btts = (Leg(role="yes", yes_token=extra["btts"][0], decimal=vy[0], limit=vy[1]),
+                               Leg(role="no", yes_token=extra["btts"][1], decimal=vn[0], limit=vn[1]))
                 btts_n += 1
         for sp in extra["spreads"]:
             vn_, vo_ = priced.get(sp["named_token"]), priced.get(sp["opp_token"])
             if vn_ and vo_:
                 parsed.spreads.append({
                     "named": sp["named"], "line": sp["line"], "opp": sp["opp"],
-                    "named_leg": Leg(role="spread", decimal=vn_[0], limit=vn_[1]),
-                    "opp_leg": Leg(role="spread", decimal=vo_[0], limit=vo_[1])})
+                    "named_leg": Leg(role="spread", yes_token=sp["named_token"], decimal=vn_[0], limit=vn_[1]),
+                    "opp_leg": Leg(role="spread", yes_token=sp["opp_token"], decimal=vo_[0], limit=vo_[1])})
                 spread_lines += 1
         out.append(parsed)
     log.info("[POLYMARKET] discovered %s candidate(s); %s matched & priced (%s unmatched skipped) "
@@ -676,16 +685,32 @@ def fetch_wc_events(client: PolymarketClient, by_fixture: dict[str, dict[str, An
 # --------------------------------------------------------------------------- #
 # Leg construction (canonical bookmakerOdds fragment)                            #
 # --------------------------------------------------------------------------- #
-def _player_line(price: float, limit: float, changed_at: str) -> dict[str, Any]:
+def _venue(leg: "Leg") -> dict[str, Any]:
+    """Execution metadata for a Polymarket leg: the exact CLOB token we priced (BACK = BUY its Yes
+    token), plus neg_risk / tick_size when Gamma supplied them. Persisted so the executor re-pulls
+    the SAME token's book rather than re-discovering a possibly-different token."""
+    return {"venue": "polymarket", "venueId": leg.yes_token, "venueSide": "BUY",
+            "negRisk": leg.neg_risk, "tickSize": leg.tick_size}
+
+
+def _player_line(price: float, limit: float, changed_at: str,
+                 venue: dict[str, Any] | None = None) -> dict[str, Any]:
     """One canonical priced outcome carrying a REAL limit (size×price) so the engine does NOT mark it
-    low_confidence. changedAt = scan time: a best-ask is a live resting order, not a stale line."""
-    return {"price": price, "priceAmerican": None, "limit": limit,
+    low_confidence. changedAt = scan time: a best-ask is a live resting order, not a stale line.
+
+    ``venue`` (additive, optional) records the execution identifiers (token + side + neg_risk/
+    tick_size) for the automated executor; it never affects the arb math or the manual pipeline."""
+    line = {"price": price, "priceAmerican": None, "limit": limit,
             "changedAt": changed_at, "mainLine": True, "active": True}
+    if venue:
+        line.update(venue)
+    return line
 
 
-def _add_leg(entry: dict[str, Any], mid: int, oid: int, price: float, limit: float, changed_at: str) -> None:
+def _add_leg(entry: dict[str, Any], mid: int, oid: int, price: float, limit: float, changed_at: str,
+             venue: dict[str, Any] | None = None) -> None:
     mkt = entry["markets"].setdefault(str(mid), {"marketActive": True, "outcomes": {}})
-    mkt["outcomes"][str(oid)] = {"players": {"0": _player_line(price, limit, changed_at)}}
+    mkt["outcomes"][str(oid)] = {"players": {"0": _player_line(price, limit, changed_at, venue)}}
 
 
 def _is_no_push_half_line(line: float) -> bool:
@@ -717,8 +742,10 @@ def _inject_spreads(entry: dict[str, Any], spreads: list[dict[str, Any]], fm: Fi
         spec = market_index.spreads.get(round(p1_pt, 2))
         if not spec or spec.get("scope") != SCOPE_PER_GAME:
             continue
-        _add_leg(entry, spec["marketId"], spec["home_oid"], p1_leg.decimal, p1_leg.limit, changed_at)
-        _add_leg(entry, spec["marketId"], spec["away_oid"], p2_leg.decimal, p2_leg.limit, changed_at)
+        _add_leg(entry, spec["marketId"], spec["home_oid"], p1_leg.decimal, p1_leg.limit, changed_at,
+                 _venue(p1_leg))
+        _add_leg(entry, spec["marketId"], spec["away_oid"], p2_leg.decimal, p2_leg.limit, changed_at,
+                 _venue(p2_leg))
         n += 1
     return n
 
@@ -853,9 +880,12 @@ def merge_into(
             continue
 
         entry = {"bookmakerIsActive": True, "suspended": False, "markets": {}}
-        _add_leg(entry, h2h["marketId"], h2h["home_oid"], home_leg.decimal, home_leg.limit, changed_at)
-        _add_leg(entry, h2h["marketId"], h2h["draw_oid"], draw_leg.decimal, draw_leg.limit, changed_at)
-        _add_leg(entry, h2h["marketId"], h2h["away_oid"], away_leg.decimal, away_leg.limit, changed_at)
+        _add_leg(entry, h2h["marketId"], h2h["home_oid"], home_leg.decimal, home_leg.limit, changed_at,
+                 _venue(home_leg))
+        _add_leg(entry, h2h["marketId"], h2h["draw_oid"], draw_leg.decimal, draw_leg.limit, changed_at,
+                 _venue(draw_leg))
+        _add_leg(entry, h2h["marketId"], h2h["away_oid"], away_leg.decimal, away_leg.limit, changed_at,
+                 _venue(away_leg))
 
         # SAFE-TIER: full-game total-goals O/U + BTTS (reg-time, same basis as the 1x2) onto this fixture.
         nt = 0
@@ -863,8 +893,10 @@ def merge_into(
             tidx = market_index.totals.get(line)
             if not tidx:
                 continue
-            _add_leg(entry, tidx["marketId"], tidx["over_oid"], over_leg.decimal, over_leg.limit, changed_at)
-            _add_leg(entry, tidx["marketId"], tidx["under_oid"], under_leg.decimal, under_leg.limit, changed_at)
+            _add_leg(entry, tidx["marketId"], tidx["over_oid"], over_leg.decimal, over_leg.limit, changed_at,
+                     _venue(over_leg))
+            _add_leg(entry, tidx["marketId"], tidx["under_oid"], under_leg.decimal, under_leg.limit, changed_at,
+                     _venue(under_leg))
             nt += 1
         if nt:
             cov.totals_fixtures += 1
@@ -873,8 +905,10 @@ def merge_into(
         if ev.btts and market_index.btts:
             yes_leg, no_leg = ev.btts
             b = market_index.btts
-            _add_leg(entry, b["marketId"], b["yes_oid"], yes_leg.decimal, yes_leg.limit, changed_at)
-            _add_leg(entry, b["marketId"], b["no_oid"], no_leg.decimal, no_leg.limit, changed_at)
+            _add_leg(entry, b["marketId"], b["yes_oid"], yes_leg.decimal, yes_leg.limit, changed_at,
+                     _venue(yes_leg))
+            _add_leg(entry, b["marketId"], b["no_oid"], no_leg.decimal, no_leg.limit, changed_at,
+                     _venue(no_leg))
             cov.btts_fixtures += 1
             nb = 1
 

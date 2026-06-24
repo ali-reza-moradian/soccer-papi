@@ -79,6 +79,41 @@ def _assert_usa_par_mapping(raw):
     assert home["changedAt"] == "2026-06-13T10:00:00Z"            # scan time, not a stale line
 
 
+def test_merge_persists_venue_execution_ids():
+    """ADDITIVE: each kalshi leg carries venue/venueId(ticker)/venueSide for the executor, and the
+    existing price/limit/changedAt fields are unchanged."""
+    raw: dict = {}
+    kalshi.merge_into(raw, BY_FIXTURE, INDEX, _usa_par_markets("normal"), now=NOW, log=LOG)
+    outs = raw["idBBB"]["bookmakerOdds"]["kalshi"]["markets"]["101"]["outcomes"]
+    home, draw, away = (outs["101"]["players"]["0"], outs["102"]["players"]["0"],
+                        outs["103"]["players"]["0"])
+    assert home["venue"] == "kalshi" and home["venueSide"] == "YES"
+    assert home["venueId"] == "KXWCGAME-26JUN13USAPAR-USA"   # the EXACT market ticker priced
+    assert draw["venueId"] == "KXWCGAME-26JUN13USAPAR-TIE"
+    assert away["venueId"] == "KXWCGAME-26JUN13USAPAR-PAR"
+    # existing fields untouched (no regression to the manual pipeline)
+    assert home["price"] == 3.125 and home["limit"] == 160.0 and home["mainLine"] is True
+    assert home["changedAt"] == "2026-06-13T10:00:00Z"
+
+
+def test_merge_totals_btts_venue_side_yes_over_no_under():
+    """Over/BTTS-Yes back YES (yes_ask); Under/BTTS-No back NO (no_ask) — venueSide reflects that,
+    on the same per-market ticker."""
+    raw: dict = {}
+    markets = _usa_par_markets("normal") + [
+        _total_mkt("2.5", "0.5000", "400", "0.5200", "300"),
+        _btts_mkt("0.4000", "250", "0.6500", "100"),
+    ]
+    kalshi.merge_into(raw, BY_FIXTURE, INDEX_FULL, markets, now=NOW, log=LOG)
+    mkts = raw["idBBB"]["bookmakerOdds"]["kalshi"]["markets"]
+    over, under = mkts["1010"]["outcomes"]["1010"]["players"]["0"], mkts["1010"]["outcomes"]["1011"]["players"]["0"]
+    assert over["venueSide"] == "YES" and under["venueSide"] == "NO"
+    assert over["venueId"] == "KXWCTOTAL-26JUN13USAPAR-2.5" == under["venueId"]
+    yes, no = mkts["104"]["outcomes"]["104"]["players"]["0"], mkts["104"]["outcomes"]["105"]["players"]["0"]
+    assert yes["venueSide"] == "YES" and no["venueSide"] == "NO"
+    assert yes["venueId"] == "KXWCBTTS-26JUN13USAPAR-BTTS"
+
+
 def test_merge_maps_by_yes_sub_title_identity():
     raw: dict = {}
     cov, kbooks = kalshi.merge_into(raw, BY_FIXTURE, INDEX, _usa_par_markets("normal"), now=NOW, log=LOG)

@@ -34,6 +34,9 @@ class Candidate:
     main_line: bool = False
     is_exchange: bool = False
     commission: float = 0.0
+    # Execution metadata (additive): {"venue","venue_id","venue_side","neg_risk","tick_size"} for
+    # kalshi/polymarket-direct legs; None otherwise. Passed straight through to the Leg for legs_json.
+    venue: Optional[dict] = None
 
     @property
     def eff_odds(self) -> float:
@@ -56,6 +59,7 @@ class Leg:
     stake: float = 0.0               # stake at T_max (filled by compute_arb)
     effective_limit: float = 0.0     # limit actually USED in sizing (real, or assumed if unverified)
     unverified: bool = False         # True when no real limit was reported -> assumed cap applied
+    venue: Optional[dict] = None     # execution metadata (additive), copied from the Candidate
 
 
 @dataclass
@@ -192,6 +196,7 @@ def compute_arb(candidates: list[Candidate], assumed_unknown_limit: float = 1000
                 stake=round(stake, 2),
                 effective_limit=eff_lim,
                 unverified=unverified,
+                venue=c.venue,
             )
         )
 

@@ -20,6 +20,10 @@ class RawCandidate:
     changed_at: Optional[str]
     main_line: bool
     exchange_meta: Optional[dict[str, Any]]
+    # Execution metadata (additive; None for books that don't supply it, e.g. OddsPapi/the-odds-api):
+    # {"venue","venue_id","venue_side","neg_risk","tick_size"} for kalshi-direct / polymarket-direct
+    # legs, so the automated executor can re-pull the exact book each leg was priced from.
+    venue: Optional[dict[str, Any]] = None
 
 
 @dataclass
@@ -128,6 +132,15 @@ def parse_odds_payload(payload: Any) -> list[FixtureFeed]:
                     except (TypeError, ValueError):
                         continue
 
+                    venue_meta = None
+                    if p.get("venue"):
+                        venue_meta = {
+                            "venue": p.get("venue"),
+                            "venue_id": p.get("venueId"),
+                            "venue_side": p.get("venueSide"),
+                            "neg_risk": p.get("negRisk"),
+                            "tick_size": p.get("tickSize"),
+                        }
                     rc = RawCandidate(
                         book=book,
                         outcome_id=oid,
@@ -137,6 +150,7 @@ def parse_odds_payload(payload: Any) -> list[FixtureFeed]:
                         changed_at=p.get("changedAt"),
                         main_line=bool(p.get("mainLine")),
                         exchange_meta=p.get("exchangeMeta"),
+                        venue=venue_meta,
                     )
                     feed.markets.setdefault(mid, {}).setdefault(oid, []).append(rc)
                     priced_any = True

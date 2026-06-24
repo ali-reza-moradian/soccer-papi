@@ -324,3 +324,38 @@ budget:
 api:
   odds_verbosity: 3                  # higher = more markets/lines; bump if markets are missing
   odds_format: decimal
+
+# ===========================================================================
+# AUTOMATED EXECUTOR (src/executor/) — kalshi<->polymarket pre-game arb auto-fill.
+# COMPLETELY SEPARATE from the scanner above: the executor only READS detected arbs and the
+# read-only pricing in src/kalshi.py / src/polymarket.py; it never changes scan behavior. It
+# has its own logs (data/executor/), its own ledger (data/executor/trade_ledger.csv), and the
+# THREE master switches below default to the safe state (OFF + dry-run + human-confirm). A
+# data/executor/STOP file halts it immediately regardless of these flags.
+# ===========================================================================
+executor:
+  # ---- master switches (checked every cycle) -------------------------------
+  enabled: false                     # MASTER KILL SWITCH. While false NOTHING runs live, ever.
+  dry_run: true                      # while true NO real order is ever placed (measure-only).
+  require_human_confirm: true        # CLI y/N gate immediately before each LIVE placement.
+  live_enabled: false                # in-play WebSocket detection feed (Phase B). Separate from the
+                                     # pre-game path; even when true it stays dry-run (no placement).
+
+  # ---- guardrails (Phase 4 — ALL enforced before every placement) ----------
+  max_per_trade_usd: 10              # cap on intended notional per single arb attempt
+  max_trades_per_day: 20            # max LIVE trade attempts counted per UTC day
+  max_daily_spend_usd: 200          # max total LIVE notional placed per UTC day
+  max_daily_loss_usd: 50            # realized LIVE loss cap per UTC day -> trips STOP
+  min_book_liquidity_mult: 1.25     # both books must show >= this x your size at target price
+  max_consecutive_errors: 3         # this many adapter errors in a row -> trips STOP
+  cooldown_seconds: 60              # min seconds between LIVE placements
+  dedupe_minutes: 5                 # don't re-fire the same structural arb within this window
+  min_net_edge_pct_after_costs: 1.0 # require modeled net edge >= this % after fees+slippage
+
+  # ---- sizing knobs (proven tricks ported from the sibling bot) ------------
+  volume_haircut: 0.80              # request ~80% of observed depth so FOK is likely to fill
+  marketable_buffer: 0.01          # cross the book by 1 tick when sending a marketable limit
+
+  # ---- venue endpoints (trading; market-data reuses the scanner's bases) ----
+  kalshi_api_base: https://api.elections.kalshi.com/trade-api/v2
+  poly_signature_type: 3            # default 3 = deposit/proxy wallet (overridable via env)

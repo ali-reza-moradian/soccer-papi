@@ -716,3 +716,44 @@ def test_dump_book_outcomes_runs_without_error():
     specs, _ = build_market_specs(MARKETS_1X2, 10, [])
     _dump_book_outcomes(get_logger("t"), "Switzerland vs Australia", specs[101],
                         "Switzerland", "Australia", "bcgame", {101: 5.0, 102: 3.8, 103: 1.65})
+
+
+def test_legs_json_round_trips_venue_ids_additively():
+    """run._legs_payload emits the additive venue/venue_id/venue_side/neg_risk/tick_size for legs
+    that carry them, leaves them None otherwise, and does NOT change any existing leg field."""
+    from src import run, catalog
+    from src.arbitrage import ArbResult, Leg
+
+    k_leg = Leg(outcome_id=1, outcome_name="Brazil", book="kalshi", decimal_odds=2.10, eff_odds=2.10,
+                american_odds=None, limit=300.0, changed_at=None, is_exchange=True, commission=0.0,
+                stake=140.0, effective_limit=300.0, unverified=False,
+                venue={"venue": "kalshi", "venue_id": "KXWCGAME-X-BRA", "venue_side": "YES",
+                       "neg_risk": None, "tick_size": None})
+    p_leg = Leg(outcome_id=2, outcome_name="not Brazil", book="polymarket", decimal_odds=2.05,
+                eff_odds=2.05, american_odds=None, limit=300.0, changed_at=None, is_exchange=True,
+                commission=0.0, stake=143.0, effective_limit=300.0, unverified=False,
+                venue={"venue": "polymarket", "venue_id": "0xabc", "venue_side": "BUY",
+                       "neg_risk": True, "tick_size": 0.01})
+    no_venue = Leg(outcome_id=3, outcome_name="X", book="pinnacle", decimal_odds=3.0, eff_odds=3.0,
+                   american_odds=None, limit=500.0, changed_at=None, is_exchange=False, commission=0.0,
+                   stake=100.0, effective_limit=500.0, unverified=False)   # venue defaults None
+    res = ArbResult(legs=[k_leg, p_leg, no_venue], arb_sum_S=0.95, roi_decimal=0.05, t_max=900.0,
+                    max_profit=45.0, binding_book="kalshi", min_leg_limit=300.0,
+                    involves_exchange=True, low_confidence=False)
+    spec = catalog.MarketSpec(market_id=101, label="Full Time Result", family="1x2",
+                              period="fulltime", line=None, n_way=3, outcome_ids=[1, 2, 3],
+                              outcome_names={1: "Brazil", 2: "not Brazil", 3: "X"})
+    opp = run.Opportunity(fixture_id="F1", match="Brazil vs Spain", home_team="Brazil",
+                          away_team="Spain", tournament="WC", kickoff_utc=None, spec=spec, res=res,
+                          actionable=True, shadow_books=[], suspicious=False, bet_links={},
+                          signature="sig1")
+    legs = run._legs_payload(opp)
+
+    # existing fields unchanged
+    assert legs[0]["book"] == "kalshi" and legs[0]["decimal_odds"] == 2.10 and legs[0]["stake"] == 140.0
+    # additive venue fields present for the venue-carrying legs
+    assert legs[0]["venue"] == "kalshi" and legs[0]["venue_id"] == "KXWCGAME-X-BRA" and legs[0]["venue_side"] == "YES"
+    assert legs[1]["venue"] == "polymarket" and legs[1]["venue_id"] == "0xabc" and legs[1]["venue_side"] == "BUY"
+    assert legs[1]["neg_risk"] is True and legs[1]["tick_size"] == 0.01
+    # a book that resolved no venue id -> all venue fields None (no crash, no regression)
+    assert legs[2]["venue"] is None and legs[2]["venue_id"] is None and legs[2]["neg_risk"] is None

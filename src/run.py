@@ -161,6 +161,7 @@ def _to_candidates(
                 main_line=rc.main_line,
                 is_exchange=is_exch,
                 commission=ctx.commission.get(rc.book, 0.0),
+                venue=rc.venue,
             )
         )
     return out
@@ -406,9 +407,25 @@ def _legs_payload(opp: Opportunity) -> list[dict[str, Any]]:
             "effective_limit": round(leg.effective_limit, 2),
             "stake": round(leg.stake, 2),
             "changed_at": fmt.iso_local(leg.changed_at),
+            # Execution identifiers (additive) for the automated executor. None for books that don't
+            # supply them (OddsPapi / the-odds-api); populated for kalshi-direct / polymarket-direct.
+            **_venue_fields(leg.venue),
         }
         for leg in opp.res.legs
     ]
+
+
+def _venue_fields(venue: Optional[dict[str, Any]]) -> dict[str, Any]:
+    """The per-leg execution identifiers persisted into legs_json (kalshi ticker / poly token + side,
+    plus poly neg_risk / tick_size). All None when the book did not resolve a venue identifier."""
+    v = venue or {}
+    return {
+        "venue": v.get("venue"),
+        "venue_id": v.get("venue_id"),
+        "venue_side": v.get("venue_side"),
+        "neg_risk": v.get("neg_risk"),
+        "tick_size": v.get("tick_size"),
+    }
 
 
 def _csv_row(opp: Opportunity, now: datetime) -> dict[str, Any]:

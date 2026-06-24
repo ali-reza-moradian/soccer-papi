@@ -9,3 +9,17 @@ tzdata>=2024.1
 
 # dev / test
 pytest>=7.4
+
+# --- executor (src/executor/) LIVE trading only --------------------------------
+# Not needed for the scanner or for the executor's dry-run/tests (which mock the SDKs).
+# Install these only before flipping the executor to live placement:
+#   cryptography  -> Kalshi RSA-PSS request signing (src/executor/kalshi_exec.py)
+#   py-clob-client + eth-account -> Polymarket CLOB trading (src/executor/poly_exec.py)
+# cryptography>=42
+# py-clob-client>=0.17
+# eth-account>=0.11
+# --- executor monitoring panel (src/executor/dashboard.py) ---------------------
+# Read-only Streamlit dashboard: `python -m src.executor.cli panel`. Optional auto-refresh
+# via streamlit-autorefresh. Not needed for the scanner, the executor core, or the tests.
+# streamlit>=1.30
+# streamlit-autorefresh>=1.0

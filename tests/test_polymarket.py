@@ -322,6 +322,27 @@ def test_merge_normalizes_full_team_names_to_fixture():
     assert round(outs["101"]["players"]["0"]["price"], 3) == 3.636   # Côte d'Ivoire -> p1/home
 
 
+def test_merge_persists_venue_execution_ids():
+    """ADDITIVE: each poly leg carries venue/venueId(token)/venueSide=BUY + negRisk/tickSize for the
+    executor; existing price/limit/changedAt fields are unchanged."""
+    legs = [polymarket.Leg(role="team", team="Côte d'Ivoire", yes_token="0xCIV",
+                           decimal=3.636, limit=275.0, neg_risk=True, tick_size=0.01),
+            polymarket.Leg(role="team", team="Ecuador", yes_token="0xECU",
+                           decimal=2.532, limit=395.0, neg_risk=True, tick_size=0.01),
+            polymarket.Leg(role="draw", team=None, yes_token="0xDRAW",
+                           decimal=2.985, limit=335.0, neg_risk=True, tick_size=0.01)]
+    ev = polymarket.PolyEvent(event_id="1", title="Côte d'Ivoire vs. Ecuador",
+                              commence_iso="2026-06-14T12:00:00Z", legs=legs)
+    raw: dict = {}
+    polymarket.merge_into(raw, BY_FIXTURE, INDEX, [ev], now=NOW, log=LOG)
+    home = raw["idCIV"]["bookmakerOdds"]["polymarket"]["markets"]["101"]["outcomes"]["101"]["players"]["0"]
+    assert home["venue"] == "polymarket" and home["venueSide"] == "BUY"
+    assert home["venueId"] == "0xCIV"               # the EXACT CLOB token priced
+    assert home["negRisk"] is True and home["tickSize"] == 0.01
+    # existing fields untouched
+    assert round(home["price"], 3) == 3.636 and home["limit"] == 275.0 and home["mainLine"] is True
+
+
 def test_merge_matches_cross_midnight_utc_fixture():
     """Kickoff 2026-06-15T01:00Z (next UTC day) vs event date 2026-06-14 -> must match within ±1 day."""
     by_fixture = {"idX": {"p1": "Ivory Coast", "p2": "Ecuador",

@@ -63,6 +63,119 @@ def test_new_or_repeat_against_previous_scan(tmp_path):
     assert scan2 == {"keep": "REPEAT", "fresh": "NEW"}
 
 
+# ---------------------------------------------------------------------------
+# Schema-drift / migration tests
+# ---------------------------------------------------------------------------
+
+# The header the workbook was created with BEFORE capital_lockup_days was added: the old tail
+# (no capital_lockup_days) plus a trailing empty column. This is the exact shape that caused the
+# column-shift bug.
+_OLD_TAIL = ["S", "ROI_pct", "T_max", "total_investment", "guaranteed_profit", "type",
+             "low_confidence", "unverified_limit_books", "new_or_repeat", "arb_id"]
+
+
+def _old_header():
+    head = list(excel_log._BASE_HEAD)
+    for i in range(1, excel_log.MAX_LEGS + 1):
+        head += [f"leg{i}_{c}" for c in excel_log._LEG_HEAD]
+    return head + _OLD_TAIL + [None]   # trailing empty column
+
+
+def _make_legacy_workbook(path):
+    """A workbook with the OLD header and one row written the buggy (shifted) way:
+    the 'arb_id' column holds 'NEW' and the trailing unnamed column holds the real hash."""
+    from openpyxl import Workbook
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "arbs"
+    old = _old_header()
+    ws.append(old)
+
+    # Build a base record by name, then write it shifted: capital_lockup_days never existed, so
+    # new_or_repeat slid into the 'arb_id' column and arb_id into the trailing unnamed column.
+    base = {
+        "scan_time_local": "2026-06-19T14:02:00-04:00", "scan_time_utc": "2026-06-19T18:02:00Z",
+        "game": "X vs Y", "kickoff_time": "2026-06-20T15:00:00-04:00", "tournament": "World Cup",
+        "market": "Full Time Result",
+        "leg1_book": "pinnacle", "leg1_outcome": "X", "leg1_odds": 2.0, "leg1_limit": 1000, "leg1_stake": 500,
+        "leg2_book": "1xbet", "leg2_outcome": "Y", "leg2_odds": 2.1, "leg2_limit": "UNVERIFIED", "leg2_stake": 476,
+        "S": 0.97, "ROI_pct": 3.0, "T_max": 976, "total_investment": 976,
+        "guaranteed_profit": 24, "type": "SHADOW", "low_confidence": "N", "unverified_limit_books": "1xbet",
+    }
+    row = [base.get(h) for h in old]            # everything up to unverified_limit_books by name
+    nr_idx = old.index("new_or_repeat")
+    arb_idx = old.index("arb_id")
+    trail_idx = len(old) - 1                     # the trailing None column
+    row[nr_idx] = None                           # capital_lockup_days value landed here (blank)
+    row[arb_idx] = "REPEAT"                       # the NEW/REPEAT flag landed in 'arb_id'
+    row[trail_idx] = "abcdef0123456789"          # the real 16-hex arb_id landed in the trailing col
+    ws.append(row)
+    wb.save(path)
+    return base
+
+
+def test_append_to_stale_header_triggers_migration(tmp_path):
+    path = str(tmp_path / "arbs_log.xlsx")
+    _make_legacy_workbook(path)
+
+    # Appending a fresh row must first migrate the sheet, then land everything in the right columns.
+    n = excel_log.append_arbs(path, [_row("ffffffffffffffff", "2026-06-20T10:00:00Z", game="New vs Row")], _Log())
+    assert n == 1
+
+    wb = load_workbook(path)
+    ws = wb.active
+    header = [c.value for c in ws[1]]
+    assert header == excel_log.columns()          # header rewritten to current schema
+
+    rows = [{h: v for h, v in zip(header, [c.value for c in r])} for r in ws.iter_rows(min_row=2)]
+    new = next(r for r in rows if r["game"] == "New vs Row")
+    assert new["arb_id"] == "ffffffffffffffff"
+    assert new["new_or_repeat"] == "NEW"
+    assert new["capital_lockup_days"] is None     # not supplied -> blank, not shifted
+
+
+def test_migration_unswaps_legacy_arb_id_and_new_or_repeat(tmp_path):
+    path = str(tmp_path / "arbs_log.xlsx")
+    base = _make_legacy_workbook(path)
+
+    wb = load_workbook(path)
+    repaired = excel_log.migrate_sheet(wb.active)
+    assert repaired == 1
+
+    header = [c.value for c in wb.active[1]]
+    assert header == excel_log.columns()
+    row = {h: v for h, v in zip(header, [c.value for c in wb.active[2]])}
+
+    # The known legacy row is restored: real hash back in arb_id, flag back in new_or_repeat.
+    assert row["arb_id"] == "abcdef0123456789"
+    assert row["new_or_repeat"] == "REPEAT"
+    assert row["capital_lockup_days"] is None
+    # And the rest of the row stayed put (remapped by name).
+    assert row["game"] == base["game"]
+    assert row["leg1_book"] == "pinnacle"
+    assert row["unverified_limit_books"] == "1xbet"
+    assert row["leg2_limit"] == "UNVERIFIED"
+
+
+def test_fresh_workbook_is_unaffected_by_guard(tmp_path):
+    path = str(tmp_path / "arbs_log.xlsx")
+    # First append creates a current-schema workbook; a second append must not migrate or shift.
+    excel_log.append_arbs(path, [_row("aaaaaaaaaaaaaaaa", "2026-06-20T10:00:00Z")], _Log())
+    excel_log.append_arbs(path, [_row("bbbbbbbbbbbbbbbb", "2026-06-20T10:15:00Z")], _Log())
+
+    wb = load_workbook(path)
+    ws = wb.active
+    header = [c.value for c in ws[1]]
+    assert header == excel_log.columns()
+    rows = [{h: v for h, v in zip(header, [c.value for c in r])} for r in ws.iter_rows(min_row=2)]
+    assert len(rows) == 2
+    for r in rows:
+        # arb_id stayed a valid hash in its own column; no row got shifted by a spurious migration.
+        assert excel_log._is_hex16(r["arb_id"])
+        assert r["new_or_repeat"] in ("NEW", "REPEAT")
+
+
 class _Log:
     def info(self, *a, **k):
         pass

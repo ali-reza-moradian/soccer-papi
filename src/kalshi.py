@@ -221,16 +221,31 @@ def _leg_price_limit(market: dict[str, Any]) -> Optional[tuple[float, float]]:
     return dec, leg_limit(market.get("yes_ask_size_fp"), market.get("yes_ask_dollars"))
 
 
-def _player_line(price: float, limit: float, changed_at: str) -> dict[str, Any]:
+def _venue(ticker: Any, side: str) -> dict[str, Any]:
+    """Execution metadata for a Kalshi leg: the exact market ticker we priced + the side to BACK
+    (buy YES at yes_ask, or buy NO at no_ask). Persisted so the executor re-pulls the SAME book it
+    was priced from rather than re-discovering a possibly-different ticker."""
+    return {"venue": "kalshi", "venueId": (str(ticker) if ticker else None), "venueSide": side}
+
+
+def _player_line(price: float, limit: float, changed_at: str,
+                 venue: dict[str, Any] | None = None) -> dict[str, Any]:
     """One canonical priced outcome carrying a REAL limit (size×price) so the engine does NOT mark
-    it low_confidence. changedAt = scan time: a best-ask is a live resting order, not a stale line."""
-    return {"price": price, "priceAmerican": None, "limit": limit,
+    it low_confidence. changedAt = scan time: a best-ask is a live resting order, not a stale line.
+
+    ``venue`` (additive, optional) records the execution identifiers (ticker + side) for the
+    automated executor; it never affects the arb math or the manual pipeline."""
+    line = {"price": price, "priceAmerican": None, "limit": limit,
             "changedAt": changed_at, "mainLine": True, "active": True}
+    if venue:
+        line.update(venue)
+    return line
 
 
-def _add_leg(entry: dict[str, Any], mid: int, oid: int, price: float, limit: float, changed_at: str) -> None:
+def _add_leg(entry: dict[str, Any], mid: int, oid: int, price: float, limit: float, changed_at: str,
+             venue: dict[str, Any] | None = None) -> None:
     mkt = entry["markets"].setdefault(str(mid), {"marketActive": True, "outcomes": {}})
-    mkt["outcomes"][str(oid)] = {"players": {"0": _player_line(price, limit, changed_at)}}
+    mkt["outcomes"][str(oid)] = {"players": {"0": _player_line(price, limit, changed_at, venue)}}
 
 
 # --------------------------------------------------------------------------- #
@@ -292,8 +307,9 @@ def _inject_totals(entry: dict[str, Any], total_markets: list[dict[str, Any]],
         under = _no_leg_price_limit(m)      # No side  -> Under
         if over is None or under is None:
             continue
-        _add_leg(entry, tidx["marketId"], tidx["over_oid"], over[0], over[1], changed_at)
-        _add_leg(entry, tidx["marketId"], tidx["under_oid"], under[0], under[1], changed_at)
+        tk = m.get("ticker")
+        _add_leg(entry, tidx["marketId"], tidx["over_oid"], over[0], over[1], changed_at, _venue(tk, "YES"))
+        _add_leg(entry, tidx["marketId"], tidx["under_oid"], under[0], under[1], changed_at, _venue(tk, "NO"))
         n += 1
     return n
 
@@ -309,8 +325,9 @@ def _inject_btts(entry: dict[str, Any], btts_markets: list[dict[str, Any]],
         if yes is None or no is None:
             continue
         b = market_index.btts
-        _add_leg(entry, b["marketId"], b["yes_oid"], yes[0], yes[1], changed_at)
-        _add_leg(entry, b["marketId"], b["no_oid"], no[0], no[1], changed_at)
+        tk = m.get("ticker")
+        _add_leg(entry, b["marketId"], b["yes_oid"], yes[0], yes[1], changed_at, _venue(tk, "YES"))
+        _add_leg(entry, b["marketId"], b["no_oid"], no[0], no[1], changed_at, _venue(tk, "NO"))
         return 1
     return 0
 
@@ -413,8 +430,12 @@ def merge_into(
             continue
 
         # Split the (active, priced) markets into the Tie leg and the two team legs, by yes_sub_title.
+        # Track the per-leg market TICKER alongside the price so the executor can re-pull the exact
+        # book each leg was priced from.
         tie_leg: Optional[tuple[float, float]] = None
+        tie_ticker: Any = None
         team_legs: dict[str, tuple[float, float]] = {}
+        team_tickers: dict[str, Any] = {}
         team_raw_names: list[str] = []
         for m in ms:
             pl = _leg_price_limit(m)
@@ -423,8 +444,11 @@ def merge_into(
             sub = str(m.get("yes_sub_title") or "").strip()
             if sub.lower() == "tie":
                 tie_leg = pl
+                tie_ticker = m.get("ticker")
             else:
-                team_legs[normalize_team(sub)] = pl
+                norm = normalize_team(sub)
+                team_legs[norm] = pl
+                team_tickers[norm] = m.get("ticker")
                 team_raw_names.append(sub)
 
         if tie_leg is None or len(team_legs) != 2:
@@ -468,9 +492,12 @@ def merge_into(
             continue
 
         entry = {"bookmakerIsActive": True, "suspended": False, "markets": {}}
-        _add_leg(entry, h2h["marketId"], h2h["home_oid"], home_pl[0], home_pl[1], changed_at)
-        _add_leg(entry, h2h["marketId"], h2h["draw_oid"], tie_leg[0], tie_leg[1], changed_at)
-        _add_leg(entry, h2h["marketId"], h2h["away_oid"], away_pl[0], away_pl[1], changed_at)
+        _add_leg(entry, h2h["marketId"], h2h["home_oid"], home_pl[0], home_pl[1], changed_at,
+                 _venue(team_tickers.get(fm.p1_norm), "YES"))
+        _add_leg(entry, h2h["marketId"], h2h["draw_oid"], tie_leg[0], tie_leg[1], changed_at,
+                 _venue(tie_ticker, "YES"))
+        _add_leg(entry, h2h["marketId"], h2h["away_oid"], away_pl[0], away_pl[1], changed_at,
+                 _venue(team_tickers.get(fm.p2_norm), "YES"))
 
         # SAFE-TIER: add total-goals O/U and BTTS legs (same regulation settlement) onto this fixture.
         nt = _inject_totals(entry, g["total"], market_index, changed_at)
