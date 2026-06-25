@@ -18,9 +18,20 @@ import os
 import time
 from typing import Any, Callable, Optional
 
-from . import config as exec_config
-from .engine import DRYRUN_COLUMNS  # noqa: F401  (column reference / parity)
-from .ledger import Ledger
+# Work BOTH as a package import (tests: `import src.executor.dashboard`) AND when Streamlit runs
+# this file directly by path (`streamlit run src/executor/dashboard.py`), where there is no parent
+# package for relative imports. Fall back to absolute imports after putting the repo root on sys.path.
+try:
+    from . import config as exec_config
+    from .engine import DRYRUN_COLUMNS  # noqa: F401  (column reference / parity)
+    from .ledger import Ledger
+except ImportError:
+    import sys
+    import pathlib
+    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2]))  # repo root
+    from src.executor import config as exec_config
+    from src.executor.engine import DRYRUN_COLUMNS  # noqa: F401
+    from src.executor.ledger import Ledger
 
 
 # --------------------------------------------------------------------------- #
@@ -167,7 +178,7 @@ def dryrun_view(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     out = []
     for r in rows:
         view = {k: r.get(k, "") for k in _DRYRUN_VIEW_COLS if k not in ("source", "legs")}
-        view["source"] = infer_source(r)
+        view["source"] = r.get("source") or infer_source(r)   # prefer the explicit column
         view["legs"] = summarize_legs(r.get("legs_json"))
         view["arb_survived"] = _as_bool(r.get("arb_survived"))
         out.append({k: view.get(k, "") for k in _DRYRUN_VIEW_COLS})
@@ -240,11 +251,17 @@ def default_balance_providers(cfg: exec_config.ExecConfig) -> dict[str, Callable
     Construction + the call are deferred so a missing credential surfaces as a cached error string,
     never an import-time or panel crash."""
     def kalshi_balance() -> Any:
-        from .kalshi_exec import KalshiExec
+        try:
+            from .kalshi_exec import KalshiExec
+        except ImportError:
+            from src.executor.kalshi_exec import KalshiExec
         return KalshiExec(api_base=cfg.kalshi_api_base).get_balance()
 
     def poly_balance() -> Any:
-        from .poly_exec import PolyExec
+        try:
+            from .poly_exec import PolyExec
+        except ImportError:
+            from src.executor.poly_exec import PolyExec
         return PolyExec().get_balance()
 
     return {"kalshi": kalshi_balance, "polymarket": poly_balance}

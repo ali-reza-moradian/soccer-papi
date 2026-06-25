@@ -1129,3 +1129,66 @@ def test_stop_toggle_is_the_only_write(tmp_path, monkeypatch):
     assert "manual via dashboard" in open(stop).read()
     assert dash.clear_stop() is True                                # the one write: remove
     assert dash.stop_state() is False
+
+
+# =========================================================================
+# SELFCHECK — synthetic end-to-end light-up + targeted --clear
+# =========================================================================
+from src.executor import selfcheck as sc
+
+
+def test_selfcheck_writes_synthetic_rows(tmp_path):
+    dpath, lpath = str(tmp_path / "dryrun.csv"), str(tmp_path / "ledger.csv")
+    s = sc.run_selfcheck(cfg=_cfg.ExecConfig(), dryrun_log_path=dpath, ledger_path=lpath, log=_Log())
+    # Two dry-run arbs (2-leg + 3-leg) walked the injected books and survived.
+    assert s["dryrun_selfcheck_rows"] == 2 and s["all_survived"] is True
+    assert s["ledger_selfcheck_rows"] == 2
+    rows = list(__import__("csv").DictReader(open(dpath)))
+    assert all(r["source"] == "selfcheck" for r in rows)
+    assert {r["n_legs"] for r in rows} == {"2", "3"}            # both variants present
+    assert all(r["arb_survived"] == "True" for r in rows)
+    # Ledger has one filled + one leg-failure-unwind, both rendered for the panel.
+    led_rows = list(__import__("csv").DictReader(open(lpath)))
+    statuses = {r["status"] for r in led_rows}
+    assert "filled" in statuses and "leg_failure_unwind" in statuses
+    assert any(r["unwind_event"] == "kalshi_market_sell" for r in led_rows)
+    # Master flags untouched by the self-check.
+    assert s["flags"] == {"enabled": False, "dry_run": True, "live_enabled": False}
+
+
+def test_selfcheck_clear_removes_only_selfcheck_rows(tmp_path):
+    dpath, lpath = str(tmp_path / "dryrun.csv"), str(tmp_path / "ledger.csv")
+    cfg = _cfg.ExecConfig()
+    # Seed a REAL (non-selfcheck) dry-run row + a real ledger row that must SURVIVE the clear.
+    md = _FakeMarketData(k_ladder=[(0.47, 300)], p_ladder=[(0.48, 300)])
+    exec_engine.execute_arb(_clean_arb_with_venue(), live=False, cfg=cfg, market_data=md,
+                            dryrun_log_path=dpath, log=_Log())
+    Ledger(lpath).append_submit({"fingerprint": "real-1", "fixture": "Real", "status": "filled"})
+
+    sc.run_selfcheck(cfg=cfg, dryrun_log_path=dpath, ledger_path=lpath, log=_Log())
+    dry_before = list(__import__("csv").DictReader(open(dpath)))
+    led_before = list(__import__("csv").DictReader(open(lpath)))
+    assert len(dry_before) == 3 and len(led_before) == 3      # 1 real + 2 selfcheck each
+
+    counts = sc.clear_selfcheck(dryrun_log_path=dpath, ledger_path=lpath)
+    assert counts == {"dryrun_removed": 2, "ledger_removed": 2}
+    dry_after = list(__import__("csv").DictReader(open(dpath)))
+    led_after = list(__import__("csv").DictReader(open(lpath)))
+    # Exactly the real rows remain; no selfcheck rows survive.
+    assert len(dry_after) == 1 and dry_after[0]["source"] != "selfcheck"
+    assert len(led_after) == 1 and led_after[0]["fingerprint"] == "real-1"
+
+
+def test_selfcheck_clear_safe_when_files_missing(tmp_path):
+    counts = sc.clear_selfcheck(dryrun_log_path=str(tmp_path / "none.csv"),
+                                ledger_path=str(tmp_path / "none2.csv"))
+    assert counts == {"dryrun_removed": 0, "ledger_removed": 0}
+
+
+def test_selfcheck_rows_render_in_panel_views(tmp_path):
+    dpath, lpath = str(tmp_path / "dryrun.csv"), str(tmp_path / "ledger.csv")
+    sc.run_selfcheck(cfg=_cfg.ExecConfig(), dryrun_log_path=dpath, ledger_path=lpath, log=_Log())
+    arbs = dash.dryrun_view(dash.tail_csv(dpath, 50))
+    assert arbs and all(a["source"] == "selfcheck" for a in arbs)   # source column surfaces
+    led = dash.ledger_view(dash.tail_csv(lpath, 50))
+    assert any(r["alert"] for r in led)                              # the unwind row is flagged

@@ -35,12 +35,21 @@ from .ledger import Ledger
 from .resolve import MarketData, NormalizedArb, ResolveError, VenueLeg, normalize_arb
 
 DRYRUN_COLUMNS = [
-    "ts_utc", "detected_at", "fixture", "market", "fingerprint", "n_legs", "intended_size",
+    "ts_utc", "source", "detected_at", "fixture", "market", "fingerprint", "n_legs", "intended_size",
     "kalshi_top_price", "kalshi_top_size", "poly_top_price", "poly_top_size",
     "kalshi_fill_price", "poly_fill_price", "kalshi_slippage", "poly_slippage",
     "kalshi_fee", "poly_fee", "total_cost", "net_profit", "net_edge_pct", "arb_survived",
     "legs_json",
 ]
+
+
+def _arb_source(narb) -> str:
+    """Where this arb came from, for the dry-run log: an explicit ``source`` on the arb dict
+    (e.g. 'live', 'selfcheck') else inferred 'live-feed'/'pre-game' from the fingerprint."""
+    src = (narb.raw or {}).get("source") if narb.raw else None
+    if src:
+        return str(src)
+    return "live-feed" if str(narb.fingerprint).startswith("live|") else "pre-game"
 
 
 @dataclass
@@ -80,11 +89,27 @@ def plan_size(narb: NormalizedArb, ladders: list[list[tuple[float, float]]],
 
 def _append_dryrun(path: str, row: dict[str, Any]) -> None:
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    new = not os.path.exists(path)
+    # Schema-safe append: if an existing file's header differs from the current columns (e.g. an
+    # older log written before a column was added), migrate it in place by re-mapping every row by
+    # NAME, then append. Never let a header drift silently shift values into the wrong columns.
+    existing: list[dict[str, Any]] = []
+    needs_rewrite = not os.path.exists(path)
+    if not needs_rewrite:
+        with open(path, "r", encoding="utf-8", newline="") as fh:
+            reader = csv.DictReader(fh)
+            if list(reader.fieldnames or []) != DRYRUN_COLUMNS:
+                existing = list(reader)          # DictReader maps by name -> safe remap
+                needs_rewrite = True
+    if needs_rewrite:
+        with open(path, "w", encoding="utf-8", newline="") as fh:
+            w = csv.DictWriter(fh, fieldnames=DRYRUN_COLUMNS)
+            w.writeheader()
+            for r in existing:
+                w.writerow({k: r.get(k, "") for k in DRYRUN_COLUMNS})
+            w.writerow({k: row.get(k, "") for k in DRYRUN_COLUMNS})
+        return
     with open(path, "a", encoding="utf-8", newline="") as fh:
         w = csv.DictWriter(fh, fieldnames=DRYRUN_COLUMNS)
-        if new:
-            w.writeheader()
         w.writerow({k: row.get(k, "") for k in DRYRUN_COLUMNS})
 
 
@@ -156,6 +181,7 @@ def _do_dryrun(narb, ladders, walks, size, edge, path, log) -> ExecResult:
     first_p = next((d for d in legs_detail if d["venue"] == "polymarket"), None)
     row = {
         "ts_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "source": _arb_source(narb),
         "detected_at": narb.detected_at or "",
         "fixture": narb.fixture, "market": narb.market, "fingerprint": narb.fingerprint,
         "n_legs": narb.n_legs, "intended_size": size,

@@ -147,6 +147,41 @@ def cmd_status(args) -> int:
     return 0
 
 
+def cmd_selfcheck(args) -> int:
+    """Light up the executor + panel end-to-end with synthetic data (no live markets/orders)."""
+    from . import selfcheck
+    log = _logger()
+    cfg = exec_config.load_exec_config()
+
+    if args.clear:
+        counts = selfcheck.clear_selfcheck()
+        print(f"Cleared selfcheck rows: dryrun_log -{counts['dryrun_removed']}, "
+              f"trade_ledger -{counts['ledger_removed']}.")
+        return 0
+
+    s = selfcheck.run_selfcheck(cfg=cfg, log=log)
+    flags = s["flags"]
+    safe = (flags["enabled"] is False and flags["dry_run"] is True and flags["live_enabled"] is False)
+
+    def tick(ok: bool) -> str:
+        return "[OK]" if ok else "[!!]"
+
+    print("\n=== executor selfcheck ===")
+    print(f"  {tick(s['dryrun_selfcheck_rows'] >= 2)} dryrun_log written "
+          f"({s['dryrun_selfcheck_rows']} selfcheck rows; all_survived={s['all_survived']}) "
+          f"-> {s['dryrun_path']}")
+    print(f"  {tick(s['ledger_selfcheck_rows'] >= 2)} trade_ledger written "
+          f"({s['ledger_selfcheck_rows']} selfcheck rows: 1 filled + 1 leg-failure-unwind) "
+          f"-> {s['ledger_path']}")
+    print(f"  {tick(s['dryrun_exists'] and s['ledger_exists'])} panel files present "
+          f"(dryrun_log, trade_ledger; log -> {s['log_path']})")
+    print(f"  {tick(safe)} master flags safe: enabled={flags['enabled']} "
+          f"dry_run={flags['dry_run']} live_enabled={flags['live_enabled']}")
+    print("\nView it:  python -m src.executor.cli panel")
+    print("Clean up: python -m src.executor.cli selfcheck --clear\n")
+    return 0
+
+
 def cmd_panel(args) -> int:
     """Launch the read-only Streamlit monitoring panel (`streamlit run dashboard.py`)."""
     import subprocess
@@ -182,6 +217,11 @@ def main(argv=None) -> int:
 
     p_panel = sub.add_parser("panel", help="launch the read-only Streamlit monitoring panel")
     p_panel.set_defaults(func=cmd_panel)
+
+    p_self = sub.add_parser("selfcheck",
+                            help="inject synthetic dry-run + ledger rows so the panel lights up")
+    p_self.add_argument("--clear", action="store_true", help="remove only the selfcheck rows")
+    p_self.set_defaults(func=cmd_selfcheck)
 
     args = ap.parse_args(argv)
     return args.func(args)

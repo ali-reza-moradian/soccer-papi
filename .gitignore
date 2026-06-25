@@ -27,6 +27,9 @@ htmlcov/
 *.local.env
 secrets.yaml
 scripts/secrets.local.ps1
+# Executor credentials: the .env file and the secrets/ folder (Kalshi .pem, etc.) — NEVER commit.
+# Only .env.example (placeholders) is tracked.
+secrets/
 
 # NOTE: data/ is intentionally committed (CSV history + cached catalogs).
 # EXCEPT the Excel running log: it is a BINARY file rewritten every scan, so committing it would
@@ -35,5 +38,9 @@ scripts/secrets.local.ps1
 data/arbs_log.xlsx
 # Transient single-instance scan lock (pid + start time); never commit.
 data/scan.lock
+# Executor RUNTIME artifacts (regenerable local state, like arbs_log.xlsx): the dry-run/ledger
+# logs, the event log, and the STOP kill-switch. Never commit (committing STOP would halt the
+# executor for anyone who pulls). `python -m src.executor.cli selfcheck` regenerates samples.
+data/executor/
 # Derived group-tier slug/token cache (rebuilt on its own TTL); only written when group_markets on.
 data/cache/group_slugmap.json
