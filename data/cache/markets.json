@@ -41905,14 +41905,6 @@
       {
         "outcomeId": 111741,
         "outcomeName": "Under"
-      },
-      {
-        "outcomeId": 111750,
-        "outcomeName": "Over"
-      },
-      {
-        "outcomeId": 111751,
-        "outcomeName": "Under"
       }
     ],
     "period": "result",
@@ -41992,6 +41984,26 @@
       },
       {
         "outcomeId": 111749,
+        "outcomeName": "Under"
+      }
+    ],
+    "period": "result",
+    "playerProp": true,
+    "sportId": 11
+  },
+  {
+    "handicap": 40.5,
+    "marketId": 111750,
+    "marketLength": 2,
+    "marketName": "Over Under Player Points (incl. overtime)",
+    "marketType": "playertotals-points",
+    "outcomes": [
+      {
+        "outcomeId": 111750,
+        "outcomeName": "Over"
+      },
+      {
+        "outcomeId": 111751,
         "outcomeName": "Under"
       }
     ],
