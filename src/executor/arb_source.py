@@ -9,7 +9,8 @@ from __future__ import annotations
 import csv
 import json
 import os
-from typing import Any
+from datetime import datetime, timezone
+from typing import Any, Optional
 
 from .resolve import ResolveError, normalize_arb
 
@@ -43,11 +44,36 @@ def _f(v: Any) -> float:
         return 0.0
 
 
-def load_clean_arbs(csv_path: str | None = None) -> list[dict[str, Any]]:
-    """Return clean kalshi<->poly arbs from the CSV, best (highest ROI) first."""
+def _parse_ts(ts: Any) -> Optional[datetime]:
+    """Robustly parse a detection timestamp (ET/ISO, with or without offset). None if unparseable.
+    A naive timestamp is treated as UTC so comparisons are always timezone-aware."""
+    if not ts:
+        return None
+    try:
+        dt = datetime.fromisoformat(str(ts).strip())
+    except ValueError:
+        return None
+    return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
+
+
+def _is_recent(arb: dict[str, Any], now: datetime, window_min: float) -> bool:
+    """True if the arb was detected within the last ``window_min`` minutes (unparseable -> drop)."""
+    dt = _parse_ts(arb.get("detected_at"))
+    if dt is None:
+        return False
+    return dt.timestamp() >= now.timestamp() - window_min * 60.0
+
+
+def load_clean_arbs(csv_path: str | None = None, recent_minutes: int | None = None, *,
+                    now: Optional[datetime] = None) -> list[dict[str, Any]]:
+    """Return clean kalshi<->poly arbs from the CSV, best (highest ROI) first.
+
+    When ``recent_minutes`` is set, keep only arbs whose detection timestamp is within the last N
+    minutes; rows whose timestamp can't be parsed are skipped. Default None = all clean arbs."""
     path = csv_path or DEFAULT_CSV
     if not os.path.exists(path):
         return []
+    now = now or datetime.now(timezone.utc)
     out: list[dict[str, Any]] = []
     with open(path, "r", encoding="utf-8", newline="") as fh:
         for row in csv.DictReader(fh):
@@ -55,6 +81,8 @@ def load_clean_arbs(csv_path: str | None = None) -> list[dict[str, Any]]:
             try:
                 normalize_arb(arb)        # validates exactly one kalshi + one poly leg
             except ResolveError:
+                continue
+            if recent_minutes is not None and not _is_recent(arb, now, recent_minutes):
                 continue
             out.append(arb)
     out.sort(key=lambda a: a.get("roi_pct", 0.0), reverse=True)

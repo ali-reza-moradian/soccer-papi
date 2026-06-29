@@ -15,12 +15,25 @@ import yaml
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 DEFAULT_CONFIG_PATH = os.path.join(REPO_ROOT, "config.yaml")
 
+# Auto-load the repo-root .env on import so every executor entry point (cli, preflight, dashboard,
+# selfcheck) gets KALSHI_*/POLYGON_*/POLY_* without the user re-sourcing it each terminal. real
+# environment variables WIN (override=False), and the repo root is derived from __file__ so the
+# current working directory does not matter. python-dotenv is a hard executor dependency; if it is
+# somehow absent we degrade silently to "use whatever is already in the environment".
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv(dotenv_path=os.path.join(REPO_ROOT, ".env"), override=False)
+except ImportError:  # pragma: no cover - dotenv missing -> rely on the ambient environment
+    pass
+
 # All executor state is isolated here — no shared mutable state with the scanner.
 EXEC_DIR = os.path.join(REPO_ROOT, "data", "executor")
 STOP_FILE = os.path.join(EXEC_DIR, "STOP")
 LEDGER_PATH = os.path.join(EXEC_DIR, "trade_ledger.csv")
 DRYRUN_LOG_PATH = os.path.join(EXEC_DIR, "dryrun_log.csv")
 LOG_PATH = os.path.join(EXEC_DIR, "executor.log")
+HEARTBEAT_PATH = os.path.join(EXEC_DIR, "loop_heartbeat.json")
 
 
 def ensure_dirs() -> None:

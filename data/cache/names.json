@@ -1,127 +1,64 @@
 {
   "by_fixture": {
-    "id1000001666456912": {
+    "id1000001653452541": {
       "category": "International",
-      "p1": "Czechia",
-      "p2": "Mexico",
-      "start_time": "2026-06-25T01:00:00.000Z",
+      "p1": "Germany",
+      "p2": "Paraguay",
+      "start_time": "2026-06-29T20:30:00.000Z",
       "status_id": 0,
       "status_name": "Pre-Game",
       "tournament": "World Cup"
     },
-    "id1000001666456914": {
+    "id1000001653452543": {
       "category": "International",
-      "p1": "South Africa",
-      "p2": "Korea Republic",
-      "start_time": "2026-06-25T01:00:00.000Z",
-      "status_id": 0,
-      "status_name": "Pre-Game",
-      "tournament": "World Cup"
-    },
-    "id1000001666456924": {
-      "category": "International",
-      "p1": "Switzerland",
-      "p2": "Canada",
-      "start_time": "2026-06-24T19:00:00.000Z",
-      "status_id": 0,
-      "status_name": "Pre-Game",
-      "tournament": "World Cup"
-    },
-    "id1000001666456926": {
-      "category": "International",
-      "p1": "Bosnia and Herzegovina",
-      "p2": "Qatar",
-      "start_time": "2026-06-24T19:00:00.000Z",
-      "status_id": 0,
-      "status_name": "Pre-Game",
-      "tournament": "World Cup"
-    },
-    "id1000001666456936": {
-      "category": "International",
-      "p1": "Scotland",
-      "p2": "Brazil",
-      "start_time": "2026-06-24T22:00:00.000Z",
-      "status_id": 0,
-      "status_name": "Pre-Game",
-      "tournament": "World Cup"
-    },
-    "id1000001666456938": {
-      "category": "International",
-      "p1": "Morocco",
-      "p2": "Haiti",
-      "start_time": "2026-06-24T22:00:00.000Z",
-      "status_id": 0,
-      "status_name": "Pre-Game",
-      "tournament": "World Cup"
-    },
-    "id1000001666456948": {
-      "category": "International",
-      "p1": "Turkiye",
-      "p2": "USA",
-      "start_time": "2026-06-26T02:00:00.000Z",
-      "status_id": 0,
-      "status_name": "Pre-Game",
-      "tournament": "World Cup"
-    },
-    "id1000001666456950": {
-      "category": "International",
-      "p1": "Paraguay",
-      "p2": "Australia",
-      "start_time": "2026-06-26T02:00:00.000Z",
-      "status_id": 0,
-      "status_name": "Pre-Game",
-      "tournament": "World Cup"
-    },
-    "id1000001666456976": {
-      "category": "International",
-      "p1": "Tunisia",
-      "p2": "Netherlands",
-      "start_time": "2026-06-25T23:00:00.000Z",
-      "status_id": 0,
-      "status_name": "Pre-Game",
-      "tournament": "World Cup"
-    },
-    "id1000001666456978": {
-      "category": "International",
-      "p1": "Japan",
+      "p1": "France",
       "p2": "Sweden",
-      "start_time": "2026-06-25T23:00:00.000Z",
+      "start_time": "2026-06-30T21:00:00.000Z",
       "status_id": 0,
       "status_name": "Pre-Game",
       "tournament": "World Cup"
     },
-    "id1000001666457014": {
+    "id1000001653452547": {
       "category": "International",
-      "p1": "Norway",
-      "p2": "France",
-      "start_time": "2026-06-26T19:00:00.000Z",
+      "p1": "Netherlands",
+      "p2": "Morocco",
+      "start_time": "2026-06-30T01:00:00.000Z",
       "status_id": 0,
       "status_name": "Pre-Game",
       "tournament": "World Cup"
     },
-    "id1000001666457016": {
+    "id1000001653452555": {
       "category": "International",
-      "p1": "Senegal",
-      "p2": "Iraq",
-      "start_time": "2026-06-26T19:00:00.000Z",
+      "p1": "Belgium",
+      "p2": "Senegal",
+      "start_time": "2026-07-01T20:00:00.000Z",
       "status_id": 0,
       "status_name": "Pre-Game",
       "tournament": "World Cup"
     },
-    "id1000001666457078": {
+    "id1000001653452561": {
       "category": "International",
-      "p1": "Ecuador",
-      "p2": "Germany",
-      "start_time": "2026-06-25T20:00:00.000Z",
+      "p1": "Ivory Coast",
+      "p2": "Norway",
+      "start_time": "2026-06-30T17:00:00.000Z",
       "status_id": 0,
       "status_name": "Pre-Game",
       "tournament": "World Cup"
     },
-    "id1000001666457080": {
+    "id1000001653452563": {
       "category": "International",
-      "p1": "Curacao",
-      "p2": "Ivory Coast",
-      "start_time": "2026-06-25T20:00:00.000Z",
+      "p1": "Mexico",
+      "p2": "Ecuador",
+      "start_time": "2026-07-01T01:00:00.000Z",
+      "status_id": 0,
+      "status_name": "Pre-Game",
+      "tournament": "World Cup"
+    },
+    "id1000001653452565": {
+      "category": "International",
+      "p1": "England",
+      "p2": "Congo DR",
+      "start_time": "2026-07-01T16:00:00.000Z",
       "status_id": 0,
       "status_name": "Pre-Game",
       "tournament": "World Cup"
@@ -129,42 +66,28 @@
   },
   "by_participant": {
     "4475": "Norway",
-    "4479": "Bosnia and Herzegovina",
     "4481": "France",
     "4688": "Sweden",
-    "4695": "Scotland",
-    "4699": "Switzerland",
-    "4700": "Turkiye",
     "4705": "Netherlands",
     "4711": "Germany",
-    "4714": "Czechia",
-    "4724": "USA",
-    "4729": "Tunisia",
-    "4735": "Korea Republic",
-    "4736": "South Africa",
+    "4713": "England",
+    "4717": "Belgium",
     "4739": "Senegal",
-    "4741": "Australia",
-    "4748": "Brazil",
-    "4752": "Canada",
     "4757": "Ecuador",
-    "4767": "Iraq",
     "4768": "Ivory Coast",
-    "4770": "Japan",
     "4778": "Morocco",
     "4781": "Mexico",
     "4789": "Paraguay",
-    "4792": "Qatar",
-    "55827": "Curacao",
-    "7229": "Haiti"
+    "4823": "Congo DR"
   },
   "fingerprint": {
     "tournament_ids": [
       16
     ],
     "window": {
-      "from": "2026-06-24T14:34:15Z",
-      "to": "2026-06-26T23:59:59Z"
+      "from": "2026-06-29T18:40:03Z",
+      "to": "2026-07-01T23:59:59Z"
     }
   },
-  "saved_at": 1782311655.476316
+  "saved_at": 1782758403.40975
 }

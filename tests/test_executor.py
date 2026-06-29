@@ -184,6 +184,16 @@ def test_poly_wallet_mismatch_detection():
     assert not poly_exec.is_wallet_mismatch_error("insufficient balance")
 
 
+def test_resolve_wallet_defaults_signature_type_to_poly_proxy(monkeypatch):
+    """A missing POLY_SIGNATURE_TYPE must default to 1 (POLY_PROXY), NOT the invalid 3 — and an
+    explicit env value still overrides. (Valid Polymarket types: 0=EOA, 1=POLY_PROXY, 2=GNOSIS.)"""
+    monkeypatch.setenv("POLYGON_PRIVATE_KEY", "0x" + "11" * 32)   # valid secp256k1 scalar
+    monkeypatch.delenv("POLY_SIGNATURE_TYPE", raising=False)
+    assert poly_exec.resolve_wallet()["signature_type"] == 1      # default, not 3
+    monkeypatch.setenv("POLY_SIGNATURE_TYPE", "2")
+    assert poly_exec.resolve_wallet()["signature_type"] == 2      # env override still wins
+
+
 class _FakePolyClient:
     """Minimal stand-in for ClobClient covering create_order/post_order + metadata reads."""
 
@@ -213,23 +223,66 @@ class _FakePolyClient:
 
 
 def test_poly_place_order_fok_normalizes(monkeypatch):
-    # Stub the SDK constants/classes the adapter imports lazily.
+    # Stub the v2 SDK constants/classes the adapter imports lazily.
     import types
-    clob_types = types.ModuleType("py_clob_client.clob_types")
+    clob_types = types.ModuleType("py_clob_client_v2.clob_types")
     clob_types.OrderArgs = lambda **kw: types.SimpleNamespace(**kw)
     clob_types.OrderType = types.SimpleNamespace(FOK="FOK", GTC="GTC")
-    constants = types.ModuleType("py_clob_client.order_builder.constants")
+    clob_types.PartialCreateOrderOptions = lambda **kw: types.SimpleNamespace(**kw)
+    constants = types.ModuleType("py_clob_client_v2.order_builder.constants")
     constants.BUY, constants.SELL = "BUY", "SELL"
-    monkeypatch.setitem(sys.modules, "py_clob_client.clob_types", clob_types)
-    monkeypatch.setitem(sys.modules, "py_clob_client.order_builder.constants", constants)
+    monkeypatch.setitem(sys.modules, "py_clob_client_v2.clob_types", clob_types)
+    monkeypatch.setitem(sys.modules, "py_clob_client_v2.order_builder.constants", constants)
 
     client = _FakePolyClient(post_result={"success": True, "size_matched": "5", "orderID": "p1"})
     p = poly_exec.PolyExec(client=client)
     res = p.place_order("TOK", 0.40, 5, "BUY", order_type="FOK")
     assert res["status"] == "filled" and res["shares"] == 5
     assert res["usd"] == pytest.approx(2.0) and res["order_id"] == "p1"
-    # tick_size + neg_risk were fetched and passed to create_order.
-    assert client.created[0]["options"] == {"tick_size": 0.01, "neg_risk": False}
+    # tick_size + neg_risk were fetched and passed to create_order as a v2 PartialCreateOrderOptions
+    # (tick canonicalized to the literal string '0.01' v2 requires).
+    opts = client.created[0]["options"]
+    assert opts.tick_size == "0.01" and opts.neg_risk is False
+
+
+def test_poly_get_balance_passes_signature_type(monkeypatch):
+    """get_balance() must scope the read to the FUNDER/PROXY by passing signature_type (and the v2
+    client is built with that same signature_type), else it reads the empty signer EOA and a funded
+    wallet shows $0. Mock the v2 SDK + client and assert signature_type flows into BalanceAllowanceParams
+    and out to get_balance_allowance."""
+    import types
+    captured: dict = {}
+
+    clob_types = types.ModuleType("py_clob_client_v2.clob_types")
+
+    class _BAP:
+        def __init__(self, asset_type=None, signature_type=None, **kw):
+            captured["asset_type"] = asset_type
+            captured["signature_type"] = signature_type
+            captured["extra"] = kw
+
+    clob_types.BalanceAllowanceParams = _BAP
+    clob_types.AssetType = types.SimpleNamespace(COLLATERAL="COLLATERAL")
+    monkeypatch.setitem(sys.modules, "py_clob_client_v2.clob_types", clob_types)
+    # Force the env-fallback signature_type path (no private key) so the test is deterministic.
+    monkeypatch.setattr(poly_exec, "resolve_wallet",
+                        lambda: (_ for _ in ()).throw(poly_exec.PolyExecError("no key")))
+    monkeypatch.setenv("POLY_SIGNATURE_TYPE", "3")
+
+    class _Client:
+        def __init__(self):
+            self.seen = None
+
+        def get_balance_allowance(self, params):
+            self.seen = params
+            return {"balance": "30315000000"}      # funded proxy: ~$30,315 in USDC base units
+
+    client = _Client()
+    bal = poly_exec.PolyExec(client=client).get_balance()
+    assert captured["asset_type"] == "COLLATERAL"
+    assert captured["signature_type"] == 3          # passed through (was missing before the fix)
+    assert client.seen is not None                  # the params actually reached the client
+    assert bal["balance"] == "30315000000"
 
 
 import sys  # noqa: E402  (used by the monkeypatch stub above)
@@ -348,6 +401,70 @@ def test_dryrun_slippage_recorded(tmp_path):
     assert res.status == "dryrun"
     row = list(__import__("csv").DictReader(open(log_path)))[0]
     assert float(row["kalshi_slippage"]) > 0      # paid up beyond the detected price
+
+
+def test_dryrun_skipped_arb_writes_visible_row_and_logs(tmp_path):
+    """(a) An arb whose live book is EMPTY is never dropped silently: a status='skipped' row with
+    the reason + fixture/market/legs is written, arb_survived is blank, and the reason is logged."""
+    log_path = str(tmp_path / "dryrun_log.csv")
+    md = _FakeMarketData(k_ladder=[(0.47, 300)], p_ladder=[])      # poly leg has NO live book
+    logger = _Log()
+    res = exec_engine.execute_arb(_clean_arb(), live=False, cfg=_cfg.ExecConfig(),
+                                  market_data=md, dryrun_log_path=log_path, log=logger)
+    assert res.status == "skipped" and "empty live book" in res.reason
+    row = list(__import__("csv").DictReader(open(log_path)))[0]
+    assert row["status"] == "skipped"
+    assert "empty live book" in row["skip_reason"]
+    assert row["arb_survived"] == ""                              # no survival verdict
+    assert row["fixture"] == "Brazil vs Spain" and row["market"] == "Full Time Result"
+    assert json.loads(row["legs_json"])                          # legs/venues captured
+    # The reason was logged (so it reaches executor.log + the panel event log).
+    assert any("skipped" in str(a).lower() for lvl, a in logger.records if lvl == "warning")
+
+
+def test_dryrun_surviving_arb_row_unchanged(tmp_path):
+    """(b) A normal surviving arb still writes its full row: status='dryrun', blank skip_reason, a
+    real survival verdict and economics — unchanged behavior aside from the two additive columns."""
+    log_path = str(tmp_path / "dryrun_log.csv")
+    md = _FakeMarketData(k_ladder=[(0.47, 300)], p_ladder=[(0.48, 300)])
+    res = exec_engine.execute_arb(_clean_arb(), live=False, cfg=_cfg.ExecConfig(),
+                                  market_data=md, dryrun_log_path=log_path, log=_Log())
+    assert res.status == "dryrun" and res.arb_survived is True
+    row = list(__import__("csv").DictReader(open(log_path)))[0]
+    assert row["status"] == "dryrun" and row["skip_reason"] == ""
+    assert row["arb_survived"] == "True" and float(row["net_edge_pct"]) > 0
+
+
+def test_dryrun_log_migrates_new_columns_into_old_file(tmp_path):
+    """(c) An existing dryrun_log written before status/skip_reason migrates cleanly: the header is
+    rewritten to the new schema, the old row's values are preserved (new cols blank), no shift."""
+    import csv as _csv
+    path = str(tmp_path / "dryrun_log.csv")
+    old_cols = [c for c in exec_engine.DRYRUN_COLUMNS if c not in ("status", "skip_reason")]
+    old_row = {c: "" for c in old_cols}
+    old_row.update({"ts_utc": "2026-06-26T00:00:00Z", "fixture": "Old vs Row",
+                    "market": "FTR", "fingerprint": "old-fp", "arb_survived": "True",
+                    "net_edge_pct": "1.5"})
+    with open(path, "w", encoding="utf-8", newline="") as fh:
+        w = _csv.DictWriter(fh, fieldnames=old_cols)
+        w.writeheader()
+        w.writerow(old_row)
+
+    exec_engine.append_dryrun({"ts_utc": "2026-06-26T00:01:00Z", "status": "skipped",
+                               "skip_reason": "empty live book on a leg", "fixture": "New vs Row",
+                               "market": "FTR", "fingerprint": "new-fp", "arb_survived": ""}, path)
+
+    with open(path, "r", encoding="utf-8", newline="") as fh:
+        reader = _csv.DictReader(fh)
+        assert reader.fieldnames == exec_engine.DRYRUN_COLUMNS          # header migrated
+        rows = list(reader)
+    assert len(rows) == 2
+    # Old row preserved, new columns blank (no silent column shift).
+    assert rows[0]["fixture"] == "Old vs Row" and rows[0]["arb_survived"] == "True"
+    assert rows[0]["net_edge_pct"] == "1.5"
+    assert rows[0]["status"] == "" and rows[0]["skip_reason"] == ""
+    # New skipped row landed correctly.
+    assert rows[1]["status"] == "skipped" and rows[1]["skip_reason"] == "empty live book on a leg"
 
 
 # =========================================================================
@@ -839,6 +956,33 @@ def test_cli_dryrun_handles_no_arbs(tmp_path):
     assert rc == 0
 
 
+def test_run_dryrun_cycle_counts_and_writes_skips(tmp_path):
+    """The loop cycle counts skipped arbs separately, surfaces the reason, and writes a visible
+    skip row (so the per-cycle log '… 0 survived, 0 failed, 1 skipped (empty live book …)' is real)."""
+    log_path = str(tmp_path / "dryrun_log.csv")
+    md = _FakeMarketData(k_ladder=[(0.47, 300)], p_ladder=[])      # empty poly -> skipped
+    stats = exec_cli.run_dryrun_cycle(_cfg.ExecConfig(), md, [_clean_arb()], 50, {},
+                                      dryrun_log_path=log_path, log=_Log())
+    assert stats["skipped"] == 1 and stats["survived"] == 0 and stats["failed"] == 0
+    assert stats["total"] == 0 and stats["written"] == 1
+    assert "empty live book" in stats["skip_reason"]
+    row = list(__import__("csv").DictReader(open(log_path)))[0]
+    assert row["status"] == "skipped"
+
+    # Same skip again next cycle dedupes (no new row); a surviving arb counts as survived.
+    last_seen: dict = {}
+    exec_cli.run_dryrun_cycle(_cfg.ExecConfig(), md, [_clean_arb()], 50, last_seen,
+                              dryrun_log_path=log_path, log=_Log())
+    again = exec_cli.run_dryrun_cycle(_cfg.ExecConfig(), md, [_clean_arb()], 50, last_seen,
+                                      dryrun_log_path=log_path, log=_Log())
+    assert again["skipped"] == 1 and again["written"] == 0          # identical skip not re-logged
+
+    good = _FakeMarketData(k_ladder=[(0.47, 300)], p_ladder=[(0.48, 300)])
+    s2 = exec_cli.run_dryrun_cycle(_cfg.ExecConfig(), good, [_clean_arb()], 50, {},
+                                   dryrun_log_path=log_path, log=_Log())
+    assert s2["survived"] == 1 and s2["skipped"] == 0 and s2["total"] == 1
+
+
 # =========================================================================
 # IDENTIFIER PERSISTENCE — scanner-emitted venue IDs flow into the executor
 # =========================================================================
@@ -1192,3 +1336,218 @@ def test_selfcheck_rows_render_in_panel_views(tmp_path):
     assert arbs and all(a["source"] == "selfcheck" for a in arbs)   # source column surfaces
     led = dash.ledger_view(dash.tail_csv(lpath, 50))
     assert any(r["alert"] for r in led)                              # the unwind row is flagged
+
+
+# =========================================================================
+# DASHBOARD FIX 2 — human-readable balances / captions / what's-happening / feed
+# =========================================================================
+from datetime import datetime, timedelta, timezone
+
+
+def test_format_kalshi_balance_cents_to_dollars():
+    assert dash.format_kalshi_balance({"balance": 706009}) == "$7,060.09"   # task's example
+    assert dash.format_kalshi_balance({"balance": 696543}) == "$6,965.43"   # live value
+    assert dash.format_kalshi_balance({"balance": 0}) == "$0.00"
+    assert dash.kalshi_usd({"balance": 696543}) == pytest.approx(6965.43)
+
+
+def test_format_kalshi_balance_error_and_unknown():
+    assert dash.format_kalshi_balance({"error": "401 unauthorized"}).startswith("⚠ auth error")
+    assert dash.kalshi_usd({"error": "x"}) is None
+    # unrecognized shape -> raw fallback, no crash
+    assert dash.format_kalshi_balance({"weird": 1}) == "{'weird': 1}"
+
+
+def test_format_poly_balance_base_units_zero_and_funded():
+    assert dash.format_poly_balance({"balance": "0"}) == "$0.00 — wallet unfunded"
+    assert dash.format_poly_balance({"balance": "5000000"}) == "$5.00 USDC"      # 6-decimals
+    assert dash.format_poly_balance({"balance": "12345670"}) == "$12.35 USDC"
+    assert dash.poly_usd({"balance": "5000000"}) == pytest.approx(5.0)
+    assert dash.format_poly_balance({"error": "no creds"}).startswith("⚠ auth error")
+    assert dash.format_poly_balance({"nope": 1}) == "{'nope': 1}"               # raw fallback
+
+
+def test_status_caption_text():
+    assert dash.status_caption("enabled", False) == "OFF — executor will not trade"
+    assert dash.status_caption("enabled", True) == "ON"
+    assert dash.status_caption("dry_run", True) == "Simulating only — no real orders"
+    assert dash.status_caption("dry_run", False) == "LIVE orders armed"
+    assert dash.status_caption("live_enabled", False) == "Pre-game only"
+    assert dash.status_caption("live_enabled", True) == "In-play feed ON"
+
+
+def test_whats_happening_message_selection():
+    ok_k = {"balance": 696543}
+    ok_p_funded = {"balance": "5000000"}
+    ok_p_zero = {"balance": "0"}
+    err = {"error": "401"}
+
+    # STOP wins over everything.
+    assert dash.whats_happening(kalshi_bal=ok_k, poly_bal=ok_p_zero, dryrun_count=0,
+                                stop_present=True) == ["⛔ STOPPED — executor halted. Press RESUME to clear."]
+    # Auth errors surface per venue.
+    msg = dash.whats_happening(kalshi_bal=err, poly_bal=ok_p_funded, dryrun_count=0, stop_present=False)
+    assert any("Kalshi not authenticating" in m for m in msg)
+    # Healthy + poly unfunded + no dry-run data -> unfunded note + connected/waiting line.
+    msg2 = dash.whats_happening(kalshi_bal=ok_k, poly_bal=ok_p_zero, dryrun_count=0, stop_present=False)
+    assert any("unfunded" in m for m in msg2) and any("Connected & safe" in m for m in msg2)
+    # Healthy + funded + has dry-run rows -> single connected line with the count.
+    msg3 = dash.whats_happening(kalshi_bal=ok_k, poly_bal=ok_p_funded, dryrun_count=5, stop_present=False)
+    assert len(msg3) == 1 and "Connected & safe" in msg3[0] and "5" in msg3[0]
+    assert len(msg2) <= 3
+
+
+def test_count_clean_recent_arbs_window_and_cleanliness():
+    now = datetime(2026, 6, 25, 12, 0, 0, tzinfo=timezone.utc)
+    def at(mins_ago):
+        return (now - timedelta(minutes=mins_ago)).isoformat()
+    rows = [
+        {"bookmakers": "kalshi, polymarket", "detected_at_et": at(5)},     # clean + recent  -> count
+        {"bookmakers": "kalshi, polymarket", "detected_at_et": at(120)},   # clean but old   -> skip
+        {"bookmakers": "kalshi, 1xbet", "detected_at_et": at(5)},          # has 1xbet       -> skip
+        {"bookmakers": "pinnacle, polymarket", "detected_at_et": at(2)},   # has pinnacle    -> skip
+        {"bookmakers": "kalshi, polymarket", "detected_at_et": at(59)},    # clean + recent  -> count
+    ]
+    assert dash.count_clean_recent_arbs(rows, now=now, window_min=60) == 2
+
+
+def test_clean_arb_count_reads_csv(tmp_path):
+    import csv as _csv
+    now = datetime(2026, 6, 25, 12, 0, 0, tzinfo=timezone.utc)
+    p = str(tmp_path / "arbs.csv")
+    with open(p, "w", encoding="utf-8", newline="") as fh:
+        w = _csv.DictWriter(fh, fieldnames=["bookmakers", "detected_at_et"])
+        w.writeheader()
+        w.writerow({"bookmakers": "kalshi, polymarket",
+                    "detected_at_et": (now - timedelta(minutes=3)).isoformat()})
+        w.writerow({"bookmakers": "kalshi, 1xbet",
+                    "detected_at_et": (now - timedelta(minutes=3)).isoformat()})
+    assert dash.clean_arb_count(p, now=now, window_min=60) == 1
+    assert dash.clean_arb_count(str(tmp_path / "missing.csv"), now=now) == 0   # safe when missing
+
+
+def test_count_recent_arbs_counts_all_books():
+    now = datetime(2026, 6, 25, 12, 0, 0, tzinfo=timezone.utc)
+    def at(mins_ago):
+        return (now - timedelta(minutes=mins_ago)).isoformat()
+    rows = [
+        {"bookmakers": "kalshi, polymarket", "detected_at_et": at(5)},     # recent (clean)  -> count
+        {"bookmakers": "kalshi, 1xbet", "detected_at_et": at(5)},          # recent (1xbet)  -> count
+        {"bookmakers": "pinnacle, polymarket", "detected_at_et": at(2)},   # recent          -> count
+        {"bookmakers": "kalshi, polymarket", "detected_at_et": at(200)},   # old             -> skip
+    ]
+    assert dash.count_recent_arbs(rows, now=now, window_min=60) == 3       # ALL books, not just clean
+    assert dash.count_clean_recent_arbs(rows, now=now, window_min=60) == 1 # only the clean one
+
+
+# =========================================================================
+# FIX 2 — `diagnose` end-to-end health check (offline, mocked adapters)
+# =========================================================================
+def test_cli_diagnose_runs_offline_and_prints_all_sections(tmp_path, monkeypatch, capsys):
+    """diagnose runs every check with mocked adapters (no network), placing nothing, and prints a
+    PASS/FAIL line per section + the exact funder address, balances, verdict and next command."""
+    class _FakeKal:
+        def get_balance(self):
+            return {"balance": 696543}            # cents -> $6,965.43
+
+    class _FakePoly:
+        def can_place_polymarket_orders(self):
+            return True, "OK (signer=0xsigner, funder=0xFUNDER, sig_type=3)"
+
+        def get_balance(self):
+            return {"balance": "30315000000"}     # USDC base units -> $30,315.00
+
+    monkeypatch.setattr(exec_cli, "_kalshi_adapter", lambda cfg: _FakeKal())
+    monkeypatch.setattr(exec_cli, "_poly_adapter", lambda cfg: _FakePoly())
+    monkeypatch.setattr(exec_cli, "_poly_wallet_facts", lambda: ("0xFUNDER1234567890", 3))
+
+    # A scanner CSV with one tradable (clean) + one 1xbet arb, both recent.
+    import csv as _csv
+    recent = (datetime.now(timezone.utc) - timedelta(minutes=3)).isoformat()
+    csv_path = str(tmp_path / "arbs.csv")
+    with open(csv_path, "w", encoding="utf-8", newline="") as fh:
+        w = _csv.DictWriter(fh, fieldnames=["bookmakers", "detected_at_et"])
+        w.writeheader()
+        w.writerow({"bookmakers": "kalshi, polymarket", "detected_at_et": recent})
+        w.writerow({"bookmakers": "kalshi, 1xbet", "detected_at_et": recent})
+
+    rc = exec_cli.main(["--csv", csv_path, "diagnose"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    # 1) .env section present (PASS or FAIL depending on ambient env — just assert it ran).
+    assert ".env loaded" in out
+    # 2) Kalshi balance formatted.
+    assert "[PASS] Kalshi auth+balance: $6,965.43" in out
+    # 3) Polymarket: exact funder, the compare warning, and the funded balance.
+    assert "Polymarket funder queried: 0xFUNDER1234567890" in out
+    assert "If this address != your Polymarket wallet popup, POLY_FUNDER_ADDRESS is wrong." in out
+    assert "[PASS] Polymarket can-place-orders" in out
+    assert "[PASS] Polymarket balance: $30,315.00" in out
+    # 4) Dry-run pipeline produced a synthetic row.
+    assert "[PASS] Dry-run pipeline" in out
+    # 5) Scanner feed: total incl 1xbet vs tradable-by-this-bot.
+    assert "Scanner feed (last 60 min)" in out
+    assert "2 total arb(s) incl 1xbet; 1 tradable by THIS bot" in out
+    # 6) Verdict + exact next command.
+    assert "VERDICT:" in out
+    assert "Next: python -m src.executor.cli dryrun --loop" in out
+
+
+def test_cli_diagnose_flags_zero_poly_balance(tmp_path, monkeypatch, capsys):
+    """A $0 Polymarket collateral read is shown as a FAIL with the wallet/sig_type hint."""
+    class _FakeKal:
+        def get_balance(self):
+            return {"balance": 0}
+
+    class _FakePoly:
+        def can_place_polymarket_orders(self):
+            return False, "preflight failed: nope"
+
+        def get_balance(self):
+            return {"balance": "0"}
+
+    monkeypatch.setattr(exec_cli, "_kalshi_adapter", lambda cfg: _FakeKal())
+    monkeypatch.setattr(exec_cli, "_poly_adapter", lambda cfg: _FakePoly())
+    monkeypatch.setattr(exec_cli, "_poly_wallet_facts", lambda: ("0xWRONG", 3))
+
+    rc = exec_cli.main(["--csv", str(tmp_path / "missing.csv"), "diagnose"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "[FAIL] Polymarket balance: $0 - check wallet/sig_type" in out
+    assert "VERDICT: WARN" in out
+
+
+# =========================================================================
+# FIX 3 — dry-run loop heartbeat (write + freshness message)
+# =========================================================================
+def test_heartbeat_write_and_read_roundtrip(tmp_path):
+    p = str(tmp_path / "loop_heartbeat.json")
+    now = datetime(2026, 6, 26, 18, 30, 0, tzinfo=timezone.utc)
+    payload = dash.write_heartbeat(0, 7, path=p, now=now)
+    assert payload == {"last_cycle_utc": "2026-06-26T18:30:00Z",
+                       "clean_arbs_found": 0, "total_recent_arbs": 7}
+    assert dash.read_heartbeat(p) == payload
+    assert dash.read_heartbeat(str(tmp_path / "nope.json")) is None     # missing -> None
+
+
+def test_heartbeat_freshness_and_message():
+    base = datetime(2026, 6, 26, 18, 30, 0, tzinfo=timezone.utc)
+    fresh_hb = {"last_cycle_utc": "2026-06-26T18:29:00Z", "clean_arbs_found": 0, "total_recent_arbs": 4}
+    stale_hb = {"last_cycle_utc": "2026-06-26T18:20:00Z", "clean_arbs_found": 0, "total_recent_arbs": 4}
+
+    assert dash.heartbeat_fresh(fresh_hb, now=base) is True            # 1 min old < 5 min
+    assert dash.heartbeat_fresh(stale_hb, now=base) is False           # 10 min old
+    assert dash.heartbeat_fresh(None, now=base) is False               # missing
+
+    alive = dash.heartbeat_message(fresh_hb, now=base)
+    assert alive.startswith("✅ Dry-run loop alive — last check ")
+    assert "0 clean arbs (nothing tradable right now)" in alive
+
+    busy = dash.heartbeat_message(
+        {"last_cycle_utc": "2026-06-26T18:29:30Z", "clean_arbs_found": 3, "total_recent_arbs": 9},
+        now=base)
+    assert "3 clean arbs (3 tradable right now)" in busy
+
+    down = dash.heartbeat_message(stale_hb, now=base)
+    assert down == "⚠ Dry-run loop not running — start it with `cli dryrun --loop`."
+    assert dash.heartbeat_message(None, now=base).startswith("⚠ Dry-run loop not running")

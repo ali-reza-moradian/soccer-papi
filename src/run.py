@@ -710,9 +710,15 @@ def _merge_polymarket(cfg, cats, by_fixture, raw_by_fixture, now, log) -> dict[s
         # SAFE-TIER full-game totals O/U + BTTS (reg-time) — the priority Kalshi<->Polymarket surface.
         # raw_by_fixture lets fetch skip pricing lines with no counterparty; CLOB pricing is batched
         # concurrently (clob_max_workers) — the per-game speed fix.
+        # DEPTH-AWARE Poly leg pricing (default ON): quote the VWAP + fillable depth within
+        # poly_depth_slippage_pct of the best ask instead of the single (often thin) best-ask tick, so
+        # thin/flickering legs stop minting phantom REAL arbs. poly_depth_pricing:false = legacy.
         events = polymarket.fetch_wc_events(
             client, by_fixture, log, market_index=index, raw_by_fixture=raw_by_fixture,
-            max_workers=int(cfg.polymarket_opt("clob_max_workers", 8)))
+            max_workers=int(cfg.polymarket_opt("clob_max_workers", 8)),
+            depth_pricing=bool(cfg.get("poly_depth_pricing", default=True)),
+            slippage_pct=float(cfg.get("poly_depth_slippage_pct", default=polymarket.DEFAULT_DEPTH_SLIPPAGE_PCT)),
+            reference_size=float(cfg.get("poly_walk_stake", default=polymarket.DEFAULT_WALK_STAKE)))
         cov, poly_books = polymarket.merge_into(raw_by_fixture, by_fixture, index, events, now=now, log=log)
         for line in cov.lines():
             log.info("%s", line)

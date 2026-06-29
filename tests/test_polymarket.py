@@ -132,7 +132,7 @@ def test_parse_event_legs_shape_and_date():
     assert ev is not None
     assert ev.commence_iso == "2026-06-14T12:00:00Z"        # from eventDate, noon-anchored (not startDate)
     roles = sorted((leg.role, leg.team, leg.yes_token) for leg in ev.legs)
-    assert roles == [("draw", None, "draw_yes"),
+    assert roles == [("draw", "Draw", "draw_yes"),
                      ("team", "Côte d'Ivoire", "civ_yes"),
                      ("team", "Ecuador", "ecu_yes")]
 
@@ -149,13 +149,22 @@ def test_parse_event_legs_rejects_non_match_shape():
 # Pricing one leg from a fake CLOB client                                       #
 # --------------------------------------------------------------------------- #
 class _FakeClient:
-    """Stand-in for PolymarketClient: canned search() + book() responses, no network."""
-    def __init__(self, events_by_term=None, books_by_token=None):
+    """Stand-in for PolymarketClient: canned search() + events_by_slug() + book() responses, no
+    network. ``events_by_slug`` maps an exact slug -> the list of events Gamma's /events?slug= returns
+    (a 404/miss is an empty list); ``slug_errors`` is a set of slugs that raise PolymarketError."""
+    def __init__(self, events_by_term=None, books_by_token=None, events_by_slug=None, slug_errors=None):
         self.events_by_term = events_by_term or {}
         self.books_by_token = books_by_token or {}
+        self.slugs = events_by_slug or {}
+        self.slug_errors = set(slug_errors or ())
 
     def search(self, q):
         return {"events": self.events_by_term.get(q, [])}
+
+    def events_by_slug(self, slug):
+        if slug in self.slug_errors:
+            raise polymarket.PolymarketError(f"404 no event for {slug}")
+        return self.slugs.get(slug, [])
 
     def book(self, token_id):
         b = self.books_by_token.get(token_id)
@@ -163,13 +172,16 @@ class _FakeClient:
             raise polymarket.PolymarketError(f"404 no book for {token_id}")
         return b
 
-    def price_tokens(self, tokens, max_workers=8):
+    def price_tokens(self, tokens, max_workers=8, *, depth_pricing=False,
+                     slippage_pct=polymarket.DEFAULT_DEPTH_SLIPPAGE_PCT,
+                     reference_size=polymarket.DEFAULT_WALK_STAKE):
         """Mirror PolymarketClient.price_tokens over the canned books (sequential; no network)."""
         out = {}
         for t in dict.fromkeys(tokens):
             if not t:
                 continue
-            out[t] = polymarket.price_leg(self, t)
+            out[t] = polymarket.price_leg(self, t, depth_pricing=depth_pricing, slippage_pct=slippage_pct,
+                                          reference_size=reference_size)
         return out
 
 
@@ -218,6 +230,28 @@ def test_price_leg_from_clob_best_ask():
     assert polymarket.price_leg(client, "missing_token") is None   # 4xx / no book -> drop-safe None
 
 
+def test_parse_event_legs_labels_draw_and_never_emits_none_team():
+    """The draw leg gets the canonical "Draw" label (was None) so it aligns with the other books' tie
+    leg and never crashes None formatting; the draw's pricing/decimal/limit stay untouched."""
+    ev = polymarket.parse_event_legs(_civ_ecuador_event())
+    assert ev is not None
+    by_role = {leg.role: leg for leg in ev.legs}
+    assert {leg.team for leg in ev.legs} == {"Côte d'Ivoire", "Draw", "Ecuador"}
+    assert all(leg.team is not None for leg in ev.legs)            # guard: no leg ever carries None
+    assert by_role["draw"].team == polymarket.DRAW_LABEL == "Draw"
+    # Pricing is unchanged by the label fix: the draw token still prices to the same decimal/limit.
+    dec, lim = polymarket.price_leg(_FakeClient(books_by_token=_CIV_BOOKS), by_role["draw"].yes_token)
+    assert round(dec, 3) == 2.985 and lim == 335.0
+
+
+def test_leg_never_carries_none_team():
+    """Guard: a Leg can never be emitted with team=None — draw falls back to the canonical "Draw"
+    label, any other role to the outcome string (its role); an explicit label is preserved."""
+    assert polymarket.Leg(role="draw").team == "Draw"
+    assert polymarket.Leg(role="over").team == "over"             # extra leg -> outcome string, not None
+    assert polymarket.Leg(role="team", team="Ecuador").team == "Ecuador"
+
+
 # --------------------------------------------------------------------------- #
 # SAFETY: we BUY all three Yes legs, so each leg MUST price at the best ASK     #
 # (what you pay to buy), never the best bid. Pricing the bid manufactures false #
@@ -260,6 +294,97 @@ def test_no_phantom_arb_when_asks_sum_above_one():
 
 
 # --------------------------------------------------------------------------- #
+# DEPTH-AWARE Poly leg pricing — quote the VWAP over the depth band, not the    #
+# single best-ask tick, so thin/flickering legs stop minting phantom REAL arbs. #
+# --------------------------------------------------------------------------- #
+def _multi_book(asks):
+    """A CLOB book from a list of (price, size) ask levels (a token bid one tick under the best ask)."""
+    best = min(p for p, _ in asks)
+    return {"asks": [{"price": str(p), "size": str(s)} for p, s in asks],
+            "bids": [{"price": str(round(best - 0.01, 4)), "size": "10"}]}
+
+
+def test_depth_pricing_thin_leg_worse_odds_kills_phantom_arb():
+    """(a) A thin, fast-decaying draw book (tiny top order, most depth a band-width worse) prices the
+    decimal off the WALK-TO-STAKE avg fill, not the single best-ask tick. That worse, real number fed
+    into the SAME 1x2 arb flips arb_sum_S from < 1 (a phantom 'REAL' arb) to >= 1 (no arb) — it stops
+    firing. The limit stays the fillable dollar depth within the slippage band."""
+    from src.arbitrage import Candidate, compute_arb
+    from src import bookmath as bm
+    # Best ask 0.119 (8.40), tiny 500 there, then a wall at 0.1249, then deeper junk.
+    levels = [(0.119, 500), (0.1249, 40000), (0.140, 100000)]
+    thin = _multi_book(levels)
+    client = _FakeClient(books_by_token={"draw": thin})
+
+    top_dec, top_lim = polymarket.price_leg(client, "draw")                       # legacy top tick
+    dep_dec, dep_lim = polymarket.price_leg(client, "draw", depth_pricing=True, slippage_pct=5.0)
+    walk_dec = 1.0 / bm.walk_book(levels, polymarket.DEFAULT_WALK_STAKE).avg_price
+    assert round(top_dec, 2) == 8.40                                              # 1/0.119 (top tick)
+    assert dep_dec < top_dec and dep_dec == walk_dec                              # walk-to-stake avg fill
+    assert round(dep_dec, 2) == 8.03                                              # worse than the 8.40 tick
+    assert dep_lim > top_lim                                                      # real band depth, $ filled
+
+    def arb(draw_dec):
+        cands = [
+            Candidate(101, "1", "polymarket", "cg1", 1.20, limit=50000.0),        # deep favorite
+            Candidate(102, "X", "polymarket", "cg2", draw_dec, limit=dep_lim),    # the thin draw
+            Candidate(103, "2", "1xbet", "cg3", 23.0, limit=None),               # longshot, unverified
+        ]
+        return compute_arb(cands)
+
+    assert arb(top_dec).is_arb                                                    # phantom arb at the top tick
+    assert not arb(dep_dec).is_arb                                                # depth-aware: S>=1, gone
+    assert arb(dep_dec).roi_pct < arb(top_dec).roi_pct                            # edge strictly shrinks
+
+
+def test_depth_pricing_deep_favorite_essentially_unchanged():
+    """(b) A deep favorite book (a wall of size at ~the best ask) keeps ~the same odds (within a tick)
+    and a large fillable limit under depth-aware pricing."""
+    deep = _multi_book([(0.827, 50000), (0.828, 100000), (0.829, 200000)])
+    client = _FakeClient(books_by_token={"fav": deep})
+    top_dec, _ = polymarket.price_leg(client, "fav")
+    dep_dec, dep_lim = polymarket.price_leg(client, "fav", depth_pricing=True, slippage_pct=2.0)
+    assert abs(dep_dec - top_dec) < 0.01                                          # within a tick
+    assert dep_lim > 100_000                                                      # large real depth
+
+
+def test_depth_pricing_false_restores_exact_top_of_book():
+    """(d) poly_depth_pricing OFF (the default) reproduces the EXACT legacy top-of-book quote on a
+    multi-level book: decimal = 1/best_ask, limit = best_ask_size × best_ask (deeper levels ignored)."""
+    book = _multi_book([(0.20, 1000), (0.21, 9_000_000), (0.25, 9_000_000)])
+    client = _FakeClient(books_by_token={"t": book})
+    assert polymarket.price_leg(client, "t") == (1.0 / 0.20, 0.20 * 1000)         # default = legacy
+    assert polymarket.price_leg(client, "t", depth_pricing=False) == (1.0 / 0.20, 0.20 * 1000)
+
+
+def test_depth_pricing_quotes_walk_to_stake_avg_fill_not_best_ask():
+    """(e) THE Germany-Paraguay fix: a thin draw book whose best-ask tick is tiny but whose remaining
+    depth is worse. The depth-aware decimal must equal the size-weighted WALK-TO-STAKE avg fill
+    (bookmath.walk_book to the reference stake) — the worse, real number Polymarket fills at — NOT the
+    optimistic 1/best_ask. A deep favorite (a wall at the best ask) stays ~unchanged."""
+    from src import bookmath as bm
+    # Thin draw: only 800 shares at the 0.19 best ask (5.2632), the rest a band-width worse.
+    thin_levels = [(0.19, 800), (0.196, 60000), (0.21, 200000)]
+    client = _FakeClient(books_by_token={"draw": thin_levels and _multi_book(thin_levels)})
+
+    dec, lim = polymarket.price_leg(client, "draw", depth_pricing=True, slippage_pct=5.0)
+    best_ask_dec = 1.0 / 0.19                                                     # the optimistic top tick
+    walk = bm.walk_book(thin_levels, polymarket.DEFAULT_WALK_STAKE)               # walk to the $10k stake
+    assert walk.avg_price > 0.19                                                  # the walk really blends worse
+    assert dec == 1.0 / walk.avg_price                                            # quote = avg fill...
+    assert dec < best_ask_dec - 0.1                                               # ...the WORSE, real number
+    assert round(best_ask_dec, 4) == 5.2632                                       # the tick the bot used to quote
+    # limit stays the fillable dollar depth within the 5% slippage band (not the best-ask tick alone).
+    assert lim > 0.19 * 800
+
+    # A deep favorite: a wall of size right at the best ask -> walk fills ~entirely there -> ~unchanged.
+    deep = _multi_book([(0.827, 80000), (0.828, 200000), (0.829, 400000)])
+    fav_client = _FakeClient(books_by_token={"fav": deep})
+    fav_dec, _ = polymarket.price_leg(fav_client, "fav", depth_pricing=True, slippage_pct=2.0)
+    assert abs(fav_dec - 1.0 / 0.827) < 0.01                                      # within a tick of best ask
+
+
+# --------------------------------------------------------------------------- #
 # Full pipeline: discover -> price -> map, with cross-sport disambiguation      #
 # --------------------------------------------------------------------------- #
 def _cricket_noise_event():
@@ -298,6 +423,75 @@ def test_fetch_then_merge_maps_soccer_and_drops_cross_sport_noise():
     assert round(away["price"], 3) == 2.532 and away["limit"] == 395.0   # Ecuador (p2 -> away)
     assert all(p["limit"] is not None for p in (home, draw, away))       # real limits, not low_confidence
     assert home["changedAt"] == "2026-06-14T10:00:00Z"                   # scan time, not a stale line
+
+
+# --------------------------------------------------------------------------- #
+# Slug-deterministic discovery: every WC fixture is found by its match slug,    #
+# and a fixture the slug path can't resolve is logged UNMATCHED (not silent).   #
+# --------------------------------------------------------------------------- #
+# 8 in-window WC fixtures, like the live cache where keyword search built only 5.
+_WC8 = [("Brazil", "Japan"), ("France", "Sweden"), ("Ivory Coast", "Norway"),
+        ("Argentina", "Mexico"), ("Spain", "Germany"), ("England", "Italy"),
+        ("Portugal", "Netherlands"), ("USA", "Canada")]
+_WC_DATE = "2026-06-29"
+
+
+def _wc_fixtures():
+    return {f"id{i}": {"p1": h, "p2": a, "start_time": f"{_WC_DATE}T18:00:00.000Z",
+                       "status_id": 0, "tournament": "World Cup"}
+            for i, (h, a) in enumerate(_WC8)}
+
+
+def _wc_event_and_books(home, away, eid):
+    """A priceable 1x2 WC event dict for home vs away + the canned books for its three Yes tokens."""
+    h, d, a = f"{eid}_h", f"{eid}_d", f"{eid}_a"
+    ev = {"id": eid, "title": f"{home} vs. {away}", "closed": False,
+          "eventDate": _WC_DATE, "startTime": f"{_WC_DATE}T18:00:00Z",
+          "markets": [_gamma_market(f"Will {home} win on {_WC_DATE}?", h, f"{eid}_hn", date=_WC_DATE),
+                      _gamma_market(f"Will {away} win on {_WC_DATE}?", a, f"{eid}_an", date=_WC_DATE),
+                      _gamma_market(f"Will {home} vs. {away} end in a draw?", d, f"{eid}_dn", date=_WC_DATE)]}
+    return ev, {h: _book(0.40, 100), d: _book(0.30, 100), a: _book(0.35, 100)}
+
+
+def test_discovery_builds_every_wc_fixture_by_slug():
+    """All 8 fixtures resolve via their deterministic match slug (fifwc-<a3>-<b3>-<date>) — keyword
+    search is never needed and NO game is silently dropped (the live bug built only 5 of 8)."""
+    fixtures = _wc_fixtures()
+    slug_map, books = {}, {}
+    for fid, info in fixtures.items():
+        ev, bk = _wc_event_and_books(info["p1"], info["p2"], fid)
+        slug_map[polymarket._wc_slug_candidates(info)[0]] = [ev]    # event sits at its primary slug
+        books.update(bk)
+    client = _FakeClient(events_by_slug=slug_map, books_by_token=books)
+
+    events = polymarket.fetch_wc_events(client, fixtures, LOG)
+    assert len(events) == 8                                          # every WC fixture built
+    titles = " | ".join(e.title for e in events)
+    for home, _ in _WC8:
+        assert home in titles                                       # none dropped
+
+
+def test_unmatched_fixture_logs_warning_instead_of_silent_drop(caplog):
+    """A fixture whose every slug candidate 404s is NOT silently skipped: it logs an UNMATCHED warning
+    naming the tried slug, and the other 7 fixtures still build."""
+    fixtures = _wc_fixtures()
+    slug_map, books, errors = {}, {}, set()
+    drop = "id0"                                                     # Brazil vs Japan — make it 404
+    for fid, info in fixtures.items():
+        ev, bk = _wc_event_and_books(info["p1"], info["p2"], fid)
+        if fid == drop:
+            errors.update(polymarket._wc_slug_candidates(info))     # every ordering/date 404s
+            continue
+        slug_map[polymarket._wc_slug_candidates(info)[0]] = [ev]
+        books.update(bk)
+    client = _FakeClient(events_by_slug=slug_map, books_by_token=books, slug_errors=errors)
+
+    with caplog.at_level("WARNING"):
+        events = polymarket.fetch_wc_events(client, fixtures, LOG)
+    assert len(events) == 7                                          # the rest survive
+    assert "Brazil" not in " | ".join(e.title for e in events)      # the 404 game is absent...
+    assert "UNMATCHED fixture Brazil vs Japan" in caplog.text       # ...but visible, not silent
+    assert "fifwc-bra-jpn-2026-06-29" in caplog.text                # names the slug it tried
 
 
 # --------------------------------------------------------------------------- #
@@ -686,3 +880,35 @@ def test_polymarket_leg_actionable_when_gate_open():
     opps, _ = _scan(_poly_arb_feeds(), specs, _ctx(), _cfg(poly_actionable=True),
                     BY_FIXTURE, {}, NOW, LOG, {}, {}, pbooks)
     assert any(o.actionable for o in opps)
+
+
+def test_three_way_arb_pairs_polymarket_draw_across_books_no_leg_dropped():
+    """End-to-end: a priced Polymarket event whose draw leg arrived team=None is labeled by the guard,
+    merged at the canonical draw outcomeId (102), and survives a cross-book 3-way 1x2 arb — all three
+    outcomes (home/draw/away) covered with NO leg dropped, the draw sourced from Polymarket."""
+    poly = _priced_event("Côte d'Ivoire vs. Ecuador", [
+        ("team", "Côte d'Ivoire", 3.636, 275.0), ("team", "Ecuador", 2.532, 395.0),
+        ("draw", None, 2.985, 335.0)])                         # draw arrives None -> guard labels "Draw"
+    assert [leg.team for leg in poly.legs if leg.role == "draw"] == ["Draw"]
+    raw: dict = {}
+    polymarket.merge_into(raw, BY_FIXTURE, INDEX, [poly], now=NOW, log=LOG)
+
+    # A second book quotes all three 1x2 outcomes with strong home/away but a WEAK draw, so the best
+    # draw across the two books is Polymarket's — it must be picked, not dropped.
+    cu = "2026-06-14T09:50:00Z"
+    leg = lambda p: {"players": {"0": {"price": p, "limit": 500, "changedAt": cu,
+                                       "mainLine": True, "active": True}}}
+    raw["idCIV"]["bookmakerOdds"]["pinnacle"] = {
+        "bookmakerIsActive": True, "suspended": False,
+        "markets": {"101": {"marketActive": True,
+                            "outcomes": {"101": leg(3.70), "102": leg(2.50), "103": leg(2.70)}}}}
+
+    feeds = parse_odds_payload([raw["idCIV"]])
+    specs, _ = build_market_specs(MARKETS_JSON, 10, [], [])
+    opps, stats = _scan(feeds, specs, _ctx(), _cfg(poly_actionable=True),
+                        BY_FIXTURE, {}, NOW, LOG, {}, {}, {"idCIV": {"polymarket"}})
+
+    arb = next(o for o in opps if o.res.is_arb)
+    assert {l.outcome_id for l in arb.res.legs} == {101, 102, 103}    # all three outcomes, none dropped
+    draw_leg = next(l for l in arb.res.legs if l.outcome_id == 102)
+    assert draw_leg.book == "polymarket"                              # Polymarket's draw leg paired in

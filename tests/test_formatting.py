@@ -143,3 +143,31 @@ def test_format_opportunity_1x2_uses_team_names():
     assert "— USA @" in msg
     assert "— Germany @" in msg
     assert "— Draw @" in msg
+
+
+def test_format_opportunity_flags_thin_polymarket_leg():
+    """A verified Polymarket leg whose fillable depth (its limit) is fully consumed by the stake the
+    arb wants (depth-bound thin book) is marked '👀 thin book'; a deep Poly leg (stake << limit) and
+    a non-Poly leg are NOT — so a surviving-but-thin signal is visibly flagged, layout otherwise same."""
+    arb = {
+        "match": "Curacao vs Ivory Coast", "home_team": "Curacao", "away_team": "Ivory Coast",
+        "tournament": "WC", "kickoff_utc": "2026-06-25T20:00:00Z",
+        "market": "Match Result", "market_family": "1x2", "market_line": None,
+        "roi_pct": 0.85, "max_profit": 35.0, "total_investment": 4014.0, "actionable": True,
+        "legs": [
+            {"book": "1xbet", "outcome": "1", "decimal_odds": 23.0, "limit": None,
+             "unverified": True, "stake": 176.0},
+            {"book": "polymarket", "outcome": "X", "decimal_odds": 8.40, "limit": 482.0,
+             "unverified": False, "stake": 482.0},                      # depth-bound -> thin
+            {"book": "polymarket", "outcome": "2", "decimal_odds": 1.20, "limit": 3371.0,
+             "unverified": False, "stake": 3356.0},                     # deep (stake << limit) -> not thin
+        ],
+        "bet_links": {},
+    }
+    msg = format_opportunity(arb)
+    draw_line = next(ln for ln in msg.splitlines() if "Draw @" in ln)
+    fav_line = next(ln for ln in msg.splitlines() if "Ivory Coast @" in ln)
+    assert "👀 thin book" in draw_line                                  # depth-bound thin leg flagged
+    assert "👀 thin book" not in fav_line                               # deep leg not flagged
+    assert "👀 thin book" not in msg.splitlines()[0]                    # layout otherwise unchanged
+    assert "stake $482 (limit $482)" in msg                             # leg line otherwise intact

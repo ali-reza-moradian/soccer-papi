@@ -35,11 +35,12 @@ from .ledger import Ledger
 from .resolve import MarketData, NormalizedArb, ResolveError, VenueLeg, normalize_arb
 
 DRYRUN_COLUMNS = [
-    "ts_utc", "source", "detected_at", "fixture", "market", "fingerprint", "n_legs", "intended_size",
+    "ts_utc", "status", "source", "detected_at", "fixture", "market", "fingerprint", "n_legs",
+    "intended_size",
     "kalshi_top_price", "kalshi_top_size", "poly_top_price", "poly_top_size",
     "kalshi_fill_price", "poly_fill_price", "kalshi_slippage", "poly_slippage",
     "kalshi_fee", "poly_fee", "total_cost", "net_profit", "net_edge_pct", "arb_survived",
-    "legs_json",
+    "legs_json", "skip_reason",
 ]
 
 
@@ -50,6 +51,47 @@ def _arb_source(narb) -> str:
     if src:
         return str(src)
     return "live-feed" if str(narb.fingerprint).startswith("live|") else "pre-game"
+
+
+def _skip_row(arb: dict[str, Any], narb, reason: str) -> dict[str, Any]:
+    """Build a VISIBLE status='skipped' dry-run row (no survival number) carrying fixture/market/
+    legs/venues/source + the reason — so the panel shows the attempt and WHY it produced no number.
+    Works whether or not normalize_arb succeeded (``narb`` may be None on a resolve error)."""
+    if narb is not None:
+        source = _arb_source(narb)
+        legs = [{"venue": l.venue, "outcome": l.outcome, "id": l.identifier, "side": l.side}
+                for l in narb.legs]
+        fixture, market, fingerprint = narb.fixture, narb.market, narb.fingerprint
+        n_legs, detected = narb.n_legs, (narb.detected_at or "")
+    else:
+        raw_legs = [l for l in (arb.get("legs") or []) if isinstance(l, dict)]
+        fp = str(arb.get("signature", "") or "")
+        source = str(arb.get("source") or ("live-feed" if fp.startswith("live|") else "pre-game"))
+        legs = [{"venue": l.get("venue") or l.get("book"), "outcome": l.get("outcome"),
+                 "id": l.get("venue_id"), "side": l.get("venue_side")} for l in raw_legs]
+        fixture, market, fingerprint = arb.get("match", ""), arb.get("market", ""), fp
+        n_legs, detected = len(raw_legs), str(arb.get("detected_at", "") or "")
+    return {
+        "ts_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "status": "skipped", "skip_reason": reason,
+        "source": source, "detected_at": detected,
+        "fixture": fixture, "market": market, "fingerprint": fingerprint,
+        "n_legs": n_legs, "intended_size": "", "arb_survived": "",
+        "legs_json": json.dumps(legs),
+    }
+
+
+def _skipped(arb: dict[str, Any], narb, reason: str, *, live: bool, write_log: bool,
+             path: str, log: Any) -> "ExecResult":
+    """Never drop an arb silently: log WHY, and on the DRY-RUN path write a visible status='skipped'
+    row to dryrun_log.csv (carrying the row in ``detail`` so the loop's dedupe can persist it). Live
+    skips keep the old behavior (no dry-run row) but still log + return the reason."""
+    row = _skip_row(arb, narb, reason)
+    if log:
+        log.warning("[EXEC] skipped — %s | %s | %s", reason, row["fixture"], row["market"])
+    if not live and write_log:
+        _append_dryrun(path, row)
+    return ExecResult("skipped", reason=reason, live=live, detail=row)
 
 
 @dataclass
@@ -113,6 +155,22 @@ def _append_dryrun(path: str, row: dict[str, Any]) -> None:
         w.writerow({k: row.get(k, "") for k in DRYRUN_COLUMNS})
 
 
+def append_dryrun(row: dict[str, Any], path: Optional[str] = None) -> None:
+    """Public: append one dry-run row (schema-safe). Used by the loop's dedupe to write only the
+    rows it decides to keep (execute_arb itself can be called with write_log=False)."""
+    _append_dryrun(path or exec_config.DRYRUN_LOG_PATH, row)
+
+
+def dryrun_dedupe_key(row: dict[str, Any]) -> tuple:
+    """Identity for loop dedupe: the structural fingerprint plus the price/edge that actually
+    moves between cycles. Two consecutive rows with the same key are 'identical' and not re-logged.
+    ``skip_reason`` is part of the key so a skipped arb whose reason CHANGES (e.g. empty book ->
+    size 0) is re-logged, while the same skip every cycle is not re-spammed."""
+    return (row.get("fingerprint", ""), row.get("net_edge_pct", ""),
+            row.get("kalshi_fill_price", ""), row.get("poly_fill_price", ""),
+            row.get("skip_reason", ""))
+
+
 # --------------------------------------------------------------------------- #
 # Entry point                                                                    #
 # --------------------------------------------------------------------------- #
@@ -122,8 +180,12 @@ def execute_arb(arb: dict[str, Any], *, live: bool = False,
                 kalshi: Any = None, poly: Any = None,
                 ledger: Optional[Ledger] = None, guard: Optional[Guardrails] = None,
                 confirm: Optional[Callable[[NormalizedArb, int], bool]] = None,
-                dryrun_log_path: Optional[str] = None, log: Any = None) -> ExecResult:
-    """Dry-run by default. See module docstring for the live preconditions."""
+                dryrun_log_path: Optional[str] = None, write_log: bool = True,
+                log: Any = None) -> ExecResult:
+    """Dry-run by default. See module docstring for the live preconditions.
+
+    ``write_log=False`` computes the dry-run row and returns it in ``result.detail`` WITHOUT
+    appending to dryrun_log.csv — the caller (e.g. the loop's dedupe) decides whether to persist."""
     cfg = cfg or exec_config.load_exec_config()
     market_data = market_data or MarketData()
     dryrun_log_path = dryrun_log_path or exec_config.DRYRUN_LOG_PATH
@@ -131,12 +193,12 @@ def execute_arb(arb: dict[str, Any], *, live: bool = False,
     try:
         narb = normalize_arb(arb)
     except ResolveError as exc:
-        if log:
-            log.warning("[EXEC] skip: %s", exc)
-        return ExecResult("skipped", reason=str(exc), live=live)
+        return _skipped(arb, None, str(exc), live=live, write_log=write_log,
+                        path=dryrun_log_path, log=log)
 
     if any(not leg.identifier for leg in narb.legs):
-        return ExecResult("skipped", reason="missing venue identifier on a leg", live=live)
+        return _skipped(arb, narb, "missing venue identifier on a leg", live=live,
+                        write_log=write_log, path=dryrun_log_path, log=log)
 
     # Re-pull LIVE books for every leg (never trust detection prices).
     try:
@@ -144,23 +206,24 @@ def execute_arb(arb: dict[str, Any], *, live: bool = False,
     except Exception as exc:  # noqa: BLE001 - any data error -> skip safely
         if guard:
             guard.record_error()
-        if log:
-            log.warning("[EXEC] live-book fetch failed: %s", exc)
-        return ExecResult("skipped", reason=f"book fetch failed: {exc}", live=live)
+        return _skipped(arb, narb, f"book fetch failed: {exc}", live=live,
+                        write_log=write_log, path=dryrun_log_path, log=log)
 
     if any(not ladder for ladder in ladders):
-        return ExecResult("skipped", reason="empty live book on a leg", live=live)
+        return _skipped(arb, narb, "empty live book on a leg", live=live,
+                        write_log=write_log, path=dryrun_log_path, log=log)
 
     size = plan_size(narb, ladders, cfg)
     if size <= 0:
-        return ExecResult("skipped", reason="planned size is 0 (cap/depth too small)", live=live)
+        return _skipped(arb, narb, "planned size is 0 (cap/depth too small)", live=live,
+                        write_log=write_log, path=dryrun_log_path, log=log)
 
     # Walk every book at the intended size -> realized fill prices + edge after costs (all N legs).
     walks = [fs.walk_book(ladder, size) for ladder in ladders]
     edge = fs.edge_after_costs_n(size, [(leg.venue, w.avg_price) for leg, w in zip(narb.legs, walks)])
 
     if not live:
-        return _do_dryrun(narb, ladders, walks, size, edge, dryrun_log_path, log)
+        return _do_dryrun(narb, ladders, walks, size, edge, dryrun_log_path, log, write_log)
 
     return _do_live(narb, ladders, size, edge, cfg, kalshi, poly, ledger, guard, confirm, log)
 
@@ -168,7 +231,7 @@ def execute_arb(arb: dict[str, Any], *, live: bool = False,
 # --------------------------------------------------------------------------- #
 # DRY-RUN                                                                        #
 # --------------------------------------------------------------------------- #
-def _do_dryrun(narb, ladders, walks, size, edge, path, log) -> ExecResult:
+def _do_dryrun(narb, ladders, walks, size, edge, path, log, write_log=True) -> ExecResult:
     legs_detail = []
     for leg, ladder, w in zip(narb.legs, ladders, walks):
         legs_detail.append({
@@ -181,6 +244,7 @@ def _do_dryrun(narb, ladders, walks, size, edge, path, log) -> ExecResult:
     first_p = next((d for d in legs_detail if d["venue"] == "polymarket"), None)
     row = {
         "ts_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "status": "dryrun", "skip_reason": "",
         "source": _arb_source(narb),
         "detected_at": narb.detected_at or "",
         "fixture": narb.fixture, "market": narb.market, "fingerprint": narb.fingerprint,
@@ -198,12 +262,13 @@ def _do_dryrun(narb, ladders, walks, size, edge, path, log) -> ExecResult:
         "net_edge_pct": round(edge.net_edge_pct, 4), "arb_survived": edge.arb_survived,
         "legs_json": json.dumps(legs_detail),
     }
-    _append_dryrun(path, row)
+    if write_log:
+        _append_dryrun(path, row)
     if log:
         log.info("[EXEC dry-run] %s | %s | %d legs | size %d | net edge %.2f%% | survived=%s",
                  narb.fixture, narb.market, narb.n_legs, size, edge.net_edge_pct, edge.arb_survived)
-    return ExecResult("dryrun", reason="logged", live=False, intended_size=size,
-                      arb_survived=edge.arb_survived, detail=row)
+    return ExecResult("dryrun", reason="logged" if write_log else "computed", live=False,
+                      intended_size=size, arb_survived=edge.arb_survived, detail=row)
 
 
 # --------------------------------------------------------------------------- #

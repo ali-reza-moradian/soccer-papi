@@ -191,6 +191,19 @@ polymarket:
   # Events are matched to canonical fixtures by normalized team names + the match DATE on the UTC
   # calendar day (anchored at noon, ±1-day cross-midnight tolerance), like kalshi — no ±minutes knob.
 
+# DEPTH-AWARE Polymarket leg pricing. The CLOB best-ask TICK over-states profit on thin/flickering
+# legs (live: Germany-Paraguay Draw quoted 5.2632 at $10k but Polymarket's real avg fill was ~5.135),
+# minting phantom REAL arbs. With poly_depth_pricing ON we WALK the ask ladder to the per-leg stake
+# (poly_walk_stake, in shares) and quote 1 / that size-weighted avg fill — the exact "Avg. Price"
+# Polymarket shows — while the leg limit stays the fillable dollar depth within poly_depth_slippage_pct
+# of the best ask. So a deep favorite walks ~entirely at its best ask (≈ unchanged) while a thin leg
+# blends into worse levels (worse odds) and the arb shrinks below the alert threshold. Set
+# poly_depth_pricing:false to restore the legacy top-of-book tick (rollback / A-B comparison).
+# poly_walk_stake 0 -> walk to each leg's own fillable band. Read ONLY in the scanner (src/run.py).
+poly_depth_pricing: true
+poly_depth_slippage_pct: 2.0
+poly_walk_stake: 10000
+
 player_props:
   # STEP 5 — player-GOALS arbs: Polymarket per-game '-player-props' (1+ goals, reg-90) <-> Kalshi
   # KXWCGOAL (1+ goals, INCL extra time). Default OFF. SETTLEMENT GATE: the two bases only coincide

@@ -1,19 +1,25 @@
 """Polymarket CLOB TRADING adapter (Phase 1) — authenticated order placement + unwind.
 
-Separate from src/polymarket.py (the read-only, no-auth Gamma+CLOB market-data source). This
-module signs and posts orders via py-clob-client. Ported to the proven sibling-bot patterns:
+Separate from src/polymarket.py (the read-only, no-auth Gamma+CLOB market-data source — the scanner
+and the dry-run book-fetch path use THAT, never this module). This module signs and posts orders via
+py-clob-client-V2. v2 is required: py-clob-client v1 cannot read pUSD (Polymarket's post-April-2026
+collateral) so get_balance returned $0 on a funded wallet; v2 reads the real pUSD collateral. Ported
+to the proven sibling-bot patterns:
 
   * Wallet resolution: signer from POLYGON_PRIVATE_KEY; signature_type from POLY_SIGNATURE_TYPE
-    (default 3 = deposit/proxy wallet); funder from POLY_FUNDER_ADDRESS or the derived
-    deposit/proxy wallet. L2 creds are derived ONCE and the ClobClient is cached (lru_cache).
+    (Polymarket supports 0=EOA, 1=POLY_PROXY, 2=POLY_GNOSIS_SAFE — there is NO 3; default 1 =
+    POLY_PROXY, the email/magic deposit wallet most accounts use); funder from POLY_FUNDER_ADDRESS
+    or the derived deposit/proxy wallet. L2 creds are derived ONCE and the ClobClient is cached
+    (lru_cache). The client is built WITH that signature_type, which is what scopes balance reads to
+    the funder.
   * can_place_polymarket_orders() preflight that catches the known deposit-wallet/EOA mismatch
     ("signer address has to be the address of the API KEY" / "maker address not allowed") and
     returns (False, <clear fix message>).
-  * place_order wraps create_and_post_order; FOK by default; tick_size and neg_risk are
-    RE-FETCHED for the token at call time (cached values are not trusted). Returns a normalized
-    {status, shares, usd, avg_price, order_id, raw}.
+  * place_order builds an OrderArgs + v2 PartialCreateOrderOptions; FOK by default; tick_size and
+    neg_risk are RE-FETCHED for the token at call time (cached values are not trusted). Returns a
+    normalized {status, shares, usd, avg_price, order_id, raw}.
 
-py-clob-client / eth_account are imported LAZILY so this module (and its pure helpers) import
+py_clob_client_v2 / eth_account are imported LAZILY so this module (and its pure helpers) import
 cleanly in test/CI environments without the trading SDK installed.
 """
 from __future__ import annotations
@@ -51,6 +57,29 @@ def is_wallet_mismatch_error(msg: str) -> bool:
     """True if ``msg`` is the known deposit-wallet/EOA signer mismatch."""
     m = str(msg).lower()
     return any(h in m for h in _WALLET_MISMATCH_HINTS)
+
+
+_VALID_TICKS = ("0.1", "0.01", "0.001", "0.0001")
+
+
+def tick_size_str(tick: Any) -> Optional[str]:
+    """Canonical tick-size string ('0.1'/'0.01'/'0.001'/'0.0001') for v2's PartialCreateOrderOptions,
+    accepting either the SDK string form or a float (e.g. the scanner's persisted 0.001). None when
+    unmappable -> v2 then resolves the tick from the chain itself (the re-fetch-at-call-time intent).
+    v2 wants the LITERAL string; passing a float would KeyError its ROUNDING_CONFIG."""
+    if tick is None:
+        return None
+    s = str(tick).strip()
+    if s in _VALID_TICKS:
+        return s
+    try:
+        f = float(tick)
+    except (TypeError, ValueError):
+        return None
+    for cand in _VALID_TICKS:
+        if abs(f - float(cand)) < 1e-12:
+            return cand
+    return None
 
 
 def _best_ask(book: Any) -> Optional[tuple[float, float]]:
@@ -95,11 +124,13 @@ def resolve_wallet() -> dict[str, Any]:
 
     Returns {private_key, signer_address, funder, signature_type}. signer_address is derived from
     POLYGON_PRIVATE_KEY via eth_account (lazy import); funder defaults to POLY_FUNDER_ADDRESS or
-    the signer address. Raises PolyExecError if the private key is absent."""
+    the signer address. signature_type comes from POLY_SIGNATURE_TYPE (override); when unset it
+    defaults to 1 = POLY_PROXY (Polymarket's only valid types are 0=EOA, 1=POLY_PROXY,
+    2=POLY_GNOSIS_SAFE — there is no 3). Raises PolyExecError if the private key is absent."""
     pk = os.environ.get("POLYGON_PRIVATE_KEY")
     if not pk:
         raise PolyExecError("POLYGON_PRIVATE_KEY not set.")
-    sig_type = int(os.environ.get("POLY_SIGNATURE_TYPE", "3"))
+    sig_type = int(os.environ.get("POLY_SIGNATURE_TYPE", "1"))
     signer_address: Optional[str] = None
     try:
         from eth_account import Account
@@ -117,24 +148,30 @@ def resolve_wallet() -> dict[str, Any]:
 
 @lru_cache(maxsize=1)
 def _cached_client() -> Any:
-    """Build + cache the authenticated ClobClient ONCE (derives L2 creds). Lazy SDK import."""
+    """Build + cache the authenticated v2 ClobClient ONCE (derives L2 creds). Lazy SDK import.
+
+    Built the v2 way — ClobClient(host, chain_id, key=, signature_type=, funder=) — with the
+    resolved signature_type, so authenticated reads (incl. get_balance_allowance) are scoped to the
+    funder/proxy wallet and read pUSD correctly. L2 creds are derived once (create_or_derive) and
+    attached."""
     try:
-        from py_clob_client.client import ClobClient
-        from py_clob_client.clob_types import ApiCreds
+        from py_clob_client_v2.client import ClobClient
     except ImportError as exc:  # pragma: no cover - SDK missing
-        raise PolyExecError("py-clob-client not installed — pip install py-clob-client.") from exc
+        raise PolyExecError(
+            "py-clob-client-v2 not installed — pip install py-clob-client-v2.") from exc
 
     w = resolve_wallet()
     client = ClobClient(
         CLOB_HOST,
+        POLYGON_CHAIN_ID,
         key=w["private_key"],
-        chain_id=POLYGON_CHAIN_ID,
         signature_type=w["signature_type"],
         funder=w["funder"],
     )
-    # Derive L2 api creds once and attach them (idempotent: create-or-derive).
+    # Derive L2 api creds once and attach them (idempotent: create-or-derive). v2 renamed this from
+    # create_or_derive_api_creds() (v1) to create_or_derive_api_key().
     try:
-        creds = client.create_or_derive_api_creds()
+        creds = client.create_or_derive_api_key()
         client.set_api_creds(creds)
     except Exception as exc:  # pragma: no cover - network/cred error surfaced to caller
         raise PolyExecError(f"failed to derive Polymarket L2 creds: {exc}") from exc
@@ -181,15 +218,18 @@ class PolyExec:
                 return False, (
                     "Polymarket signer/deposit-wallet mismatch: the API key must belong to the "
                     "signer address. Fix: set POLY_FUNDER_ADDRESS to your deposit/proxy wallet and "
-                    "POLY_SIGNATURE_TYPE correctly (3 = deposit wallet), or re-derive API creds for "
+                    "POLY_SIGNATURE_TYPE correctly (0=EOA, 1=POLY_PROXY, 2=POLY_GNOSIS_SAFE; "
+                    "1 for the usual email/magic deposit wallet), or re-derive API creds for "
                     f"signer {w.get('signer_address')}. Underlying error: {msg}")
             return False, f"Polymarket preflight failed: {msg}"
         return True, f"OK (signer={w.get('signer_address')}, funder={w.get('funder')}, sig_type={w.get('signature_type')})"
 
     # -- token metadata (re-fetched at call time) ----------------------------
-    def _tick_and_negrisk(self, token_id: str) -> tuple[float, bool]:
-        """RE-FETCH tick_size and neg_risk for ``token_id`` at call time (never trust cached)."""
-        tick = float(self.client.get_tick_size(token_id))
+    def _tick_and_negrisk(self, token_id: str) -> tuple[Any, bool]:
+        """RE-FETCH tick_size and neg_risk for ``token_id`` at call time (never trust cached). v2's
+        get_tick_size returns the canonical string ('0.01'); kept as-is for PartialCreateOrderOptions
+        (do NOT float() it — v2 keys its rounding config by the string)."""
+        tick = self.client.get_tick_size(token_id)
         neg = bool(self.client.get_neg_risk(token_id))
         return tick, neg
 
@@ -199,14 +239,15 @@ class PolyExec:
                     neg_risk: Optional[bool] = None) -> dict[str, Any]:
         """Place a CLOB order (FOK by default). tick_size / neg_risk are re-fetched if not given.
         Returns normalized {status, shares, usd, avg_price, order_id, raw}."""
-        from py_clob_client.clob_types import OrderArgs, OrderType
-        from py_clob_client.order_builder.constants import BUY, SELL
+        from py_clob_client_v2.clob_types import OrderArgs, OrderType, PartialCreateOrderOptions
+        from py_clob_client_v2.order_builder.constants import BUY, SELL
 
         if tick_size is None or neg_risk is None:
             tick_size, neg_risk = self._tick_and_negrisk(token_id)
         side_const = BUY if str(side).upper() == "BUY" else SELL
         args = OrderArgs(token_id=token_id, price=float(price), size=float(size), side=side_const)
-        signed = self.client.create_order(args, options={"tick_size": tick_size, "neg_risk": neg_risk})
+        options = PartialCreateOrderOptions(tick_size=tick_size_str(tick_size), neg_risk=bool(neg_risk))
+        signed = self.client.create_order(args, options)
         ot = getattr(OrderType, order_type, order_type)
         raw = self.client.post_order(signed, ot)
         return self._normalize(raw, price=price, requested_shares=size)
@@ -219,12 +260,13 @@ class PolyExec:
             book = self.get_orderbook(token_id)
             bids = book.get("bids") or []
             price = float(bids[0][0]) if bids else 0.01
-        from py_clob_client.clob_types import OrderArgs, OrderType
-        from py_clob_client.order_builder.constants import SELL
+        from py_clob_client_v2.clob_types import OrderArgs, OrderType, PartialCreateOrderOptions
+        from py_clob_client_v2.order_builder.constants import SELL
 
         tick_size, neg_risk = self._tick_and_negrisk(token_id)
         args = OrderArgs(token_id=token_id, price=float(price), size=float(shares), side=SELL)
-        signed = self.client.create_order(args, options={"tick_size": tick_size, "neg_risk": neg_risk})
+        options = PartialCreateOrderOptions(tick_size=tick_size_str(tick_size), neg_risk=bool(neg_risk))
+        signed = self.client.create_order(args, options)
         ot = getattr(OrderType, order_type, order_type)
         raw = self.client.post_order(signed, ot)
         return self._normalize(raw, price=price, requested_shares=shares)
@@ -283,10 +325,26 @@ class PolyExec:
         bids = _bid_levels(_book_as_dict(raw))
         return {"asks": asks, "bids": bids, "raw": raw}
 
+    def _resolved_signature_type(self) -> int:
+        """signature_type to scope balance reads to the FUNDER/PROXY wallet (default 1 = POLY_PROXY;
+        valid Polymarket types are 0=EOA, 1=POLY_PROXY, 2=POLY_GNOSIS_SAFE — there is no 3).
+        Resolved from the wallet; falls back to POLY_SIGNATURE_TYPE when the key is absent (e.g. an
+        injected test client)."""
+        try:
+            return int(resolve_wallet().get("signature_type", 1))
+        except PolyExecError:
+            return int(os.environ.get("POLY_SIGNATURE_TYPE", "1"))
+
     def get_balance(self) -> Any:
-        """USDC collateral balance/allowance for this wallet."""
-        from py_clob_client.clob_types import BalanceAllowanceParams, AssetType
-        params = BalanceAllowanceParams(asset_type=AssetType.COLLATERAL)
+        """pUSD/USDC collateral balance/allowance for the FUNDER/PROXY wallet.
+
+        Pass the resolved ``signature_type`` into the v2 BalanceAllowanceParams; combined with the
+        client being built with that same signature_type, the read is scoped to the funder/proxy
+        wallet's COLLATERAL. Under v2 this returns the real pUSD collateral (Polymarket's post-Apr-2026
+        token); v1 could not read pUSD and returned $0 on a funded wallet."""
+        from py_clob_client_v2.clob_types import BalanceAllowanceParams, AssetType
+        params = BalanceAllowanceParams(asset_type=AssetType.COLLATERAL,
+                                        signature_type=self._resolved_signature_type())
         return self.client.get_balance_allowance(params)
 
 

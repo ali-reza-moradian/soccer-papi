@@ -6,6 +6,9 @@ openpyxl>=3.1,<4
 # IANA timezone database so zoneinfo can resolve America/Toronto on any host
 # (e.g. minimal CI images / Windows that ship no system tz database).
 tzdata>=2024.1
+# Auto-loads the repo-root .env for the executor (src/executor/config.py) so credentials are
+# available in every terminal without manual sourcing. Real env vars still take precedence.
+python-dotenv>=1.0
 
 # dev / test
 pytest>=7.4
@@ -14,10 +17,12 @@ pytest>=7.4
 # Not needed for the scanner or for the executor's dry-run/tests (which mock the SDKs), but
 # required for credential preflight + live placement.
 #   cryptography  -> Kalshi RSA-PSS request signing (src/executor/kalshi_exec.py)
-#   py-clob-client + eth-account -> Polymarket CLOB trading (src/executor/poly_exec.py)
-#   (the module imported is `py_clob_client`, provided by the `py-clob-client` package)
+#   py-clob-client-v2 + eth-account -> Polymarket CLOB trading (src/executor/poly_exec.py)
+#   (the module imported is `py_clob_client_v2`, provided by the `py-clob-client-v2` package.
+#    v2 is required because v1 cannot read pUSD — Polymarket's post-Apr-2026 collateral — so
+#    get_balance returned $0 on a funded wallet; v2 reads the real pUSD collateral.)
 cryptography>=42
-py-clob-client>=0.17
+py-clob-client-v2>=1.0
 eth-account>=0.11
 # --- executor monitoring panel (src/executor/dashboard.py) ---------------------
 # Read-only Streamlit dashboard: `python -m src.executor.cli panel`. Optional auto-refresh

@@ -27,6 +27,19 @@ Polymarket facts this module is built on (confirmed by scripts/probe_polymarket,
     Prices are dollars in (0,1) = implied probability, so the decimal odds to BACK an outcome are
     1 / ask. The real per-leg limit is the best-ask SIZE × price (shares × dollars) = dollars, a
     genuine limit exactly like Kalshi's size×price (so these legs are NOT low_confidence).
+  * DEPTH-AWARE pricing (default ON, ``depth_pricing``): the single best-ask tick over-states profit
+    on thin/flickering legs (a longshot draw quotes 8.40 at the top but fills ~8.15 the moment you
+    size up — live: Germany-Paraguay Draw quoted 5.2632 at $10k but Polymarket's avg fill was ~5.135,
+    because the bot read the top tick, not the size-weighted fill). So instead of the top tick we WALK
+    THE ASK LADDER to the per-leg stake the arb intends (bookmath.walk_book): the quoted odds are
+    1 / (avg fill price walking cheapest-first to ``reference_size``) — the exact number our probe
+    prints as "REAL book: avg fill", matching Polymarket's "Avg. Price"/"To win" to rounding. The
+    ``limit`` stays the leg's fillable dollar depth within ``slippage_pct`` of the best ask. A deep leg
+    (favorite) walks ~entirely at its best ask -> ~unchanged; a thin leg blends into worse levels ->
+    worse odds, shrinking the arb so it stops firing as a phantom REAL. (Sizing runs in arbitrage.py
+    AFTER pricing, so we walk to a configurable reference stake, never a price only the top tick fills.)
+    The walk-the-book math lives in the pure src.bookmath helper, shared (by parity test) with the
+    executor's fees_sizing.walk_book so the two can't drift; the scanner never imports executor code.
 
 Reuse, don't duplicate: team normalization, the cross-provider equivalence map, fixture matching, the
 canonical market reverse-index, and the corrected `_oddspapi_has_active` gate are imported from
@@ -46,11 +59,14 @@ import json
 import re
 import threading
 import time
+from datetime import datetime, timedelta
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
 import requests
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
+
+from . import bookmath, formatting
 
 # Reused verbatim from the the-odds-api source — same normalization, matcher, market index, and the
 # corrected "override OddsPapi's suspended/missing book" gate (_oddspapi_has_active). JSON-string
@@ -81,6 +97,24 @@ _DAY_MATCH_TOLERANCE_MIN = 36 * 60
 _BROAD_TERMS = ("FIFA World Cup",)
 MAX_SEARCH_TERMS = 80      # safety cap on /public-search calls per cycle
 MAX_EVENTS = 60            # safety cap on events we price (CLOB /book calls) per cycle
+
+# Depth-aware pricing: default % worse than the best ask the fillable band (the leg's `limit`) may
+# span (config overrides it).
+DEFAULT_DEPTH_SLIPPAGE_PCT = 2.0
+
+# Depth-aware pricing: the per-leg stake we WALK the ask ladder to for the quoted decimal (avg fill),
+# in CLOB book size units (shares) — the same target the probe walks ("REAL book: avg fill"). Pricing
+# happens before arbitrage.py sizes the legs, so we walk to this reference stake (config overrides it)
+# rather than the single best-ask tick. 0 -> walk to the leg's own fillable band instead.
+DEFAULT_WALK_STAKE = 10000.0
+
+# The tie-outcome label. The OG scanner keys the draw leg across the OTHER books (1xbet, Pinnacle,
+# Kalshi) by the canonical draw outcomeId, but renders it as this exact human label via
+# formatting.outcome_label (the "X"/draw -> "Draw" rule). We derive the constant FROM that renderer so
+# the Polymarket draw leg carries byte-identical casing/string and aligns with the other venues'
+# draw leg instead of being dropped or mispaired. (The cross-book merge still pairs by draw_oid; this
+# is the label that keeps name-keyed matching and human output consistent — never None.)
+DRAW_LABEL = formatting.outcome_label("X")     # == "Draw"
 
 
 # --------------------------------------------------------------------------- #
@@ -136,12 +170,19 @@ class PolymarketClient:
         lowest ask price = the buy price; its size is the real per-leg limit."""
         return self._get(self.clob_base + "/book", {"token_id": token_id})
 
-    def price_tokens(self, tokens: list[str], max_workers: int = 8) -> dict[str, Optional[tuple[float, float]]]:
+    def price_tokens(self, tokens: list[str], max_workers: int = 8, *,
+                     depth_pricing: bool = False,
+                     slippage_pct: float = DEFAULT_DEPTH_SLIPPAGE_PCT,
+                     reference_size: float = DEFAULT_WALK_STAKE) -> dict[str, Optional[tuple[float, float]]]:
         """CONCURRENTLY price many CLOB tokens -> {token: (decimal_odds, limit) | None}. This is the
         scan's hot path: pricing legs sequentially through the 0.5s throttle dominated wall-time, so
         here we fan out up to `max_workers` GETs at once (bounded concurrency = the rate-limit cushion;
         the per-request throttle is bypassed). Each worker has its own Session (Sessions are not
-        guaranteed thread-safe) and retries 429/5xx with bounded backoff. Drop-safe per token."""
+        guaranteed thread-safe) and retries 429/5xx with bounded backoff. Drop-safe per token.
+
+        ``depth_pricing`` (with ``slippage_pct`` + ``reference_size``) walks the ask ladder to the
+        per-leg stake for an honest avg-fill decimal + fillable limit instead of the single best-ask
+        tick; default False keeps the legacy top-of-book quote."""
         uniq = [t for t in dict.fromkeys(tokens) if t]
         out: dict[str, Optional[tuple[float, float]]] = {}
         if not uniq:
@@ -172,12 +213,8 @@ class PolymarketClient:
                     book = r.json()
                 except ValueError:
                     return None
-                ask = best_ask(book)
-                if ask is None:
-                    return None
-                price, size = ask
-                dec = decimal_from_ask(price)
-                return None if dec is None else (dec, leg_limit(size, price))
+                return _price_from_book(book, depth_pricing=depth_pricing, slippage_pct=slippage_pct,
+                                        reference_size=reference_size)
             return None
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, max_workers)) as ex:
@@ -422,6 +459,47 @@ def best_ask(book: Any) -> Optional[tuple[float, float]]:
     return best
 
 
+def _ask_levels(book: Any) -> list[tuple[Any, Any]]:
+    """Raw (price, size) ask levels from a CLOB book for bookmath (validation lives in bookmath)."""
+    return [(lvl.get("price"), lvl.get("size"))
+            for lvl in (book or {}).get("asks") or [] if isinstance(lvl, dict)]
+
+
+def _price_from_book(book: Any, *, depth_pricing: bool = False,
+                     slippage_pct: float = DEFAULT_DEPTH_SLIPPAGE_PCT,
+                     reference_size: float = DEFAULT_WALK_STAKE) -> Optional[tuple[float, float]]:
+    """(decimal_odds, limit_dollars) for one CLOB book, or None. THE single Poly leg-pricing point.
+
+    ``depth_pricing`` False -> legacy single best-ask tick: decimal = 1/ask, limit = ask_size × ask.
+    ``depth_pricing`` True  -> SIZE-AWARE walk-to-stake fill (the honest number):
+      * decimal = 1 / (avg fill price walking the ask ladder cheapest-first to ``reference_size``
+        shares via bookmath.walk_book) — the stake the arb intends for this leg. A deep favorite walks
+        ~entirely at its best ask (≈ unchanged); a thin leg blends into worse levels (worse odds). This
+        is the "REAL book: avg fill" the probe prints, matching Polymarket's "Avg. Price". When the
+        ladder holds fewer than ``reference_size`` shares, walk_book averages over all that fills.
+      * limit = the fillable DOLLAR depth within ``slippage_pct`` of the best ask (Σ price×size of the
+        band) — UNCHANGED units (dollars), so arbitrage.py is untouched. The sizer caps stake at this
+        limit, so the realized fill is no worse than the (deeper-walked) quoted decimal: conservative.
+    ``reference_size`` <= 0 -> walk to the leg's own fillable band instead of a fixed reference."""
+    if not depth_pricing:
+        ask = best_ask(book)
+        if ask is None:
+            return None
+        price, size = ask
+        dec = decimal_from_ask(price)
+        return None if dec is None else (dec, leg_limit(size, price))
+    band = bookmath.vwap_within_band(_ask_levels(book), slippage_pct)
+    if band is None:
+        return None
+    _band_vwap, band_shares = band
+    limit = _band_vwap * band_shares                     # fillable dollar depth (the leg's stake cap)
+    ladder = bookmath.valid_asks(_ask_levels(book))      # ascending, validated — walk cheapest-first
+    stake = reference_size if reference_size and reference_size > 0 else band_shares
+    walk = bookmath.walk_book(ladder, stake)
+    dec = decimal_from_ask(walk.avg_price)
+    return None if dec is None else (dec, limit)
+
+
 # --------------------------------------------------------------------------- #
 # Event model (priced legs handed to merge_into)                                #
 # --------------------------------------------------------------------------- #
@@ -429,8 +507,8 @@ def best_ask(book: Any) -> Optional[tuple[float, float]]:
 class Leg:
     """One binary Yes leg of a WC event. `role`/`team`/`yes_token` come from parsing; `decimal`/
     `limit` are filled by CLOB pricing (None until priced)."""
-    role: str                         # "draw" | "team"
-    team: Optional[str] = None        # raw team name for "team"; None for "draw"
+    role: str                         # "draw" | "team" (+ "over"/"under"/"yes"/"no"/"spread" extras)
+    team: Optional[str] = None        # outcome label: raw team name for "team", DRAW_LABEL for "draw"
     yes_token: Optional[str] = None
     decimal: Optional[float] = None
     limit: Optional[float] = None
@@ -439,6 +517,14 @@ class Leg:
     # (the executor re-fetches tick_size/neg_risk at call time as a fallback).
     neg_risk: Optional[bool] = None
     tick_size: Optional[float] = None
+
+    def __post_init__(self) -> None:
+        # Guard: a leg must NEVER carry team=None. A null draw label is why draw legs were dropped or
+        # mispaired downstream (leg matching is by name) and why probe scripts crashed formatting None.
+        # Draw -> the canonical DRAW_LABEL that aligns with the other books' tie leg; any other label
+        # that couldn't be derived falls back to the outcome string (the role), never None.
+        if self.team is None:
+            self.team = DRAW_LABEL if self.role == "draw" else self.role
 
 
 @dataclass
@@ -475,7 +561,9 @@ def parse_event_legs(event: dict[str, Any]) -> Optional[PolyEvent]:
         neg = bool(neg) if neg is not None else (bool(event_neg) if event_neg is not None else None)
         tick = _num(m.get("orderPriceMinTickSize"))
         if kind == "draw":
-            legs.append(Leg(role="draw", yes_token=tok, neg_risk=neg, tick_size=tick))
+            # Populate the previously-None draw label with the canonical tie label so it aligns with
+            # the other books' draw leg (pricing/decimal/limit untouched — only the label).
+            legs.append(Leg(role="draw", team=DRAW_LABEL, yes_token=tok, neg_risk=neg, tick_size=tick))
             draws += 1
         else:
             legs.append(Leg(role="team", team=team, yes_token=tok, neg_risk=neg, tick_size=tick))
@@ -548,26 +636,93 @@ def _plan_extra_markets(client, parsed, market_index, fid, raw_by_fixture, log) 
     return plan
 
 
-def price_leg(client: PolymarketClient, token: str) -> Optional[tuple[float, float]]:
-    """(decimal_odds, limit) for one Yes token from the CLOB best ask, or None if it has no live ask
-    (undeployed / empty book / 4xx). Network — kept tiny so the rest of the parse stays testable."""
+def price_leg(client: PolymarketClient, token: str, *, depth_pricing: bool = False,
+              slippage_pct: float = DEFAULT_DEPTH_SLIPPAGE_PCT,
+              reference_size: float = DEFAULT_WALK_STAKE) -> Optional[tuple[float, float]]:
+    """(decimal_odds, limit) for one Yes token, or None if it has no live ask (undeployed / empty
+    book / 4xx). Network — kept tiny so the rest of the parse stays testable. ``depth_pricing`` walks
+    the ask ladder to ``reference_size`` (avg fill, within ``slippage_pct`` for the limit) instead of
+    the single best-ask tick; default off."""
     try:
         book = client.book(token)
     except PolymarketError:
         return None
-    ask = best_ask(book)
-    if ask is None:
-        return None
-    price, size = ask
-    dec = decimal_from_ask(price)
-    if dec is None:
-        return None
-    return dec, leg_limit(size, price)
+    return _price_from_book(book, depth_pricing=depth_pricing, slippage_pct=slippage_pct,
+                            reference_size=reference_size)
 
 
 # --------------------------------------------------------------------------- #
 # Discovery + fetch (network)                                                   #
 # --------------------------------------------------------------------------- #
+# FIFA 3-letter nation codes -> the deterministic WC match-slug key. Polymarket's WC match markets
+# are slugged fifwc-<team3>-<team3>-<YYYY-MM-DD> (e.g. fifwc-bra-jpn-2026-06-29), so we can fetch a
+# fixture's event DIRECTLY by slug instead of relying on /public-search (which buries the match
+# market under unrelated noise — "Brazil" surfaces the presidential-election market, never the game).
+# Keys are written human-readable and normalized through normalize_team at load, so every provider
+# spelling (and the _TEAM_EQUIV collapses: "Côte d'Ivoire"/"Ivory Coast", "USA"/"United States",
+# "IR Iran"/"Iran", "South Korea"/"Korea Republic") resolves to the same code.
+_FIFA_CODES_RAW: dict[str, str] = {
+    "Argentina": "arg", "Australia": "aus", "Austria": "aut", "Belgium": "bel", "Bolivia": "bol",
+    "Bosnia and Herzegovina": "bih", "Brazil": "bra", "Burkina Faso": "bfa", "Cameroon": "cmr",
+    "Canada": "can", "Cape Verde": "cpv", "Chile": "chi", "China PR": "chn", "Colombia": "col",
+    "Costa Rica": "crc", "Côte d'Ivoire": "civ", "Croatia": "cro", "Curaçao": "cuw", "Czechia": "cze",
+    "Denmark": "den", "DR Congo": "cod", "Ecuador": "ecu", "Egypt": "egy", "England": "eng",
+    "Finland": "fin", "France": "fra", "Gabon": "gab", "Georgia": "geo", "Germany": "ger",
+    "Ghana": "gha", "Greece": "gre", "Guinea": "gui", "Haiti": "hai", "Honduras": "hon",
+    "Hungary": "hun", "Iceland": "isl", "Indonesia": "idn", "Iran": "irn", "Iraq": "irq",
+    "Republic of Ireland": "irl", "Israel": "isr", "Italy": "ita", "Jamaica": "jam", "Japan": "jpn",
+    "Jordan": "jor", "Kazakhstan": "kaz", "Korea DPR": "prk", "Korea Republic": "kor", "Kosovo": "kvx",
+    "Kuwait": "kuw", "Mali": "mli", "Mauritania": "mtn", "Mexico": "mex", "Montenegro": "mne",
+    "Morocco": "mar", "Mozambique": "moz", "Namibia": "nam", "Netherlands": "ned", "New Zealand": "nzl",
+    "Nigeria": "nga", "North Macedonia": "mkd", "Northern Ireland": "nir", "Norway": "nor",
+    "Oman": "oma", "Panama": "pan", "Paraguay": "par", "Peru": "per", "Poland": "pol",
+    "Portugal": "por", "Qatar": "qat", "Romania": "rou", "Russia": "rus", "Saudi Arabia": "ksa",
+    "Senegal": "sen", "Serbia": "srb", "Scotland": "sco", "Sierra Leone": "sle", "Slovakia": "svk",
+    "Slovenia": "svn", "South Africa": "rsa", "Spain": "esp", "Sweden": "swe", "Switzerland": "sui",
+    "Syria": "syr", "Thailand": "tha", "Togo": "tog", "Tunisia": "tun", "Türkiye": "tur",
+    "Uganda": "uga", "Ukraine": "ukr", "United Arab Emirates": "uae", "Uruguay": "uru", "USA": "usa",
+    "Uzbekistan": "uzb", "Venezuela": "ven", "Vietnam": "vie", "Wales": "wal", "Zambia": "zam",
+}
+_FIFA_CODES: dict[str, str] = {normalize_team(name): code for name, code in _FIFA_CODES_RAW.items()}
+
+
+def _team_code(name: Any) -> Optional[str]:
+    """FIFA 3-letter code for a team name (any provider spelling), or None if it isn't a coded WC
+    nation (so we never build a slug for a club / non-WC fixture)."""
+    return _FIFA_CODES.get(normalize_team(name))
+
+
+def _wc_slug_candidates(info: dict[str, Any]) -> list[str]:
+    """Deterministic Polymarket WC match slugs for one by_fixture entry, or [] if either team has no
+    FIFA code (non-WC / unknown nation) or the start date is unrecoverable. Tries BOTH team orderings
+    (Polymarket's home/away order is not guaranteed to match ours) and the kickoff's UTC day plus the
+    prior day (a small-hours UTC kickoff can be listed under the previous US-local calendar date) —
+    the discovery loop fetches them in order and stops at the first hit."""
+    c1, c2 = _team_code(info.get("p1")), _team_code(info.get("p2"))
+    d = _date_part(info.get("start_time"))
+    if not c1 or not c2 or not d:
+        return []
+    dates = [d]
+    try:
+        dates.append((datetime.strptime(d, "%Y-%m-%d") - timedelta(days=1)).strftime("%Y-%m-%d"))
+    except ValueError:
+        pass
+    slugs: list[str] = []
+    for dd in dates:
+        for a, b in ((c1, c2), (c2, c1)):
+            s = f"fifwc-{a}-{b}-{dd}"
+            if s not in slugs:
+                slugs.append(s)
+    return slugs
+
+
+def _events_from_slug(data: Any) -> list[dict]:
+    """The event dicts in a Gamma /events?slug= response (a bare JSON array, or a {events:[...]} dict
+    on older shapes) — open events only."""
+    evs = data if isinstance(data, list) else (data.get("events") if isinstance(data, dict) else None)
+    return [e for e in (evs or []) if isinstance(e, dict) and not e.get("closed")]
+
+
 def _search_terms(by_fixture: dict[str, dict[str, Any]]) -> list[str]:
     """One broad term plus each distinct in-window fixture team name — targeted, like kalshi querying
     its one series. De-duplicated and capped."""
@@ -584,10 +739,32 @@ def _search_terms(by_fixture: dict[str, dict[str, Any]]) -> list[str]:
 
 
 def _discover_events(client: PolymarketClient, by_fixture: dict[str, dict[str, Any]], log) -> dict[str, dict]:
-    """Search Gamma for every in-window team; return {event_id: event} de-duplicated, skipping closed
-    events. A failed search term is logged and skipped (the feed must never break the run)."""
+    """Find each fixture's WC event and return {event_id: event} de-duplicated, skipping closed events.
+
+    PRIMARY: fetch every fixture DIRECTLY by its deterministic match slug (events_by_slug) — this is
+    how a game is reliably found, since keyword search buries the match market under unrelated noise.
+    FALLBACK: keyword /public-search, but ONLY for fixtures the slug path did not resolve (non-coded
+    nations, or a slug Polymarket spells differently). Every failure is logged and skipped — the feed
+    must never break the run."""
     found: dict[str, dict] = {}
-    for term in _search_terms(by_fixture):
+    slug_hit_fids: set[str] = set()
+    for fid, info in by_fixture.items():
+        for slug in _wc_slug_candidates(info):
+            try:
+                evs = _events_from_slug(client.events_by_slug(slug))
+            except PolymarketError as exc:
+                log.warning("[POLYMARKET] slug fetch %r failed (%s) — trying next.", slug, exc)
+                continue
+            for ev in evs:
+                eid = str(ev.get("id") or ev.get("slug") or "")
+                if eid:
+                    found.setdefault(eid, ev)
+                    slug_hit_fids.add(fid)
+            if fid in slug_hit_fids:
+                break                                  # first ordering/date that hits wins
+
+    remaining = {fid: info for fid, info in by_fixture.items() if fid not in slug_hit_fids}
+    for term in _search_terms(remaining) if remaining else []:
         try:
             data = client.search(term)
         except PolymarketError as exc:
@@ -604,7 +781,9 @@ def _discover_events(client: PolymarketClient, by_fixture: dict[str, dict[str, A
 
 def fetch_wc_events(client: PolymarketClient, by_fixture: dict[str, dict[str, Any]], log,
                     market_index=None, raw_by_fixture: Optional[dict] = None,
-                    max_workers: int = 8) -> list[PolyEvent]:
+                    max_workers: int = 8, *, depth_pricing: bool = False,
+                    slippage_pct: float = DEFAULT_DEPTH_SLIPPAGE_PCT,
+                    reference_size: float = DEFAULT_WALK_STAKE) -> list[PolyEvent]:
     """Discover WC match events and return priced PolyEvents the merge maps to fixtures. FAST PATH:
       1. parse + MATCH each event to a fixture FIRST (no network) — skip events that won't merge;
       2. plan which extra (totals/BTTS/spreads) lines to price — only canonical lines that have a
@@ -615,6 +794,7 @@ def fetch_wc_events(client: PolymarketClient, by_fixture: dict[str, dict[str, An
     candidates = _discover_events(client, by_fixture, log)
     plans: list[dict[str, Any]] = []
     skipped_unmatched = 0
+    matched_fids: set[str] = set()
     for ev in candidates.values():
         if len(plans) >= MAX_EVENTS:
             log.warning("[POLYMARKET] hit MAX_EVENTS=%s — not planning further candidates.", MAX_EVENTS)
@@ -626,9 +806,23 @@ def fetch_wc_events(client: PolymarketClient, by_fixture: dict[str, dict[str, An
         if fid is None:                                # won't merge -> never price it
             skipped_unmatched += 1
             continue
+        matched_fids.add(fid)
         extra = (_plan_extra_markets(client, parsed, market_index, fid, raw_by_fixture, log)
                  if market_index is not None else {"totals": {}, "btts": None, "spreads": []})
         plans.append({"parsed": parsed, "extra": extra})
+
+    # Surface every WC fixture discovery could NOT find an event for (instead of silently dropping it):
+    # only fixtures we could address by slug — a coded WC nation pair — count as a miss worth flagging.
+    unmatched_fixtures = 0
+    for fid, info in by_fixture.items():
+        if fid in matched_fids:
+            continue
+        slugs = _wc_slug_candidates(info)
+        if not slugs:
+            continue
+        unmatched_fixtures += 1
+        log.warning("[POLYMARKET] UNMATCHED fixture %s vs %s (tried slug=%s)",
+                    info.get("p1"), info.get("p2"), slugs[0])
 
     # Collect every token to price, then fetch them all concurrently in one batch.
     tokens: list[str] = []
@@ -640,7 +834,9 @@ def fetch_wc_events(client: PolymarketClient, by_fixture: dict[str, dict[str, An
             tokens += list(pl["extra"]["btts"])
         for sp in pl["extra"]["spreads"]:
             tokens += [sp["named_token"], sp["opp_token"]]
-    priced = client.price_tokens(tokens, max_workers=max_workers)
+    priced = client.price_tokens(tokens, max_workers=max_workers,
+                                 depth_pricing=depth_pricing, slippage_pct=slippage_pct,
+                                 reference_size=reference_size)
 
     out: list[PolyEvent] = []
     tot_lines = btts_n = spread_lines = 0
@@ -676,9 +872,11 @@ def fetch_wc_events(client: PolymarketClient, by_fixture: dict[str, dict[str, An
                     "opp_leg": Leg(role="spread", yes_token=sp["opp_token"], decimal=vo_[0], limit=vo_[1])})
                 spread_lines += 1
         out.append(parsed)
-    log.info("[POLYMARKET] discovered %s candidate(s); %s matched & priced (%s unmatched skipped) "
-             "| %s CLOB token(s) priced concurrently (+%s total, %s BTTS, %s spread line(s)).",
-             len(candidates), len(out), skipped_unmatched, len(priced), tot_lines, btts_n, spread_lines)
+    log.info("[POLYMARKET] discovered %s candidate(s); %s matched & priced (%s candidate(s) unmatched, "
+             "%s WC fixture(s) UNMATCHED) | %s CLOB token(s) priced concurrently "
+             "(+%s total, %s BTTS, %s spread line(s)).",
+             len(candidates), len(out), skipped_unmatched, unmatched_fixtures,
+             len(priced), tot_lines, btts_n, spread_lines)
     return out
 
 

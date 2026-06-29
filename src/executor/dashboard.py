@@ -16,6 +16,7 @@ import csv
 import json
 import os
 import time
+from datetime import datetime, timezone
 from typing import Any, Callable, Optional
 
 # Work BOTH as a package import (tests: `import src.executor.dashboard`) AND when Streamlit runs
@@ -168,19 +169,28 @@ def _as_bool(v: Any) -> bool:
     return str(v).strip().lower() in ("true", "1", "yes")
 
 
-_DRYRUN_VIEW_COLS = ["ts_utc", "source", "fixture", "market", "legs", "n_legs", "intended_size",
-                     "kalshi_fill_price", "poly_fill_price", "kalshi_slippage", "poly_slippage",
-                     "kalshi_fee", "poly_fee", "net_edge_pct", "arb_survived"]
+_DRYRUN_VIEW_COLS = ["ts_utc", "status", "source", "fixture", "market", "legs", "n_legs",
+                     "intended_size", "kalshi_fill_price", "poly_fill_price", "kalshi_slippage",
+                     "poly_slippage", "kalshi_fee", "poly_fee", "net_edge_pct", "arb_survived",
+                     "skip_reason"]
+
+
+def dryrun_row_is_skip(row: dict[str, Any]) -> bool:
+    """True for a 'saw it, couldn't price it' row — status='skipped' (carries a skip_reason, no
+    survival number). Used to render it distinctly (greyed) in the panel."""
+    return str(row.get("status", "")).strip().lower() == "skipped"
 
 
 def dryrun_view(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Shape dry-run rows for the table: add source + a compact legs summary, keep display columns."""
+    """Shape dry-run rows for the table: add source + a compact legs summary, keep display columns.
+    SKIPPED rows keep a blank arb_survived (no number) and surface their skip_reason."""
     out = []
     for r in rows:
-        view = {k: r.get(k, "") for k in _DRYRUN_VIEW_COLS if k not in ("source", "legs")}
+        view = {k: r.get(k, "") for k in _DRYRUN_VIEW_COLS if k not in ("source", "legs", "arb_survived")}
         view["source"] = r.get("source") or infer_source(r)   # prefer the explicit column
         view["legs"] = summarize_legs(r.get("legs_json"))
-        view["arb_survived"] = _as_bool(r.get("arb_survived"))
+        # A skipped row has no survival verdict — keep it blank rather than coercing "" -> False.
+        view["arb_survived"] = "" if dryrun_row_is_skip(r) else _as_bool(r.get("arb_survived"))
         out.append({k: view.get(k, "") for k in _DRYRUN_VIEW_COLS})
     return out
 
@@ -268,6 +278,218 @@ def default_balance_providers(cfg: exec_config.ExecConfig) -> dict[str, Callable
 
 
 # --------------------------------------------------------------------------- #
+# Human-readable formatting (balances, captions, "what's happening")             #
+# --------------------------------------------------------------------------- #
+def _is_error(bal: Any) -> Optional[str]:
+    """The short error reason if ``bal`` is an error dict (from ReadCache), else None."""
+    if isinstance(bal, dict) and "error" in bal:
+        return str(bal["error"])
+    return None
+
+
+def kalshi_usd(bal: Any) -> Optional[float]:
+    """Spendable Kalshi balance in dollars (the 'balance' field is integer CENTS), or None if the
+    shape is unrecognized / an error."""
+    if not isinstance(bal, dict) or "error" in bal or bal.get("balance") is None:
+        return None
+    try:
+        return int(bal["balance"]) / 100.0
+    except (TypeError, ValueError):
+        return None
+
+
+def poly_usd(bal: Any) -> Optional[float]:
+    """Spendable Polymarket USDC in dollars. CLOB get_balance_allowance returns the collateral
+    'balance' as a STRING in USDC base units (6 decimals), so dollars = raw / 1e6. None if the
+    shape is unrecognized / an error."""
+    if not isinstance(bal, dict) or "error" in bal or bal.get("balance") is None:
+        return None
+    try:
+        return float(bal["balance"]) / 1_000_000.0
+    except (TypeError, ValueError):
+        return None
+
+
+def format_kalshi_balance(bal: Any) -> str:
+    """'$6,965.43' from cents; '⚠ auth error: …' on an error dict; raw str if unrecognized."""
+    err = _is_error(bal)
+    if err is not None:
+        return f"⚠ auth error: {err[:60]}"
+    usd = kalshi_usd(bal)
+    return f"${usd:,.2f}" if usd is not None else str(bal)
+
+
+def format_poly_balance(bal: Any) -> str:
+    """'$X.XX USDC'; '$0.00 — wallet unfunded' when zero; '⚠ auth error: …' on error; raw if
+    unrecognized."""
+    err = _is_error(bal)
+    if err is not None:
+        return f"⚠ auth error: {err[:60]}"
+    usd = poly_usd(bal)
+    if usd is None:
+        return str(bal)
+    if usd == 0:
+        return "$0.00 — wallet unfunded"
+    return f"${usd:,.2f} USDC"
+
+
+# (caption when the flag is True, caption when False).
+_FLAG_CAPTIONS = {
+    "enabled": ("ON", "OFF — executor will not trade"),
+    "dry_run": ("Simulating only — no real orders", "LIVE orders armed"),
+    "live_enabled": ("In-play feed ON", "Pre-game only"),
+}
+
+
+def status_caption(flag_label: str, value: bool) -> str:
+    """One-line plain caption under a status badge."""
+    when_true, when_false = _FLAG_CAPTIONS.get(flag_label, ("ON", "OFF"))
+    return when_true if value else when_false
+
+
+def whats_happening(*, kalshi_bal: Any, poly_bal: Any, dryrun_count: int,
+                    stop_present: bool) -> list[str]:
+    """The 1–3 most relevant plain-English lines for the top info box. Pure, read-only."""
+    if stop_present:
+        return ["⛔ STOPPED — executor halted. Press RESUME to clear."]
+    msgs: list[str] = []
+    k_err, p_err = _is_error(kalshi_bal), _is_error(poly_bal)
+    if k_err is not None:
+        msgs.append("⚠ Kalshi not authenticating — check .env.")
+    if p_err is not None:
+        msgs.append("⚠ Polymarket not authenticating — check .env.")
+    if k_err is None and p_err is None:
+        if poly_usd(poly_bal) == 0:
+            msgs.append("ℹ Polymarket wallet unfunded — fine for dry-run; add USDC before any live trade.")
+        if dryrun_count == 0:
+            msgs.append("✅ Connected & safe (dry-run). Waiting for a clean kalshi↔poly arb. "
+                        "Run `cli dryrun` during live matches to populate this.")
+        elif not msgs:
+            msgs.append(f"✅ Connected & safe (dry-run). {dryrun_count} dry-run row(s) logged.")
+    return msgs[:3] or ["Executor monitor ready."]
+
+
+# --------------------------------------------------------------------------- #
+# Scanner feed — clean kalshi<->poly arbs available right now                    #
+# --------------------------------------------------------------------------- #
+ARBS_CSV = os.path.join(exec_config.REPO_ROOT, "data", "arbitrage_opportunities.csv")
+_TRADABLE_BOOKS = {"kalshi", "polymarket"}
+
+
+def _row_is_clean(row: dict[str, Any]) -> bool:
+    """A detected arb is CLEAN (executor-tradable) iff every book is kalshi/polymarket (no 1xbet,
+    pinnacle, or any shadow book)."""
+    books = {b.strip().lower() for b in str(row.get("bookmakers", "")).split(",") if b.strip()}
+    return bool(books) and books <= _TRADABLE_BOOKS
+
+
+def _parse_dt(s: Any) -> Optional[datetime]:
+    try:
+        dt = datetime.fromisoformat(str(s))
+    except ValueError:
+        return None
+    return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
+
+
+def count_clean_recent_arbs(rows: list[dict[str, Any]], *, now: Optional[datetime] = None,
+                            window_min: float = 60.0) -> int:
+    """How many CLEAN kalshi↔poly arbs were detected within the last ``window_min`` minutes."""
+    now = now or datetime.now(timezone.utc)
+    cutoff = now.timestamp() - window_min * 60.0
+    n = 0
+    for r in rows:
+        if not _row_is_clean(r):
+            continue
+        dt = _parse_dt(r.get("detected_at_et"))
+        if dt is not None and dt.timestamp() >= cutoff:
+            n += 1
+    return n
+
+
+def clean_arb_count(path: str = ARBS_CSV, *, now: Optional[datetime] = None,
+                    window_min: float = 60.0) -> int:
+    """Read-only: count recent clean arbs in the scanner CSV (0 when missing)."""
+    return count_clean_recent_arbs(tail_csv(path, 1000, newest_first=False),
+                                   now=now, window_min=window_min)
+
+
+def count_recent_arbs(rows: list[dict[str, Any]], *, now: Optional[datetime] = None,
+                      window_min: float = 60.0) -> int:
+    """TOTAL detected arbs (ANY books — incl. 1xbet/pinnacle/shadow) within the last ``window_min``
+    minutes. Paired with :func:`count_clean_recent_arbs` so the diagnose/heartbeat can show 'lots of
+    arbs exist but only N are tradable by this bot'."""
+    now = now or datetime.now(timezone.utc)
+    cutoff = now.timestamp() - window_min * 60.0
+    n = 0
+    for r in rows:
+        dt = _parse_dt(r.get("detected_at_et"))
+        if dt is not None and dt.timestamp() >= cutoff:
+            n += 1
+    return n
+
+
+# --------------------------------------------------------------------------- #
+# Dry-run loop heartbeat (write from the loop; read-only freshness in the panel) #
+# --------------------------------------------------------------------------- #
+HEARTBEAT_MAX_AGE_S = 300.0          # a heartbeat older than this (5 min) => loop considered stopped
+
+
+def write_heartbeat(clean_arbs_found: int, total_recent_arbs: int, *, path: Optional[str] = None,
+                    now: Optional[datetime] = None) -> dict[str, Any]:
+    """Write the dry-run loop heartbeat (called once per loop cycle). Best-effort; the caller
+    swallows errors so heartbeat IO never breaks the loop. Returns the written payload."""
+    now = now or datetime.now(timezone.utc)
+    payload = {
+        "last_cycle_utc": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "clean_arbs_found": int(clean_arbs_found),
+        "total_recent_arbs": int(total_recent_arbs),
+    }
+    p = path or exec_config.HEARTBEAT_PATH
+    os.makedirs(os.path.dirname(p), exist_ok=True)
+    with open(p, "w", encoding="utf-8") as fh:
+        json.dump(payload, fh)
+    return payload
+
+
+def read_heartbeat(path: Optional[str] = None) -> Optional[dict[str, Any]]:
+    """Read the heartbeat JSON, or None if missing/unreadable. READ-ONLY (panel-safe)."""
+    p = path or exec_config.HEARTBEAT_PATH
+    if not os.path.exists(p):
+        return None
+    try:
+        with open(p, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def heartbeat_fresh(hb: Optional[dict[str, Any]], *, now: Optional[datetime] = None,
+                    max_age_s: float = HEARTBEAT_MAX_AGE_S) -> bool:
+    """True if ``hb`` exists and its last_cycle_utc is younger than ``max_age_s``."""
+    if not isinstance(hb, dict):
+        return False
+    dt = _parse_dt(hb.get("last_cycle_utc"))
+    if dt is None:
+        return False
+    now = now or datetime.now(timezone.utc)
+    return (now.timestamp() - dt.timestamp()) < max_age_s
+
+
+def heartbeat_message(hb: Optional[dict[str, Any]], *, now: Optional[datetime] = None,
+                      max_age_s: float = HEARTBEAT_MAX_AGE_S) -> str:
+    """One plain-English line for the panel: loop alive (fresh heartbeat) vs not running (stale/
+    missing). Fresh shows the last-check local time + the clean-arb count."""
+    if heartbeat_fresh(hb, now=now, max_age_s=max_age_s):
+        dt = _parse_dt(hb.get("last_cycle_utc"))
+        clean = int(hb.get("clean_arbs_found", 0) or 0)
+        hhmmss = dt.astimezone().strftime("%H:%M:%S") if dt is not None else "??:??:??"
+        tail = "nothing tradable right now" if clean == 0 else f"{clean} tradable right now"
+        return f"✅ Dry-run loop alive — last check {hhmmss}, {clean} clean arbs ({tail})"
+    return "⚠ Dry-run loop not running — start it with `cli dryrun --loop`."
+
+
+# --------------------------------------------------------------------------- #
 # Streamlit rendering (lazy import; not unit-tested)                             #
 # --------------------------------------------------------------------------- #
 _LEVEL_COLOR = {"safe": "#1a7f37", "warn": "#bf8700", "danger": "#cf222e"}
@@ -293,6 +515,24 @@ def run_panel() -> None:  # pragma: no cover - Streamlit UI
         st.caption("Install streamlit-autorefresh for live auto-refresh; using manual refresh.")
         st.button("Refresh")
 
+    # Read balances once (cached) so the info box, scanner line, and metrics agree.
+    kal_bal = balcache.get("kalshi", providers["kalshi"])
+    pol_bal = balcache.get("polymarket", providers["polymarket"])
+    dryrun_rows = tail_csv(exec_config.DRYRUN_LOG_PATH, 100)
+    halted = stop_state()
+
+    # ===================== "WHAT'S HAPPENING" (top, read-only) =====================
+    lines = whats_happening(kalshi_bal=kal_bal, poly_bal=pol_bal,
+                            dryrun_count=len(dryrun_rows), stop_present=halted)
+    # Append the dry-run loop heartbeat line (read-only) so the user can see at a glance whether the
+    # loop is alive even when there is nothing to trade.
+    lines = lines + [heartbeat_message(read_heartbeat())]
+    box = st.error if halted else (st.warning if lines and lines[0].startswith("⚠") else st.info)
+    box("**What's happening**\n\n" + "\n\n".join(lines))
+    recent_clean = clean_arb_count()
+    st.caption(f"Scanner feed: {recent_clean} clean kalshi↔poly arb(s) detected in the last 60 min "
+               f"({'something for dry-run to chew on' if recent_clean else 'nothing right now'}).")
+
     # ===================== STATUS BAR =====================
     st.subheader("Status")
     cols = st.columns(3)
@@ -302,10 +542,11 @@ def run_panel() -> None:  # pragma: no cover - Streamlit UI
             f"<div style='padding:8px;border-radius:8px;background:{color};color:white;"
             f"text-align:center;font-weight:700'>{b['label']} = {b['value']}</div>",
             unsafe_allow_html=True)
+        col.caption(status_caption(b["label"], b["value"]))
 
     bcols = st.columns(4)
-    bcols[0].metric("Kalshi balance", str(balcache.get("kalshi", providers["kalshi"])))
-    bcols[1].metric("Poly balance", str(balcache.get("polymarket", providers["polymarket"])))
+    bcols[0].metric("Kalshi balance", format_kalshi_balance(kal_bal))
+    bcols[1].metric("Poly balance", format_poly_balance(pol_bal))
     cs = counter_summary(cfg)
     bcols[2].metric("Today trades", f"{cs['trades']} / {cs['max_trades']}")
     bcols[3].metric("Today spend", f"${cs['spend_usd']} / ${cs['max_spend_usd']:.0f}")
@@ -316,7 +557,6 @@ def run_panel() -> None:  # pragma: no cover - Streamlit UI
                    delta="CAP HIT" if cs["loss_cap_hit"] else ("near cap" if cs["loss_near_cap"] else None),
                    delta_color="inverse")
 
-    halted = stop_state()
     stop_col.markdown(f"**STOP file:** {'🛑 PRESENT (halted)' if halted else '✅ absent'}")
     if halted:
         if stop_col.checkbox("Confirm RESUME (remove STOP)"):
@@ -332,9 +572,22 @@ def run_panel() -> None:  # pragma: no cover - Streamlit UI
 
     # ===================== LIVE / RECENT ARBS =====================
     st.subheader("Live / recent arbs (dry-run)")
-    arbs = dryrun_view(tail_csv(exec_config.DRYRUN_LOG_PATH, 100))
+    arbs = dryrun_view(dryrun_rows)
     if arbs:
-        st.dataframe(arbs, use_container_width=True, hide_index=True)
+        # Grey + italicize SKIPPED rows ("saw it, couldn't price it: <skip_reason>") so they read
+        # distinctly from a real survived/failed row at a glance. Falls back to a plain table.
+        try:
+            import pandas as pd
+            df = pd.DataFrame(arbs)
+
+            def _grey_skips(r):
+                skip = str(r.get("status", "")).strip().lower() == "skipped"
+                return ["color:#888;font-style:italic" if skip else "" for _ in r]
+
+            st.dataframe(df.style.apply(_grey_skips, axis=1),
+                         use_container_width=True, hide_index=True)
+        except Exception:  # noqa: BLE001 - pandas/styler unavailable -> plain table
+            st.dataframe(arbs, use_container_width=True, hide_index=True)
     else:
         st.info("no data yet — dryrun_log.csv is empty/missing.")
 

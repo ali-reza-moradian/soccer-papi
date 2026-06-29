@@ -22,6 +22,22 @@ def _esc(text: Any) -> str:
 
 UNVERIFIED_NOTE = ("Size unverified — check the real max on the book before trusting this profit.")
 SHADOW_LABEL = "SHADOW — not bettable, no account there"
+THIN_BOOK_TAG = "👀 thin book"
+
+
+def _leg_is_thin(leg: dict[str, Any]) -> bool:
+    """True when a Polymarket leg's fillable depth (its real limit, now the VWAP-band dollar depth)
+    does not exceed the stake the arb wants on it — i.e. the arb is depth-bound on this thin leg, so
+    the quoted price only holds for the slice we're already consuming. Verified (real-limit) Poly legs
+    only; UNVERIFIED legs already carry their own warning and non-Poly legs aren't depth-priced."""
+    if leg.get("book") != "polymarket" or leg.get("unverified"):
+        return False
+    limit, stake = leg.get("limit"), leg.get("stake")
+    if not isinstance(limit, (int, float)) or not isinstance(stake, (int, float)):
+        return False
+    if limit <= 0 or stake <= 0:
+        return False
+    return stake >= limit - 1e-6
 
 
 def format_opportunity(arb: dict[str, Any], local_tz: str = fmt.LOCAL_TZ_NAME) -> str:
@@ -68,9 +84,10 @@ def format_opportunity(arb: dict[str, Any], local_tz: str = fmt.LOCAL_TZ_NAME) -
             limit_s = f"limit {fmt.money0(limit)}"
         stake = leg.get("stake")
         stake_s = fmt.money0(stake) if isinstance(stake, (int, float)) else "?"
+        thin_s = f"  {THIN_BOOK_TAG}" if _leg_is_thin(leg) else ""
         lines.append(
             f"  {_esc(leg.get('book'))} — {_esc(outcome)} @ <b>{fmt.num2(leg.get('decimal_odds'))}</b> "
-            f"→ stake {stake_s} ({_esc(limit_s)})"
+            f"→ stake {stake_s} ({_esc(limit_s)}){thin_s}"
         )
 
     roi = arb.get("roi_pct")
