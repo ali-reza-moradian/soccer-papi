@@ -12,7 +12,7 @@
   {
     "categoryName": "International Clubs",
     "categorySlug": "international-clubs",
-    "futureFixtures": 48,
+    "futureFixtures": 56,
     "liveFixtures": 0,
     "tournamentId": 7,
     "tournamentName": "UEFA Champions League",
@@ -92,12 +92,12 @@
   {
     "categoryName": "International",
     "categorySlug": "international",
-    "futureFixtures": 60,
+    "futureFixtures": 25,
     "liveFixtures": 0,
     "tournamentId": 16,
     "tournamentName": "World Cup",
     "tournamentSlug": "world-cup",
-    "upcomingFixtures": 4
+    "upcomingFixtures": 3
   },
   {
     "categoryName": "England",
@@ -112,7 +112,7 @@
   {
     "categoryName": "England",
     "categorySlug": "england",
-    "futureFixtures": 0,
+    "futureFixtures": 552,
     "liveFixtures": 0,
     "tournamentId": 18,
     "tournamentName": "Championship",
@@ -142,7 +142,7 @@
   {
     "categoryName": "England",
     "categorySlug": "england",
-    "futureFixtures": 2,
+    "futureFixtures": 35,
     "liveFixtures": 0,
     "tournamentId": 21,
     "tournamentName": "EFL Cup",
@@ -152,7 +152,7 @@
   {
     "categoryName": "Norway",
     "categorySlug": "norway",
-    "futureFixtures": 144,
+    "futureFixtures": 136,
     "liveFixtures": 0,
     "tournamentId": 22,
     "tournamentName": "1st Division",
@@ -162,7 +162,7 @@
   {
     "categoryName": "Italy",
     "categorySlug": "italy",
-    "futureFixtures": 10,
+    "futureFixtures": 11,
     "liveFixtures": 0,
     "tournamentId": 23,
     "tournamentName": "Serie A",
@@ -172,7 +172,7 @@
   {
     "categoryName": "England",
     "categorySlug": "england",
-    "futureFixtures": 0,
+    "futureFixtures": 552,
     "liveFixtures": 0,
     "tournamentId": 24,
     "tournamentName": "League One",
@@ -182,7 +182,7 @@
   {
     "categoryName": "England",
     "categorySlug": "england",
-    "futureFixtures": 0,
+    "futureFixtures": 552,
     "liveFixtures": 0,
     "tournamentId": 25,
     "tournamentName": "League Two",
@@ -262,7 +262,7 @@
   {
     "categoryName": "Netherlands",
     "categorySlug": "netherlands",
-    "futureFixtures": 0,
+    "futureFixtures": 9,
     "liveFixtures": 0,
     "tournamentId": 37,
     "tournamentName": "Eredivisie",
@@ -272,7 +272,7 @@
   {
     "categoryName": "Belgium",
     "categorySlug": "belgium",
-    "futureFixtures": 0,
+    "futureFixtures": 9,
     "liveFixtures": 0,
     "tournamentId": 38,
     "tournamentName": "Pro League",
@@ -282,7 +282,7 @@
   {
     "categoryName": "Denmark",
     "categorySlug": "denmark",
-    "futureFixtures": 0,
+    "futureFixtures": 6,
     "liveFixtures": 0,
     "tournamentId": 39,
     "tournamentName": "Superliga",
@@ -302,7 +302,7 @@
   {
     "categoryName": "Finland",
     "categorySlug": "finland",
-    "futureFixtures": 62,
+    "futureFixtures": 50,
     "liveFixtures": 0,
     "tournamentId": 41,
     "tournamentName": "Veikkausliiga",
@@ -332,7 +332,7 @@
   {
     "categoryName": "Austria",
     "categorySlug": "austria",
-    "futureFixtures": 0,
+    "futureFixtures": 12,
     "liveFixtures": 0,
     "tournamentId": 45,
     "tournamentName": "Bundesliga",
@@ -342,17 +342,17 @@
   {
     "categoryName": "Sweden",
     "categorySlug": "sweden",
-    "futureFixtures": 136,
+    "futureFixtures": 128,
     "liveFixtures": 0,
     "tournamentId": 46,
     "tournamentName": "Superettan",
     "tournamentSlug": "superettan",
-    "upcomingFixtures": 3
+    "upcomingFixtures": 0
   },
   {
     "categoryName": "Denmark",
     "categorySlug": "denmark",
-    "futureFixtures": 0,
+    "futureFixtures": 6,
     "liveFixtures": 0,
     "tournamentId": 47,
     "tournamentName": "1. Division",
@@ -422,7 +422,7 @@
   {
     "categoryName": "Finland",
     "categorySlug": "finland",
-    "futureFixtures": 80,
+    "futureFixtures": 75,
     "liveFixtures": 0,
     "tournamentId": 55,
     "tournamentName": "Ykkosliiga",
@@ -532,12 +532,12 @@
   {
     "categoryName": "Sweden",
     "categorySlug": "sweden",
-    "futureFixtures": 2,
+    "futureFixtures": 0,
     "liveFixtures": 0,
     "tournamentId": 80,
     "tournamentName": "Svenska Cup",
     "tournamentSlug": "svenska-cup",
-    "upcomingFixtures": 2
+    "upcomingFixtures": 0
   },
   {
     "categoryName": "Finland",
@@ -562,7 +562,7 @@
   {
     "categoryName": "Russia",
     "categorySlug": "russia",
-    "futureFixtures": 0,
+    "futureFixtures": 12,
     "liveFixtures": 0,
     "tournamentId": 91,
     "tournamentName": "Russian Cup",
@@ -712,7 +712,7 @@
   {
     "categoryName": "Austria",
     "categorySlug": "austria",
-    "futureFixtures": 0,
+    "futureFixtures": 16,
     "liveFixtures": 0,
     "tournamentId": 135,
     "tournamentName": "2. Liga",
@@ -782,7 +782,7 @@
   {
     "categoryName": "Romania",
     "categorySlug": "romania",
-    "futureFixtures": 0,
+    "futureFixtures": 32,
     "liveFixtures": 0,
     "tournamentId": 152,
     "tournamentName": "Superliga",
@@ -842,7 +842,7 @@
   {
     "categoryName": "Belarus",
     "categorySlug": "belarus",
-    "futureFixtures": 21,
+    "futureFixtures": 13,
     "liveFixtures": 0,
     "tournamentId": 169,
     "tournamentName": "Vysshaya Liga",
@@ -872,7 +872,7 @@
   {
     "categoryName": "Czechia",
     "categorySlug": "czechia",
-    "futureFixtures": 0,
+    "futureFixtures": 8,
     "liveFixtures": 0,
     "tournamentId": 172,
     "tournamentName": "1. Liga",
@@ -932,7 +932,7 @@
   {
     "categoryName": "Estonia",
     "categorySlug": "estonia",
-    "futureFixtures": 97,
+    "futureFixtures": 94,
     "liveFixtures": 0,
     "tournamentId": 178,
     "tournamentName": "Premium Liiga",
@@ -1022,7 +1022,7 @@
   {
     "categoryName": "Hungary",
     "categorySlug": "hungary",
-    "futureFixtures": 0,
+    "futureFixtures": 6,
     "liveFixtures": 0,
     "tournamentId": 187,
     "tournamentName": "NB I",
@@ -1032,27 +1032,27 @@
   {
     "categoryName": "Iceland",
     "categorySlug": "iceland",
-    "futureFixtures": 64,
+    "futureFixtures": 58,
     "liveFixtures": 0,
     "tournamentId": 188,
     "tournamentName": "Besta deild",
     "tournamentSlug": "besta-deild",
-    "upcomingFixtures": 1
+    "upcomingFixtures": 0
   },
   {
     "categoryName": "Ireland",
     "categorySlug": "ireland",
-    "futureFixtures": 71,
+    "futureFixtures": 66,
     "liveFixtures": 0,
     "tournamentId": 192,
     "tournamentName": "Premier Division",
     "tournamentSlug": "premier-division",
-    "upcomingFixtures": 2
+    "upcomingFixtures": 0
   },
   {
     "categoryName": "Ireland",
     "categorySlug": "ireland",
-    "futureFixtures": 80,
+    "futureFixtures": 75,
     "liveFixtures": 0,
     "tournamentId": 193,
     "tournamentName": "First Division",
@@ -1082,17 +1082,17 @@
   {
     "categoryName": "Latvia",
     "categorySlug": "latvia",
-    "futureFixtures": 85,
+    "futureFixtures": 76,
     "liveFixtures": 0,
     "tournamentId": 197,
     "tournamentName": "Virsliga",
     "tournamentSlug": "virsliga",
-    "upcomingFixtures": 1
+    "upcomingFixtures": 2
   },
   {
     "categoryName": "Lithuania",
     "categorySlug": "lithuania",
-    "futureFixtures": 72,
+    "futureFixtures": 64,
     "liveFixtures": 0,
     "tournamentId": 198,
     "tournamentName": "A Lyga",
@@ -1102,7 +1102,7 @@
   {
     "categoryName": "North Macedonia",
     "categorySlug": "north-macedonia",
-    "futureFixtures": 0,
+    "futureFixtures": 5,
     "liveFixtures": 0,
     "tournamentId": 199,
     "tournamentName": "1. MFL",
@@ -1132,7 +1132,7 @@
   {
     "categoryName": "Poland",
     "categorySlug": "poland",
-    "futureFixtures": 9,
+    "futureFixtures": 306,
     "liveFixtures": 0,
     "tournamentId": 202,
     "tournamentName": "Ekstraklasa",
@@ -1142,7 +1142,7 @@
   {
     "categoryName": "Russia",
     "categorySlug": "russia",
-    "futureFixtures": 0,
+    "futureFixtures": 8,
     "liveFixtures": 0,
     "tournamentId": 203,
     "tournamentName": "Premier League",
@@ -1162,7 +1162,7 @@
   {
     "categoryName": "Czechia",
     "categorySlug": "czechia",
-    "futureFixtures": 0,
+    "futureFixtures": 8,
     "liveFixtures": 0,
     "tournamentId": 205,
     "tournamentName": "FNL",
@@ -1212,7 +1212,7 @@
   {
     "categoryName": "Serbia",
     "categorySlug": "serbia",
-    "futureFixtures": 7,
+    "futureFixtures": 14,
     "liveFixtures": 0,
     "tournamentId": 210,
     "tournamentName": "Superliga",
@@ -1222,7 +1222,7 @@
   {
     "categoryName": "Slovakia",
     "categorySlug": "slovakia",
-    "futureFixtures": 0,
+    "futureFixtures": 6,
     "liveFixtures": 0,
     "tournamentId": 211,
     "tournamentName": "Superliga",
@@ -1232,7 +1232,7 @@
   {
     "categoryName": "Slovenia",
     "categorySlug": "slovenia",
-    "futureFixtures": 5,
+    "futureFixtures": 10,
     "liveFixtures": 0,
     "tournamentId": 212,
     "tournamentName": "PrvaLiga",
@@ -1252,7 +1252,7 @@
   {
     "categoryName": "Sweden",
     "categorySlug": "sweden",
-    "futureFixtures": 112,
+    "futureFixtures": 105,
     "liveFixtures": 0,
     "tournamentId": 214,
     "tournamentName": "Damallsvenskan",
@@ -1262,7 +1262,7 @@
   {
     "categoryName": "Switzerland",
     "categorySlug": "switzerland",
-    "futureFixtures": 12,
+    "futureFixtures": 18,
     "liveFixtures": 0,
     "tournamentId": 215,
     "tournamentName": "Super League",
@@ -1272,7 +1272,7 @@
   {
     "categoryName": "Switzerland",
     "categorySlug": "switzerland",
-    "futureFixtures": 10,
+    "futureFixtures": 15,
     "liveFixtures": 0,
     "tournamentId": 216,
     "tournamentName": "Challenge League",
@@ -1282,12 +1282,12 @@
   {
     "categoryName": "Germany",
     "categorySlug": "germany",
-    "futureFixtures": 9,
+    "futureFixtures": 22,
     "liveFixtures": 0,
     "tournamentId": 217,
     "tournamentName": "DFB Pokal",
     "tournamentSlug": "dfb-pokal",
-    "upcomingFixtures": 1
+    "upcomingFixtures": 0
   },
   {
     "categoryName": "Ukraine",
@@ -1302,12 +1302,12 @@
   {
     "categoryName": "Finland",
     "categorySlug": "finland",
-    "futureFixtures": 2,
+    "futureFixtures": 1,
     "liveFixtures": 0,
     "tournamentId": 220,
     "tournamentName": "Suomen Cup",
     "tournamentSlug": "suomen-cup",
-    "upcomingFixtures": 0
+    "upcomingFixtures": 1
   },
   {
     "categoryName": "Bosnia & Herzegovina",
@@ -1332,7 +1332,7 @@
   {
     "categoryName": "Poland",
     "categorySlug": "poland",
-    "futureFixtures": 0,
+    "futureFixtures": 9,
     "liveFixtures": 0,
     "tournamentId": 229,
     "tournamentName": "I Liga",
@@ -1382,7 +1382,7 @@
   {
     "categoryName": "Ecuador",
     "categorySlug": "ecuador",
-    "futureFixtures": 112,
+    "futureFixtures": 113,
     "liveFixtures": 0,
     "tournamentId": 240,
     "tournamentName": "LigaPro Primera A",
@@ -1432,7 +1432,7 @@
   {
     "categoryName": "Bulgaria",
     "categorySlug": "bulgaria",
-    "futureFixtures": 7,
+    "futureFixtures": 18,
     "liveFixtures": 0,
     "tournamentId": 247,
     "tournamentName": "Parva Liga",
@@ -1452,7 +1452,7 @@
   {
     "categoryName": "International Youth",
     "categorySlug": "international-youth",
-    "futureFixtures": 16,
+    "futureFixtures": 12,
     "liveFixtures": 0,
     "tournamentId": 258,
     "tournamentName": "U19 European Championship",
@@ -1662,7 +1662,7 @@
   {
     "categoryName": "Brazil",
     "categorySlug": "brazil",
-    "futureFixtures": 200,
+    "futureFixtures": 202,
     "liveFixtures": 1,
     "tournamentId": 325,
     "tournamentName": "Brasileiro Serie A",
@@ -2132,8 +2132,8 @@
   {
     "categoryName": "Brazil",
     "categorySlug": "brazil",
-    "futureFixtures": 241,
-    "liveFixtures": 0,
+    "futureFixtures": 230,
+    "liveFixtures": 1,
     "tournamentId": 390,
     "tournamentName": "Brasileiro Serie B",
     "tournamentSlug": "brasileiro-serie-b",
@@ -2172,7 +2172,7 @@
   {
     "categoryName": "Russia",
     "categorySlug": "russia",
-    "futureFixtures": 0,
+    "futureFixtures": 1,
     "liveFixtures": 0,
     "tournamentId": 397,
     "tournamentName": "Super Cup",
@@ -2202,7 +2202,7 @@
   {
     "categoryName": "Japan",
     "categorySlug": "japan",
-    "futureFixtures": 60,
+    "futureFixtures": 70,
     "liveFixtures": 0,
     "tournamentId": 402,
     "tournamentName": "J.League 2",
@@ -2282,7 +2282,7 @@
   {
     "categoryName": "Austria",
     "categorySlug": "austria",
-    "futureFixtures": 0,
+    "futureFixtures": 32,
     "liveFixtures": 0,
     "tournamentId": 445,
     "tournamentName": "OFB Cup",
@@ -2552,7 +2552,7 @@
   {
     "categoryName": "Iceland",
     "categorySlug": "iceland",
-    "futureFixtures": 2,
+    "futureFixtures": 1,
     "liveFixtures": 0,
     "tournamentId": 504,
     "tournamentName": "Cup",
@@ -2602,7 +2602,7 @@
   {
     "categoryName": "Poland",
     "categorySlug": "poland",
-    "futureFixtures": 0,
+    "futureFixtures": 1,
     "liveFixtures": 0,
     "tournamentId": 511,
     "tournamentName": "Superpuchar Polski",
@@ -2762,7 +2762,7 @@
   {
     "categoryName": "New Zealand",
     "categorySlug": "new-zealand",
-    "futureFixtures": 118,
+    "futureFixtures": 103,
     "liveFixtures": 0,
     "tournamentId": 594,
     "tournamentName": "National League",
@@ -2802,7 +2802,7 @@
   {
     "categoryName": "Republic of Korea",
     "categorySlug": "republic-of-korea",
-    "futureFixtures": 12,
+    "futureFixtures": 16,
     "liveFixtures": 0,
     "tournamentId": 615,
     "tournamentName": "Korea Cup",
@@ -2902,7 +2902,7 @@
   {
     "categoryName": "International Youth",
     "categorySlug": "international-youth",
-    "futureFixtures": 0,
+    "futureFixtures": 11,
     "liveFixtures": 0,
     "tournamentId": 638,
     "tournamentName": "U20 CONCACAF Championship",
@@ -2912,7 +2912,7 @@
   {
     "categoryName": "China",
     "categorySlug": "china",
-    "futureFixtures": 120,
+    "futureFixtures": 112,
     "liveFixtures": 0,
     "tournamentId": 649,
     "tournamentName": "Chinese Super League",
@@ -2962,7 +2962,7 @@
   {
     "categoryName": "Faroe Islands",
     "categorySlug": "faroe-islands",
-    "futureFixtures": 65,
+    "futureFixtures": 60,
     "liveFixtures": 0,
     "tournamentId": 673,
     "tournamentName": "Premier League",
@@ -2972,7 +2972,7 @@
   {
     "categoryName": "Faroe Islands",
     "categorySlug": "faroe-islands",
-    "futureFixtures": 66,
+    "futureFixtures": 60,
     "liveFixtures": 0,
     "tournamentId": 674,
     "tournamentName": "1st deild",
@@ -2982,7 +2982,7 @@
   {
     "categoryName": "Iceland",
     "categorySlug": "iceland",
-    "futureFixtures": 72,
+    "futureFixtures": 65,
     "liveFixtures": 0,
     "tournamentId": 675,
     "tournamentName": "1. deild",
@@ -2992,7 +2992,7 @@
   {
     "categoryName": "Lithuania",
     "categorySlug": "lithuania",
-    "futureFixtures": 133,
+    "futureFixtures": 124,
     "liveFixtures": 0,
     "tournamentId": 676,
     "tournamentName": "1 Lyga",
@@ -3002,7 +3002,7 @@
   {
     "categoryName": "Latvia",
     "categorySlug": "latvia",
-    "futureFixtures": 113,
+    "futureFixtures": 106,
     "liveFixtures": 0,
     "tournamentId": 677,
     "tournamentName": "1.Liga",
@@ -3012,17 +3012,17 @@
   {
     "categoryName": "Estonia",
     "categorySlug": "estonia",
-    "futureFixtures": 100,
+    "futureFixtures": 99,
     "liveFixtures": 0,
     "tournamentId": 678,
     "tournamentName": "Esiliiga",
     "tournamentSlug": "esiliiga",
-    "upcomingFixtures": 2
+    "upcomingFixtures": 1
   },
   {
     "categoryName": "International Clubs",
     "categorySlug": "international-clubs",
-    "futureFixtures": 17,
+    "futureFixtures": 24,
     "liveFixtures": 0,
     "tournamentId": 679,
     "tournamentName": "UEFA Europa League",
@@ -3032,7 +3032,7 @@
   {
     "categoryName": "Kazakhstan",
     "categorySlug": "kazakhstan",
-    "futureFixtures": 126,
+    "futureFixtures": 118,
     "liveFixtures": 0,
     "tournamentId": 682,
     "tournamentName": "Premier League",
@@ -3102,17 +3102,17 @@
   {
     "categoryName": "International Youth",
     "categorySlug": "international-youth",
-    "futureFixtures": 12,
+    "futureFixtures": 6,
     "liveFixtures": 0,
     "tournamentId": 695,
     "tournamentName": "U19 UEFA European Championship, Women",
     "tournamentSlug": "u19-uefa-european-championship-women",
-    "upcomingFixtures": 0
+    "upcomingFixtures": 2
   },
   {
     "categoryName": "International Clubs",
     "categorySlug": "international-clubs",
-    "futureFixtures": 0,
+    "futureFixtures": 10,
     "liveFixtures": 0,
     "tournamentId": 696,
     "tournamentName": "UEFA Champions League Women",
@@ -3162,7 +3162,7 @@
   {
     "categoryName": "Argentina",
     "categorySlug": "argentina",
-    "futureFixtures": 325,
+    "futureFixtures": 324,
     "liveFixtures": 0,
     "tournamentId": 703,
     "tournamentName": "Primera Nacional",
@@ -3172,12 +3172,12 @@
   {
     "categoryName": "Georgia",
     "categorySlug": "georgia",
-    "futureFixtures": 88,
+    "futureFixtures": 85,
     "liveFixtures": 0,
     "tournamentId": 704,
     "tournamentName": "Erovnuli Liga",
     "tournamentSlug": "erovnuli-liga",
-    "upcomingFixtures": 2
+    "upcomingFixtures": 0
   },
   {
     "categoryName": "Azerbaijan",
@@ -3303,11 +3303,11 @@
     "categoryName": "Georgia",
     "categorySlug": "georgia",
     "futureFixtures": 85,
-    "liveFixtures": 2,
+    "liveFixtures": 0,
     "tournamentId": 726,
     "tournamentName": "Erovnuli Liga 2",
     "tournamentSlug": "erovnuli-liga-2",
-    "upcomingFixtures": 3
+    "upcomingFixtures": 0
   },
   {
     "categoryName": "Israel",
@@ -3322,7 +3322,7 @@
   {
     "categoryName": "Georgia",
     "categorySlug": "georgia",
-    "futureFixtures": 2,
+    "futureFixtures": 0,
     "liveFixtures": 0,
     "tournamentId": 729,
     "tournamentName": "Cup",
@@ -3332,12 +3332,12 @@
   {
     "categoryName": "Estonia",
     "categorySlug": "estonia",
-    "futureFixtures": 0,
+    "futureFixtures": 1,
     "liveFixtures": 0,
     "tournamentId": 731,
     "tournamentName": "Cup",
     "tournamentSlug": "cup",
-    "upcomingFixtures": 0
+    "upcomingFixtures": 1
   },
   {
     "categoryName": "Azerbaijan",
@@ -3497,7 +3497,7 @@
     "tournamentId": 761,
     "tournamentName": "Latvia Cup",
     "tournamentSlug": "latvia-cup",
-    "upcomingFixtures": 1
+    "upcomingFixtures": 0
   },
   {
     "categoryName": "Luxembourg",
@@ -3512,7 +3512,7 @@
   {
     "categoryName": "Georgia",
     "categorySlug": "georgia",
-    "futureFixtures": 1,
+    "futureFixtures": 2,
     "liveFixtures": 0,
     "tournamentId": 766,
     "tournamentName": "Super Cup",
@@ -3572,7 +3572,7 @@
   {
     "categoryName": "Belarus",
     "categorySlug": "belarus",
-    "futureFixtures": 9,
+    "futureFixtures": 18,
     "liveFixtures": 0,
     "tournamentId": 776,
     "tournamentName": "Pervaya Liga",
@@ -3582,7 +3582,7 @@
   {
     "categoryName": "Republic of Korea",
     "categorySlug": "republic-of-korea",
-    "futureFixtures": 167,
+    "futureFixtures": 166,
     "liveFixtures": 0,
     "tournamentId": 777,
     "tournamentName": "K-League 2",
@@ -3602,7 +3602,7 @@
   {
     "categoryName": "Faroe Islands",
     "categorySlug": "faroe-islands",
-    "futureFixtures": 2,
+    "futureFixtures": 1,
     "liveFixtures": 0,
     "tournamentId": 779,
     "tournamentName": "Logmanssteypid",
@@ -3613,7 +3613,7 @@
     "categoryName": "International",
     "categorySlug": "international",
     "futureFixtures": 32,
-    "liveFixtures": 1,
+    "liveFixtures": 0,
     "tournamentId": 780,
     "tournamentName": "World Championship Qualification Women, Europe",
     "tournamentSlug": "world-championship-qualification-women-europe",
@@ -3622,7 +3622,7 @@
   {
     "categoryName": "China",
     "categorySlug": "china",
-    "futureFixtures": 153,
+    "futureFixtures": 145,
     "liveFixtures": 0,
     "tournamentId": 782,
     "tournamentName": "China League 1",
@@ -3632,7 +3632,7 @@
   {
     "categoryName": "Kazakhstan",
     "categorySlug": "kazakhstan",
-    "futureFixtures": 112,
+    "futureFixtures": 105,
     "liveFixtures": 0,
     "tournamentId": 785,
     "tournamentName": "Pervaya Liga",
@@ -3712,7 +3712,7 @@
   {
     "categoryName": "Lithuania",
     "categorySlug": "lithuania",
-    "futureFixtures": 4,
+    "futureFixtures": 2,
     "liveFixtures": 0,
     "tournamentId": 812,
     "tournamentName": "LFF Cup",
@@ -3832,12 +3832,12 @@
   {
     "categoryName": "International Clubs",
     "categorySlug": "international-clubs",
-    "futureFixtures": 43,
-    "liveFixtures": 10,
+    "futureFixtures": 160,
+    "liveFixtures": 12,
     "tournamentId": 853,
     "tournamentName": "Club Friendly Games",
     "tournamentSlug": "club-friendly-games",
-    "upcomingFixtures": 1
+    "upcomingFixtures": 26
   },
   {
     "categoryName": "International Youth",
@@ -3922,7 +3922,7 @@
   {
     "categoryName": "Russia",
     "categorySlug": "russia",
-    "futureFixtures": 152,
+    "futureFixtures": 144,
     "liveFixtures": 0,
     "tournamentId": 879,
     "tournamentName": "Youth League",
@@ -3942,7 +3942,7 @@
   {
     "categoryName": "China",
     "categorySlug": "china",
-    "futureFixtures": 0,
+    "futureFixtures": 8,
     "liveFixtures": 0,
     "tournamentId": 882,
     "tournamentName": "FA Cup",
@@ -4142,17 +4142,17 @@
   {
     "categoryName": "Kuwait",
     "categorySlug": "kuwait",
-    "futureFixtures": 6,
+    "futureFixtures": 0,
     "liveFixtures": 0,
     "tournamentId": 1002,
     "tournamentName": "Premier League",
     "tournamentSlug": "premier-league",
-    "upcomingFixtures": 3
+    "upcomingFixtures": 0
   },
   {
     "categoryName": "Cameroon",
     "categorySlug": "cameroon",
-    "futureFixtures": 7,
+    "futureFixtures": 0,
     "liveFixtures": 0,
     "tournamentId": 1006,
     "tournamentName": "Elite One",
@@ -4262,7 +4262,7 @@
   {
     "categoryName": "Norway",
     "categorySlug": "norway",
-    "futureFixtures": 2,
+    "futureFixtures": 0,
     "liveFixtures": 0,
     "tournamentId": 1062,
     "tournamentName": "NM Cup Women",
@@ -4362,7 +4362,7 @@
   {
     "categoryName": "Russia",
     "categorySlug": "russia",
-    "futureFixtures": 136,
+    "futureFixtures": 127,
     "liveFixtures": 0,
     "tournamentId": 1093,
     "tournamentName": "2. Liga, Division B, Group 1",
@@ -4372,7 +4372,7 @@
   {
     "categoryName": "Russia",
     "categorySlug": "russia",
-    "futureFixtures": 136,
+    "futureFixtures": 128,
     "liveFixtures": 0,
     "tournamentId": 1095,
     "tournamentName": "2. Liga, Division B, Group 3",
@@ -4382,7 +4382,7 @@
   {
     "categoryName": "Russia",
     "categorySlug": "russia",
-    "futureFixtures": 54,
+    "futureFixtures": 48,
     "liveFixtures": 0,
     "tournamentId": 1097,
     "tournamentName": "2. Liga, Division B, Group 4",
@@ -4392,7 +4392,7 @@
   {
     "categoryName": "Russia",
     "categorySlug": "russia",
-    "futureFixtures": 119,
+    "futureFixtures": 111,
     "liveFixtures": 0,
     "tournamentId": 1099,
     "tournamentName": "2. Liga, Division B, Group 2",
@@ -4612,12 +4612,12 @@
   {
     "categoryName": "Chile",
     "categorySlug": "chile",
-    "futureFixtures": 48,
+    "futureFixtures": 22,
     "liveFixtures": 0,
     "tournamentId": 1221,
     "tournamentName": "Copa Chile",
     "tournamentSlug": "copa-chile",
-    "upcomingFixtures": 0
+    "upcomingFixtures": 2
   },
   {
     "categoryName": "International Clubs",
@@ -4712,17 +4712,17 @@
   {
     "categoryName": "Paraguay",
     "categorySlug": "paraguay",
-    "futureFixtures": 8,
+    "futureFixtures": 9,
     "liveFixtures": 0,
     "tournamentId": 1254,
     "tournamentName": "Segunda Division",
     "tournamentSlug": "segunda-division",
-    "upcomingFixtures": 0
+    "upcomingFixtures": 2
   },
   {
     "categoryName": "Australia",
     "categorySlug": "australia",
-    "futureFixtures": 42,
+    "futureFixtures": 36,
     "liveFixtures": 0,
     "tournamentId": 1258,
     "tournamentName": "South Australia NPL",
@@ -4732,7 +4732,7 @@
   {
     "categoryName": "Australia",
     "categorySlug": "australia",
-    "futureFixtures": 41,
+    "futureFixtures": 36,
     "liveFixtures": 0,
     "tournamentId": 1260,
     "tournamentName": "Capital NPL 1",
@@ -4762,7 +4762,7 @@
   {
     "categoryName": "Australia",
     "categorySlug": "australia",
-    "futureFixtures": 45,
+    "futureFixtures": 38,
     "liveFixtures": 0,
     "tournamentId": 1268,
     "tournamentName": "Queensland NPL",
@@ -4772,7 +4772,7 @@
   {
     "categoryName": "Australia",
     "categorySlug": "australia",
-    "futureFixtures": 43,
+    "futureFixtures": 37,
     "liveFixtures": 0,
     "tournamentId": 1270,
     "tournamentName": "Western Australia NPL",
@@ -4782,7 +4782,7 @@
   {
     "categoryName": "Australia",
     "categorySlug": "australia",
-    "futureFixtures": 80,
+    "futureFixtures": 72,
     "liveFixtures": 0,
     "tournamentId": 1274,
     "tournamentName": "NSW NPL 1",
@@ -4792,7 +4792,7 @@
   {
     "categoryName": "Australia",
     "categorySlug": "australia",
-    "futureFixtures": 64,
+    "futureFixtures": 57,
     "liveFixtures": 0,
     "tournamentId": 1275,
     "tournamentName": "Victoria, NPL",
@@ -4812,12 +4812,12 @@
   {
     "categoryName": "Brazil",
     "categorySlug": "brazil",
-    "futureFixtures": 80,
+    "futureFixtures": 70,
     "liveFixtures": 0,
     "tournamentId": 1281,
     "tournamentName": "Brasileiro Serie C",
     "tournamentSlug": "brasileiro-serie-c",
-    "upcomingFixtures": 1
+    "upcomingFixtures": 3
   },
   {
     "categoryName": "International Clubs",
@@ -4892,7 +4892,7 @@
   {
     "categoryName": "Argentina",
     "categorySlug": "argentina",
-    "futureFixtures": 231,
+    "futureFixtures": 220,
     "liveFixtures": 0,
     "tournamentId": 1347,
     "tournamentName": "Primera B",
@@ -5172,7 +5172,7 @@
   {
     "categoryName": "Australia",
     "categorySlug": "australia",
-    "futureFixtures": 31,
+    "futureFixtures": 26,
     "liveFixtures": 0,
     "tournamentId": 1626,
     "tournamentName": "Tasmania NPL",
@@ -5192,7 +5192,7 @@
   {
     "categoryName": "Australia",
     "categorySlug": "australia",
-    "futureFixtures": 41,
+    "futureFixtures": 34,
     "liveFixtures": 0,
     "tournamentId": 1638,
     "tournamentName": "Northern NSW NPL",
@@ -5222,7 +5222,7 @@
   {
     "categoryName": "Finland",
     "categorySlug": "finland",
-    "futureFixtures": 20,
+    "futureFixtures": 16,
     "liveFixtures": 0,
     "tournamentId": 1662,
     "tournamentName": "Kansallinen Liiga, Women",
@@ -5332,7 +5332,7 @@
   {
     "categoryName": "Australia",
     "categorySlug": "australia",
-    "futureFixtures": 57,
+    "futureFixtures": 58,
     "liveFixtures": 0,
     "tournamentId": 1760,
     "tournamentName": "Victoria Premier League 2",
@@ -5352,7 +5352,7 @@
   {
     "categoryName": "Republic of Korea",
     "categorySlug": "republic-of-korea",
-    "futureFixtures": 63,
+    "futureFixtures": 60,
     "liveFixtures": 1,
     "tournamentId": 1772,
     "tournamentName": "WK-League",
@@ -5402,7 +5402,7 @@
   {
     "categoryName": "Australia",
     "categorySlug": "australia",
-    "futureFixtures": 0,
+    "futureFixtures": 2,
     "liveFixtures": 0,
     "tournamentId": 1786,
     "tournamentName": "Australia Cup",
@@ -5412,7 +5412,7 @@
   {
     "categoryName": "USA",
     "categorySlug": "usa",
-    "futureFixtures": 0,
+    "futureFixtures": 1,
     "liveFixtures": 0,
     "tournamentId": 1794,
     "tournamentName": "MLS All Star Game",
@@ -5902,7 +5902,7 @@
   {
     "categoryName": "Mexico",
     "categorySlug": "mexico",
-    "futureFixtures": 0,
+    "futureFixtures": 1,
     "liveFixtures": 0,
     "tournamentId": 2244,
     "tournamentName": "Trofeo de Campeon de Campeones",
@@ -6092,7 +6092,7 @@
   {
     "categoryName": "Lebanon",
     "categorySlug": "lebanon",
-    "futureFixtures": 15,
+    "futureFixtures": 5,
     "liveFixtures": 0,
     "tournamentId": 2386,
     "tournamentName": "Premier League",
@@ -6112,12 +6112,12 @@
   {
     "categoryName": "Tanzania",
     "categorySlug": "tanzania",
-    "futureFixtures": 24,
-    "liveFixtures": 0,
+    "futureFixtures": 1,
+    "liveFixtures": 4,
     "tournamentId": 2436,
     "tournamentName": "Premier League",
     "tournamentSlug": "premier-league",
-    "upcomingFixtures": 0
+    "upcomingFixtures": 4
   },
   {
     "categoryName": "International",
@@ -6232,7 +6232,7 @@
   {
     "categoryName": "Japan",
     "categorySlug": "japan",
-    "futureFixtures": 48,
+    "futureFixtures": 42,
     "liveFixtures": 0,
     "tournamentId": 2529,
     "tournamentName": "Nadeshiko League, Div. 1, Women",
@@ -6252,7 +6252,7 @@
   {
     "categoryName": "Sweden Amateur",
     "categorySlug": "sweden-amateur",
-    "futureFixtures": 135,
+    "futureFixtures": 130,
     "liveFixtures": 0,
     "tournamentId": 2539,
     "tournamentName": "U19 Allsvenskan",
@@ -6272,7 +6272,7 @@
   {
     "categoryName": "Russia",
     "categorySlug": "russia",
-    "futureFixtures": 90,
+    "futureFixtures": 84,
     "liveFixtures": 0,
     "tournamentId": 13635,
     "tournamentName": "Superleague, Women",
@@ -6292,7 +6292,7 @@
   {
     "categoryName": "Brazil",
     "categorySlug": "brazil",
-    "futureFixtures": 20,
+    "futureFixtures": 10,
     "liveFixtures": 0,
     "tournamentId": 13685,
     "tournamentName": "U20 Campeonato Brasileiro",
@@ -6342,7 +6342,7 @@
   {
     "categoryName": "Peru",
     "categorySlug": "peru",
-    "futureFixtures": 5,
+    "futureFixtures": 7,
     "liveFixtures": 0,
     "tournamentId": 13995,
     "tournamentName": "Liga Femenina",
@@ -6492,7 +6492,7 @@
   {
     "categoryName": "International",
     "categorySlug": "international",
-    "futureFixtures": 12,
+    "futureFixtures": 24,
     "liveFixtures": 0,
     "tournamentId": 14604,
     "tournamentName": "Africa Cup of Nations, Women",
@@ -6592,7 +6592,7 @@
   {
     "categoryName": "Ecuador",
     "categorySlug": "ecuador",
-    "futureFixtures": 78,
+    "futureFixtures": 73,
     "liveFixtures": 0,
     "tournamentId": 15027,
     "tournamentName": "Serie B",
@@ -6662,7 +6662,7 @@
   {
     "categoryName": "Republic of Korea",
     "categorySlug": "republic-of-korea",
-    "futureFixtures": 77,
+    "futureFixtures": 70,
     "liveFixtures": 0,
     "tournamentId": 15123,
     "tournamentName": "K3 League",
@@ -6722,7 +6722,7 @@
   {
     "categoryName": "Iceland",
     "categorySlug": "iceland",
-    "futureFixtures": 58,
+    "futureFixtures": 52,
     "liveFixtures": 0,
     "tournamentId": 15279,
     "tournamentName": "Besta deild, Women",
@@ -6732,7 +6732,7 @@
   {
     "categoryName": "Brazil",
     "categorySlug": "brazil",
-    "futureFixtures": 254,
+    "futureFixtures": 232,
     "liveFixtures": 0,
     "tournamentId": 15281,
     "tournamentName": "U20 Paulista",
@@ -6742,7 +6742,7 @@
   {
     "categoryName": "Iceland",
     "categorySlug": "iceland",
-    "futureFixtures": 78,
+    "futureFixtures": 72,
     "liveFixtures": 0,
     "tournamentId": 15283,
     "tournamentName": "2. deild",
@@ -6752,7 +6752,7 @@
   {
     "categoryName": "Brazil",
     "categorySlug": "brazil",
-    "futureFixtures": 32,
+    "futureFixtures": 0,
     "liveFixtures": 0,
     "tournamentId": 15335,
     "tournamentName": "Brasileiro Serie D",
@@ -6792,7 +6792,7 @@
   {
     "categoryName": "China",
     "categorySlug": "china",
-    "futureFixtures": 123,
+    "futureFixtures": 99,
     "liveFixtures": 0,
     "tournamentId": 15636,
     "tournamentName": "China League 2",
@@ -6822,7 +6822,7 @@
   {
     "categoryName": "Australia",
     "categorySlug": "australia",
-    "futureFixtures": 63,
+    "futureFixtures": 57,
     "liveFixtures": 0,
     "tournamentId": 16904,
     "tournamentName": "Victoria NPL, Women",
@@ -6892,7 +6892,7 @@
   {
     "categoryName": "Iceland",
     "categorySlug": "iceland",
-    "futureFixtures": 55,
+    "futureFixtures": 50,
     "liveFixtures": 0,
     "tournamentId": 18204,
     "tournamentName": "1. deild, Women",
@@ -6902,7 +6902,7 @@
   {
     "categoryName": "Australia",
     "categorySlug": "australia",
-    "futureFixtures": 49,
+    "futureFixtures": 42,
     "liveFixtures": 0,
     "tournamentId": 18270,
     "tournamentName": "Queensland NPL, Women",
@@ -6922,7 +6922,7 @@
   {
     "categoryName": "Finland",
     "categorySlug": "finland",
-    "futureFixtures": 3,
+    "futureFixtures": 6,
     "liveFixtures": 0,
     "tournamentId": 18318,
     "tournamentName": "Ykkonen, Women",
@@ -6932,7 +6932,7 @@
   {
     "categoryName": "Australia",
     "categorySlug": "australia",
-    "futureFixtures": 30,
+    "futureFixtures": 26,
     "liveFixtures": 0,
     "tournamentId": 18340,
     "tournamentName": "South Australia NPL, Women",
@@ -6967,7 +6967,7 @@
     "tournamentId": 18464,
     "tournamentName": "Primera Division, Women",
     "tournamentSlug": "primera-division-women",
-    "upcomingFixtures": 1
+    "upcomingFixtures": 0
   },
   {
     "categoryName": "New Zealand",
@@ -6982,12 +6982,12 @@
   {
     "categoryName": "Finland",
     "categorySlug": "finland",
-    "futureFixtures": 0,
+    "futureFixtures": 3,
     "liveFixtures": 0,
     "tournamentId": 18486,
     "tournamentName": "Suomen Cup, Women",
     "tournamentSlug": "suomen-cup-women",
-    "upcomingFixtures": 0
+    "upcomingFixtures": 1
   },
   {
     "categoryName": "Denmark",
@@ -7122,7 +7122,7 @@
   {
     "categoryName": "China",
     "categorySlug": "china",
-    "futureFixtures": 30,
+    "futureFixtures": 18,
     "liveFixtures": 0,
     "tournamentId": 19264,
     "tournamentName": "Chinese Super League, Women",
@@ -7162,7 +7162,7 @@
   {
     "categoryName": "Norway",
     "categorySlug": "norway",
-    "futureFixtures": 72,
+    "futureFixtures": 67,
     "liveFixtures": 0,
     "tournamentId": 19272,
     "tournamentName": "1st Division, Women",
@@ -7202,7 +7202,7 @@
   {
     "categoryName": "Venezuela",
     "categorySlug": "venezuela",
-    "futureFixtures": 0,
+    "futureFixtures": 30,
     "liveFixtures": 0,
     "tournamentId": 19282,
     "tournamentName": "Copa Venezuela",
@@ -7222,7 +7222,7 @@
   {
     "categoryName": "Northern Ireland",
     "categorySlug": "northern-ireland",
-    "futureFixtures": 34,
+    "futureFixtures": 31,
     "liveFixtures": 0,
     "tournamentId": 19486,
     "tournamentName": "Premier League, Women",
@@ -7262,7 +7262,7 @@
   {
     "categoryName": "Malawi",
     "categorySlug": "malawi",
-    "futureFixtures": 184,
+    "futureFixtures": 177,
     "liveFixtures": 0,
     "tournamentId": 19494,
     "tournamentName": "Super League",
@@ -7272,7 +7272,7 @@
   {
     "categoryName": "Morocco",
     "categorySlug": "morocco",
-    "futureFixtures": 8,
+    "futureFixtures": 0,
     "liveFixtures": 0,
     "tournamentId": 19496,
     "tournamentName": "Botola Pro D2",
@@ -7372,7 +7372,7 @@
   {
     "categoryName": "Mozambique",
     "categorySlug": "mozambique",
-    "futureFixtures": 12,
+    "futureFixtures": 1,
     "liveFixtures": 0,
     "tournamentId": 20576,
     "tournamentName": "Mocambola",
@@ -7412,12 +7412,12 @@
   {
     "categoryName": "Sweden",
     "categorySlug": "sweden",
-    "futureFixtures": 474,
+    "futureFixtures": 518,
     "liveFixtures": 0,
     "tournamentId": 20782,
     "tournamentName": "Division 2, Promotion Playoffs",
     "tournamentSlug": "division-2-promotion-playoffs",
-    "upcomingFixtures": 3
+    "upcomingFixtures": 0
   },
   {
     "categoryName": "Italy",
@@ -7512,7 +7512,7 @@
   {
     "categoryName": "Iran",
     "categorySlug": "iran",
-    "futureFixtures": 0,
+    "futureFixtures": 2,
     "liveFixtures": 0,
     "tournamentId": 23551,
     "tournamentName": "Azadegan League",
@@ -7732,7 +7732,7 @@
   {
     "categoryName": "Norway",
     "categorySlug": "norway",
-    "futureFixtures": 105,
+    "futureFixtures": 98,
     "liveFixtures": 0,
     "tournamentId": 24636,
     "tournamentName": "2nd Division Group 2",
@@ -7742,7 +7742,7 @@
   {
     "categoryName": "Norway",
     "categorySlug": "norway",
-    "futureFixtures": 105,
+    "futureFixtures": 98,
     "liveFixtures": 0,
     "tournamentId": 24638,
     "tournamentName": "2nd Division Group 1",
@@ -7752,7 +7752,7 @@
   {
     "categoryName": "Norway",
     "categorySlug": "norway",
-    "futureFixtures": 105,
+    "futureFixtures": 98,
     "liveFixtures": 0,
     "tournamentId": 24642,
     "tournamentName": "3rd Division Group 1",
@@ -7762,37 +7762,37 @@
   {
     "categoryName": "Norway",
     "categorySlug": "norway",
-    "futureFixtures": 104,
+    "futureFixtures": 97,
     "liveFixtures": 0,
     "tournamentId": 24644,
     "tournamentName": "3rd Division Group 2",
     "tournamentSlug": "3rd-division-group-2",
-    "upcomingFixtures": 1
+    "upcomingFixtures": 0
   },
   {
     "categoryName": "Norway",
     "categorySlug": "norway",
-    "futureFixtures": 105,
+    "futureFixtures": 98,
     "liveFixtures": 0,
     "tournamentId": 24646,
     "tournamentName": "3rd Division Group 3",
     "tournamentSlug": "3rd-division-group-3",
-    "upcomingFixtures": 2
+    "upcomingFixtures": 0
   },
   {
     "categoryName": "Norway",
     "categorySlug": "norway",
-    "futureFixtures": 105,
+    "futureFixtures": 98,
     "liveFixtures": 0,
     "tournamentId": 24648,
     "tournamentName": "3rd Division Group 4",
     "tournamentSlug": "3rd-division-group-4",
-    "upcomingFixtures": 2
+    "upcomingFixtures": 0
   },
   {
     "categoryName": "Norway",
     "categorySlug": "norway",
-    "futureFixtures": 105,
+    "futureFixtures": 98,
     "liveFixtures": 0,
     "tournamentId": 24650,
     "tournamentName": "3rd Division Group 5",
@@ -7802,7 +7802,7 @@
   {
     "categoryName": "Norway",
     "categorySlug": "norway",
-    "futureFixtures": 105,
+    "futureFixtures": 98,
     "liveFixtures": 0,
     "tournamentId": 24652,
     "tournamentName": "3rd Division Group 6",
@@ -8282,12 +8282,12 @@
   {
     "categoryName": "Argentina",
     "categorySlug": "argentina",
-    "futureFixtures": 224,
+    "futureFixtures": 210,
     "liveFixtures": 0,
     "tournamentId": 26174,
     "tournamentName": "Primera C",
     "tournamentSlug": "primera-c",
-    "upcomingFixtures": 0
+    "upcomingFixtures": 2
   },
   {
     "categoryName": "USA",
@@ -8572,8 +8572,8 @@
   {
     "categoryName": "Kyrgyzstan",
     "categorySlug": "kyrgyzstan",
-    "futureFixtures": 1,
-    "liveFixtures": 1,
+    "futureFixtures": 0,
+    "liveFixtures": 0,
     "tournamentId": 26622,
     "tournamentName": "Top League",
     "tournamentSlug": "top-league",
@@ -8612,12 +8612,12 @@
   {
     "categoryName": "Finland",
     "categorySlug": "finland",
-    "futureFixtures": 136,
+    "futureFixtures": 122,
     "liveFixtures": 0,
     "tournamentId": 26910,
     "tournamentName": "Kakkonen Playoffs",
     "tournamentSlug": "kakkonen-playoffs",
-    "upcomingFixtures": 0
+    "upcomingFixtures": 1
   },
   {
     "categoryName": "Chinese Taipei",
@@ -8632,7 +8632,7 @@
   {
     "categoryName": "Syria",
     "categorySlug": "syria",
-    "futureFixtures": 24,
+    "futureFixtures": 9,
     "liveFixtures": 0,
     "tournamentId": 26922,
     "tournamentName": "Premier League",
@@ -8682,8 +8682,8 @@
   {
     "categoryName": "Colombia",
     "categorySlug": "colombia",
-    "futureFixtures": 0,
-    "liveFixtures": 0,
+    "futureFixtures": 190,
+    "liveFixtures": 1,
     "tournamentId": 27070,
     "tournamentName": "Primera A, Apertura",
     "tournamentSlug": "primera-a-apertura",
@@ -8722,7 +8722,7 @@
   {
     "categoryName": "Costa Rica",
     "categorySlug": "costa-rica",
-    "futureFixtures": 0,
+    "futureFixtures": 90,
     "liveFixtures": 0,
     "tournamentId": 27092,
     "tournamentName": "Primera Division, Apertura",
@@ -8892,7 +8892,7 @@
   {
     "categoryName": "Sweden",
     "categorySlug": "sweden",
-    "futureFixtures": 272,
+    "futureFixtures": 256,
     "liveFixtures": 0,
     "tournamentId": 27412,
     "tournamentName": "Ettan, Relegation/Promotion",
@@ -9192,7 +9192,7 @@
   {
     "categoryName": "USA",
     "categorySlug": "usa",
-    "futureFixtures": 214,
+    "futureFixtures": 211,
     "liveFixtures": 0,
     "tournamentId": 28163,
     "tournamentName": "USL Championship",
@@ -9202,7 +9202,7 @@
   {
     "categoryName": "USA",
     "categorySlug": "usa",
-    "futureFixtures": 180,
+    "futureFixtures": 176,
     "liveFixtures": 0,
     "tournamentId": 28165,
     "tournamentName": "USL League One",
@@ -9302,12 +9302,12 @@
   {
     "categoryName": "USA",
     "categorySlug": "usa",
-    "futureFixtures": 66,
+    "futureFixtures": 22,
     "liveFixtures": 0,
     "tournamentId": 28424,
     "tournamentName": "National Premier Soccer League",
     "tournamentSlug": "national-premier-soccer-league",
-    "upcomingFixtures": 0
+    "upcomingFixtures": 3
   },
   {
     "categoryName": "Virtual Football",
@@ -9322,7 +9322,7 @@
   {
     "categoryName": "Canada",
     "categorySlug": "canada",
-    "futureFixtures": 73,
+    "futureFixtures": 71,
     "liveFixtures": 0,
     "tournamentId": 28432,
     "tournamentName": "Canadian Premier League",
@@ -9432,7 +9432,7 @@
   {
     "categoryName": "Ireland",
     "categorySlug": "ireland",
-    "futureFixtures": 78,
+    "futureFixtures": 72,
     "liveFixtures": 0,
     "tournamentId": 28681,
     "tournamentName": "Premier Division, Women",
@@ -9452,12 +9452,12 @@
   {
     "categoryName": "USA",
     "categorySlug": "usa",
-    "futureFixtures": 358,
-    "liveFixtures": 0,
+    "futureFixtures": 211,
+    "liveFixtures": 1,
     "tournamentId": 28743,
     "tournamentName": "USL League Two",
     "tournamentSlug": "usl-league-two",
-    "upcomingFixtures": 2
+    "upcomingFixtures": 16
   },
   {
     "categoryName": "Turkiye Amateur",
@@ -9492,7 +9492,7 @@
   {
     "categoryName": "Iceland",
     "categorySlug": "iceland",
-    "futureFixtures": 77,
+    "futureFixtures": 71,
     "liveFixtures": 1,
     "tournamentId": 28879,
     "tournamentName": "3. deild",
@@ -9552,12 +9552,12 @@
   {
     "categoryName": "Paraguay",
     "categorySlug": "paraguay",
-    "futureFixtures": 0,
+    "futureFixtures": 5,
     "liveFixtures": 0,
     "tournamentId": 29003,
     "tournamentName": "Copa Paraguay",
     "tournamentSlug": "copa-paraguay",
-    "upcomingFixtures": 0
+    "upcomingFixtures": 2
   },
   {
     "categoryName": "Uzbekistan",
@@ -9852,12 +9852,12 @@
   {
     "categoryName": "Argentina",
     "categorySlug": "argentina",
-    "futureFixtures": 68,
+    "futureFixtures": 51,
     "liveFixtures": 0,
     "tournamentId": 30106,
     "tournamentName": "Torneo Federal A",
     "tournamentSlug": "torneo-federal-a",
-    "upcomingFixtures": 1
+    "upcomingFixtures": 0
   },
   {
     "categoryName": "Virtual Football",
@@ -9942,7 +9942,7 @@
   {
     "categoryName": "Brazil",
     "categorySlug": "brazil",
-    "futureFixtures": 0,
+    "futureFixtures": 1,
     "liveFixtures": 0,
     "tournamentId": 30913,
     "tournamentName": "Paulista, Women",
@@ -10783,11 +10783,11 @@
     "categoryName": "Belarus",
     "categorySlug": "belarus",
     "futureFixtures": 1,
-    "liveFixtures": 2,
+    "liveFixtures": 0,
     "tournamentId": 32311,
     "tournamentName": "Vtoraya Liga",
     "tournamentSlug": "vtoraya-liga",
-    "upcomingFixtures": 1
+    "upcomingFixtures": 0
   },
   {
     "categoryName": "Belarus",
@@ -10802,7 +10802,7 @@
   {
     "categoryName": "Australia",
     "categorySlug": "australia",
-    "futureFixtures": 45,
+    "futureFixtures": 36,
     "liveFixtures": 0,
     "tournamentId": 32341,
     "tournamentName": "Queensland Premier League 1",
@@ -10812,7 +10812,7 @@
   {
     "categoryName": "Australia",
     "categorySlug": "australia",
-    "futureFixtures": 31,
+    "futureFixtures": 25,
     "liveFixtures": 0,
     "tournamentId": 32343,
     "tournamentName": "Northern NSW League One",
@@ -10822,7 +10822,7 @@
   {
     "categoryName": "Australia",
     "categorySlug": "australia",
-    "futureFixtures": 24,
+    "futureFixtures": 21,
     "liveFixtures": 0,
     "tournamentId": 32349,
     "tournamentName": "Capital NPL, Women",
@@ -10832,7 +10832,7 @@
   {
     "categoryName": "Australia",
     "categorySlug": "australia",
-    "futureFixtures": 70,
+    "futureFixtures": 63,
     "liveFixtures": 0,
     "tournamentId": 32351,
     "tournamentName": "NSW Premier League, Women",
@@ -10842,7 +10842,7 @@
   {
     "categoryName": "Australia",
     "categorySlug": "australia",
-    "futureFixtures": 80,
+    "futureFixtures": 72,
     "liveFixtures": 0,
     "tournamentId": 32353,
     "tournamentName": "U20 NSW NPL",
@@ -10852,7 +10852,7 @@
   {
     "categoryName": "Australia",
     "categorySlug": "australia",
-    "futureFixtures": 80,
+    "futureFixtures": 72,
     "liveFixtures": 0,
     "tournamentId": 32355,
     "tournamentName": "NSW League One",
@@ -10862,7 +10862,7 @@
   {
     "categoryName": "Australia",
     "categorySlug": "australia",
-    "futureFixtures": 70,
+    "futureFixtures": 63,
     "liveFixtures": 0,
     "tournamentId": 32357,
     "tournamentName": "NSW League Two",
@@ -10882,7 +10882,7 @@
   {
     "categoryName": "Australia",
     "categorySlug": "australia",
-    "futureFixtures": 18,
+    "futureFixtures": 15,
     "liveFixtures": 0,
     "tournamentId": 32363,
     "tournamentName": "Northern NSW Premier League, Women",
@@ -10892,7 +10892,7 @@
   {
     "categoryName": "Australia",
     "categorySlug": "australia",
-    "futureFixtures": 41,
+    "futureFixtures": 37,
     "liveFixtures": 0,
     "tournamentId": 32365,
     "tournamentName": "Tasmania Super League, Women",
@@ -10912,7 +10912,7 @@
   {
     "categoryName": "Australia",
     "categorySlug": "australia",
-    "futureFixtures": 36,
+    "futureFixtures": 32,
     "liveFixtures": 0,
     "tournamentId": 32369,
     "tournamentName": "NPL Western Australia, Women",
@@ -10972,7 +10972,7 @@
   {
     "categoryName": "Australia",
     "categorySlug": "australia",
-    "futureFixtures": 55,
+    "futureFixtures": 49,
     "liveFixtures": 0,
     "tournamentId": 32483,
     "tournamentName": "NSW League One, Women",
@@ -11002,7 +11002,7 @@
   {
     "categoryName": "USA",
     "categorySlug": "usa",
-    "futureFixtures": 1,
+    "futureFixtures": 0,
     "liveFixtures": 0,
     "tournamentId": 32559,
     "tournamentName": "NWSL Challenge Cup, Women",
@@ -11092,7 +11092,7 @@
   {
     "categoryName": "Australia",
     "categorySlug": "australia",
-    "futureFixtures": 80,
+    "futureFixtures": 72,
     "liveFixtures": 0,
     "tournamentId": 33307,
     "tournamentName": "U20 NSW Premier League 2",
@@ -11122,7 +11122,7 @@
   {
     "categoryName": "Australia",
     "categorySlug": "australia",
-    "futureFixtures": 70,
+    "futureFixtures": 63,
     "liveFixtures": 0,
     "tournamentId": 33313,
     "tournamentName": "U23 NSW NPL, Women",
@@ -11132,8 +11132,8 @@
   {
     "categoryName": "Australia",
     "categorySlug": "australia",
-    "futureFixtures": 55,
-    "liveFixtures": 0,
+    "futureFixtures": 48,
+    "liveFixtures": 1,
     "tournamentId": 33315,
     "tournamentName": "NSW League One",
     "tournamentSlug": "nsw-league-one",
@@ -11172,12 +11172,12 @@
   {
     "categoryName": "Ethiopia",
     "categorySlug": "ethiopia",
-    "futureFixtures": 20,
-    "liveFixtures": 1,
+    "futureFixtures": 10,
+    "liveFixtures": 0,
     "tournamentId": 33656,
     "tournamentName": "Premier League",
     "tournamentSlug": "premier-league",
-    "upcomingFixtures": 1
+    "upcomingFixtures": 0
   },
   {
     "categoryName": "International Youth",
@@ -11272,7 +11272,7 @@
   {
     "categoryName": "Australia",
     "categorySlug": "australia",
-    "futureFixtures": 45,
+    "futureFixtures": 43,
     "liveFixtures": 0,
     "tournamentId": 33950,
     "tournamentName": "Queensland Premier League 2",
@@ -11292,7 +11292,7 @@
   {
     "categoryName": "Australia",
     "categorySlug": "australia",
-    "futureFixtures": 42,
+    "futureFixtures": 38,
     "liveFixtures": 0,
     "tournamentId": 33954,
     "tournamentName": "South Australia State League 1",
@@ -11302,7 +11302,7 @@
   {
     "categoryName": "Bolivia",
     "categorySlug": "bolivia",
-    "futureFixtures": 8,
+    "futureFixtures": 54,
     "liveFixtures": 0,
     "tournamentId": 33980,
     "tournamentName": "Division Profesional",
@@ -11322,12 +11322,12 @@
   {
     "categoryName": "Lithuania",
     "categorySlug": "lithuania",
-    "futureFixtures": 15,
+    "futureFixtures": 109,
     "liveFixtures": 0,
     "tournamentId": 34066,
     "tournamentName": "II Lyga",
     "tournamentSlug": "ii-lyga",
-    "upcomingFixtures": 2
+    "upcomingFixtures": 1
   },
   {
     "categoryName": "Qatar",
@@ -11592,7 +11592,7 @@
   {
     "categoryName": "Brazil",
     "categorySlug": "brazil",
-    "futureFixtures": 4,
+    "futureFixtures": 2,
     "liveFixtures": 0,
     "tournamentId": 35793,
     "tournamentName": "Copa FGF",
@@ -11613,11 +11613,11 @@
     "categoryName": "Estonia",
     "categorySlug": "estonia",
     "futureFixtures": 96,
-    "liveFixtures": 1,
+    "liveFixtures": 0,
     "tournamentId": 35797,
     "tournamentName": "Esiliiga B",
     "tournamentSlug": "esiliiga-b",
-    "upcomingFixtures": 2
+    "upcomingFixtures": 0
   },
   {
     "categoryName": "Estonia",
@@ -11682,12 +11682,12 @@
   {
     "categoryName": "Uruguay",
     "categorySlug": "uruguay",
-    "futureFixtures": 2,
-    "liveFixtures": 1,
+    "futureFixtures": 0,
+    "liveFixtures": 0,
     "tournamentId": 35811,
     "tournamentName": "Tercera Division, Reserves",
     "tournamentSlug": "tercera-division-reserves",
-    "upcomingFixtures": 6
+    "upcomingFixtures": 2
   },
   {
     "categoryName": "Uruguay",
@@ -11702,7 +11702,7 @@
   {
     "categoryName": "Brazil",
     "categorySlug": "brazil",
-    "futureFixtures": 2,
+    "futureFixtures": 0,
     "liveFixtures": 0,
     "tournamentId": 35841,
     "tournamentName": "Campeonato Amapaense, Women",
@@ -11842,7 +11842,7 @@
   {
     "categoryName": "Simulated Reality League",
     "categorySlug": "simulated-reality-league",
-    "futureFixtures": 15,
+    "futureFixtures": 75,
     "liveFixtures": 0,
     "tournamentId": 36215,
     "tournamentName": "SRL Club Friendlies",
@@ -11892,7 +11892,7 @@
   {
     "categoryName": "Simulated Reality League",
     "categorySlug": "simulated-reality-league",
-    "futureFixtures": 0,
+    "futureFixtures": 6,
     "liveFixtures": 0,
     "tournamentId": 36225,
     "tournamentName": "K-League 1 SRL",
@@ -11902,7 +11902,7 @@
   {
     "categoryName": "Simulated Reality League",
     "categorySlug": "simulated-reality-league",
-    "futureFixtures": 0,
+    "futureFixtures": 8,
     "liveFixtures": 0,
     "tournamentId": 36227,
     "tournamentName": "China Super League SRL",
@@ -11962,8 +11962,8 @@
   {
     "categoryName": "USA",
     "categorySlug": "usa",
-    "futureFixtures": 199,
-    "liveFixtures": 0,
+    "futureFixtures": 184,
+    "liveFixtures": 1,
     "tournamentId": 36479,
     "tournamentName": "MLS Next Pro",
     "tournamentSlug": "mls-next-pro",
@@ -11972,7 +11972,7 @@
   {
     "categoryName": "Brazil",
     "categorySlug": "brazil",
-    "futureFixtures": 13,
+    "futureFixtures": 7,
     "liveFixtures": 0,
     "tournamentId": 36485,
     "tournamentName": "Carioca, Serie A2",
@@ -12012,7 +12012,7 @@
   {
     "categoryName": "Brazil",
     "categorySlug": "brazil",
-    "futureFixtures": 30,
+    "futureFixtures": 18,
     "liveFixtures": 0,
     "tournamentId": 36661,
     "tournamentName": "Mineiro, Modulo II",
@@ -12052,7 +12052,7 @@
   {
     "categoryName": "Mexico",
     "categorySlug": "mexico",
-    "futureFixtures": 0,
+    "futureFixtures": 1,
     "liveFixtures": 0,
     "tournamentId": 36903,
     "tournamentName": "Trofeo de Campeon de Campeones, Women",
@@ -12072,7 +12072,7 @@
   {
     "categoryName": "Argentina",
     "categorySlug": "argentina",
-    "futureFixtures": 4,
+    "futureFixtures": 2,
     "liveFixtures": 0,
     "tournamentId": 36945,
     "tournamentName": "Copa Proyeccion Final, Reserves",
@@ -12112,12 +12112,12 @@
   {
     "categoryName": "USA",
     "categorySlug": "usa",
-    "futureFixtures": 86,
+    "futureFixtures": 8,
     "liveFixtures": 0,
     "tournamentId": 37169,
     "tournamentName": "USL W League",
     "tournamentSlug": "usl-w-league",
-    "upcomingFixtures": 2
+    "upcomingFixtures": 0
   },
   {
     "categoryName": "Denmark Amateur",
@@ -12272,7 +12272,7 @@
   {
     "categoryName": "Simulated Reality League",
     "categorySlug": "simulated-reality-league",
-    "futureFixtures": 28,
+    "futureFixtures": 9,
     "liveFixtures": 0,
     "tournamentId": 38785,
     "tournamentName": "World Cup",
@@ -12452,7 +12452,7 @@
   {
     "categoryName": "Brazil",
     "categorySlug": "brazil",
-    "futureFixtures": 36,
+    "futureFixtures": 33,
     "liveFixtures": 0,
     "tournamentId": 39343,
     "tournamentName": "Catarinense, Serie B",
@@ -12512,7 +12512,7 @@
   {
     "categoryName": "Brazil",
     "categorySlug": "brazil",
-    "futureFixtures": 2,
+    "futureFixtures": 0,
     "liveFixtures": 0,
     "tournamentId": 39761,
     "tournamentName": "U20 Gaucho, Serie A1",
@@ -12522,7 +12522,7 @@
   {
     "categoryName": "Brazil",
     "categorySlug": "brazil",
-    "futureFixtures": 8,
+    "futureFixtures": 12,
     "liveFixtures": 0,
     "tournamentId": 39781,
     "tournamentName": "U20 Cearense",
@@ -12582,7 +12582,7 @@
   {
     "categoryName": "Brazil",
     "categorySlug": "brazil",
-    "futureFixtures": 0,
+    "futureFixtures": 21,
     "liveFixtures": 0,
     "tournamentId": 40055,
     "tournamentName": "Cearense, Serie C",
@@ -12612,7 +12612,7 @@
   {
     "categoryName": "Brazil",
     "categorySlug": "brazil",
-    "futureFixtures": 6,
+    "futureFixtures": 1,
     "liveFixtures": 0,
     "tournamentId": 40061,
     "tournamentName": "Copa Rio",
@@ -13122,7 +13122,7 @@
   {
     "categoryName": "Chile",
     "categorySlug": "chile",
-    "futureFixtures": 18,
+    "futureFixtures": 12,
     "liveFixtures": 0,
     "tournamentId": 42283,
     "tournamentName": "Segunda Division",
@@ -13132,8 +13132,8 @@
   {
     "categoryName": "Chile",
     "categorySlug": "chile",
-    "futureFixtures": 78,
-    "liveFixtures": 1,
+    "futureFixtures": 72,
+    "liveFixtures": 0,
     "tournamentId": 42285,
     "tournamentName": "Primera Division, Women",
     "tournamentSlug": "primera-division-women",
@@ -13142,7 +13142,7 @@
   {
     "categoryName": "Finland",
     "categorySlug": "finland",
-    "futureFixtures": 66,
+    "futureFixtures": 60,
     "liveFixtures": 0,
     "tournamentId": 42291,
     "tournamentName": "Ykkonen",
@@ -13152,7 +13152,7 @@
   {
     "categoryName": "International",
     "categorySlug": "international",
-    "futureFixtures": 26,
+    "futureFixtures": 32,
     "liveFixtures": 0,
     "tournamentId": 42371,
     "tournamentName": "CAF Olympic Qualification, Women",
@@ -13162,7 +13162,7 @@
   {
     "categoryName": "Costa Rica",
     "categorySlug": "costa-rica",
-    "futureFixtures": 2,
+    "futureFixtures": 0,
     "liveFixtures": 0,
     "tournamentId": 42421,
     "tournamentName": "Primera Division, Women",
@@ -13272,7 +13272,7 @@
   {
     "categoryName": "USA",
     "categorySlug": "usa",
-    "futureFixtures": 15,
+    "futureFixtures": 14,
     "liveFixtures": 0,
     "tournamentId": 42695,
     "tournamentName": "USL League One Cup",
@@ -13392,7 +13392,7 @@
   {
     "categoryName": "International Clubs",
     "categorySlug": "international-clubs",
-    "futureFixtures": 0,
+    "futureFixtures": 2,
     "liveFixtures": 0,
     "tournamentId": 43643,
     "tournamentName": "Club Friendly Games, Women",
@@ -14212,7 +14212,7 @@
   {
     "categoryName": "Australia",
     "categorySlug": "australia",
-    "futureFixtures": 50,
+    "futureFixtures": 44,
     "liveFixtures": 0,
     "tournamentId": 45525,
     "tournamentName": "Queensland Premier League 3 Metro",
@@ -14252,7 +14252,7 @@
   {
     "categoryName": "Australia",
     "categorySlug": "australia",
-    "futureFixtures": 47,
+    "futureFixtures": 41,
     "liveFixtures": 0,
     "tournamentId": 45533,
     "tournamentName": "U23 Queensland NPL",
@@ -14262,7 +14262,7 @@
   {
     "categoryName": "Australia",
     "categorySlug": "australia",
-    "futureFixtures": 45,
+    "futureFixtures": 36,
     "liveFixtures": 0,
     "tournamentId": 45535,
     "tournamentName": "U23 Queensland Premier League 1",
@@ -14322,7 +14322,7 @@
   {
     "categoryName": "Australia",
     "categorySlug": "australia",
-    "futureFixtures": 38,
+    "futureFixtures": 37,
     "liveFixtures": 0,
     "tournamentId": 45547,
     "tournamentName": "Queensland Premier League 1, Women",
@@ -14462,7 +14462,7 @@
   {
     "categoryName": "Australia",
     "categorySlug": "australia",
-    "futureFixtures": 61,
+    "futureFixtures": 51,
     "liveFixtures": 0,
     "tournamentId": 45641,
     "tournamentName": "South Australia State League 2",
@@ -14472,7 +14472,7 @@
   {
     "categoryName": "Australia",
     "categorySlug": "australia",
-    "futureFixtures": 28,
+    "futureFixtures": 24,
     "liveFixtures": 0,
     "tournamentId": 45647,
     "tournamentName": "South Australia State League, Women",
@@ -14482,7 +14482,7 @@
   {
     "categoryName": "Australia",
     "categorySlug": "australia",
-    "futureFixtures": 43,
+    "futureFixtures": 36,
     "liveFixtures": 0,
     "tournamentId": 45649,
     "tournamentName": "South Australia NPL, Reserves",
@@ -14492,7 +14492,7 @@
   {
     "categoryName": "Australia",
     "categorySlug": "australia",
-    "futureFixtures": 44,
+    "futureFixtures": 39,
     "liveFixtures": 0,
     "tournamentId": 45653,
     "tournamentName": "South Australia State League 1, Reserves",
@@ -14502,7 +14502,7 @@
   {
     "categoryName": "Australia",
     "categorySlug": "australia",
-    "futureFixtures": 61,
+    "futureFixtures": 52,
     "liveFixtures": 0,
     "tournamentId": 45655,
     "tournamentName": "South Australia State League 2, Reserves",
@@ -14512,8 +14512,8 @@
   {
     "categoryName": "Australia",
     "categorySlug": "australia",
-    "futureFixtures": 30,
-    "liveFixtures": 0,
+    "futureFixtures": 25,
+    "liveFixtures": 1,
     "tournamentId": 45663,
     "tournamentName": "South Australia NPL, Reserves, Women",
     "tournamentSlug": "south-australia-npl-reserves-women",
@@ -14553,7 +14553,7 @@
     "categoryName": "Australia",
     "categorySlug": "australia",
     "futureFixtures": 48,
-    "liveFixtures": 0,
+    "liveFixtures": 1,
     "tournamentId": 45671,
     "tournamentName": "Victoria Premier League, Women",
     "tournamentSlug": "victoria-premier-league-women",
@@ -14562,7 +14562,7 @@
   {
     "categoryName": "Australia",
     "categorySlug": "australia",
-    "futureFixtures": 64,
+    "futureFixtures": 57,
     "liveFixtures": 0,
     "tournamentId": 45673,
     "tournamentName": "U23 Victoria NPL",
@@ -14572,7 +14572,7 @@
   {
     "categoryName": "Australia",
     "categorySlug": "australia",
-    "futureFixtures": 59,
+    "futureFixtures": 58,
     "liveFixtures": 0,
     "tournamentId": 45675,
     "tournamentName": "U23 Victoria Premier League 1",
@@ -14602,7 +14602,7 @@
   {
     "categoryName": "Australia",
     "categorySlug": "australia",
-    "futureFixtures": 63,
+    "futureFixtures": 57,
     "liveFixtures": 0,
     "tournamentId": 45681,
     "tournamentName": "U20 Victoria NPL, Women",
@@ -14622,7 +14622,7 @@
   {
     "categoryName": "Australia",
     "categorySlug": "australia",
-    "futureFixtures": 41,
+    "futureFixtures": 35,
     "liveFixtures": 0,
     "tournamentId": 45771,
     "tournamentName": "Northern NSW NPL, Reserves",
@@ -14632,7 +14632,7 @@
   {
     "categoryName": "Australia",
     "categorySlug": "australia",
-    "futureFixtures": 31,
+    "futureFixtures": 25,
     "liveFixtures": 0,
     "tournamentId": 45773,
     "tournamentName": "Northern NSW League One, Reserves",
@@ -14642,7 +14642,7 @@
   {
     "categoryName": "Australia",
     "categorySlug": "australia",
-    "futureFixtures": 17,
+    "futureFixtures": 15,
     "liveFixtures": 0,
     "tournamentId": 45775,
     "tournamentName": "Northern NSW League One, Reserves, Women",
@@ -14882,7 +14882,7 @@
   {
     "categoryName": "Sweden Amateur",
     "categorySlug": "sweden-amateur",
-    "futureFixtures": 42,
+    "futureFixtures": 39,
     "liveFixtures": 0,
     "tournamentId": 46587,
     "tournamentName": "U21 Ligacupen Elit",
@@ -14922,7 +14922,7 @@
   {
     "categoryName": "Brazil",
     "categorySlug": "brazil",
-    "futureFixtures": 1,
+    "futureFixtures": 0,
     "liveFixtures": 0,
     "tournamentId": 46647,
     "tournamentName": "U20 Goiano, 1. Divisao",
@@ -14932,7 +14932,7 @@
   {
     "categoryName": "Brazil",
     "categorySlug": "brazil",
-    "futureFixtures": 7,
+    "futureFixtures": 0,
     "liveFixtures": 0,
     "tournamentId": 46651,
     "tournamentName": "U20 Mineiro, 1. Divisao",
@@ -14942,12 +14942,12 @@
   {
     "categoryName": "Finland",
     "categorySlug": "finland",
-    "futureFixtures": 890,
+    "futureFixtures": 817,
     "liveFixtures": 1,
     "tournamentId": 46671,
     "tournamentName": "Kolmonen",
     "tournamentSlug": "kolmonen",
-    "upcomingFixtures": 0
+    "upcomingFixtures": 2
   },
   {
     "categoryName": "Australia",
@@ -14962,7 +14962,7 @@
   {
     "categoryName": "Australia",
     "categorySlug": "australia",
-    "futureFixtures": 44,
+    "futureFixtures": 39,
     "liveFixtures": 0,
     "tournamentId": 46716,
     "tournamentName": "Tasmania Northern Championship",
@@ -14972,7 +14972,7 @@
   {
     "categoryName": "Australia",
     "categorySlug": "australia",
-    "futureFixtures": 38,
+    "futureFixtures": 32,
     "liveFixtures": 0,
     "tournamentId": 46718,
     "tournamentName": "Tasmania Southern Championship",
@@ -14982,7 +14982,7 @@
   {
     "categoryName": "Australia",
     "categorySlug": "australia",
-    "futureFixtures": 54,
+    "futureFixtures": 48,
     "liveFixtures": 0,
     "tournamentId": 46720,
     "tournamentName": "Western Australia State League 1",
@@ -14992,7 +14992,7 @@
   {
     "categoryName": "Tanzania",
     "categorySlug": "tanzania",
-    "futureFixtures": 0,
+    "futureFixtures": 1,
     "liveFixtures": 0,
     "tournamentId": 46742,
     "tournamentName": "Federation Cup",
@@ -15002,7 +15002,7 @@
   {
     "categoryName": "Iceland",
     "categorySlug": "iceland",
-    "futureFixtures": 2,
+    "futureFixtures": 5,
     "liveFixtures": 0,
     "tournamentId": 46756,
     "tournamentName": "4. deild",
@@ -15012,7 +15012,7 @@
   {
     "categoryName": "Paraguay",
     "categorySlug": "paraguay",
-    "futureFixtures": 0,
+    "futureFixtures": 6,
     "liveFixtures": 0,
     "tournamentId": 46758,
     "tournamentName": "Camopeonato Femenino, Women",
@@ -15092,12 +15092,12 @@
   {
     "categoryName": "Brazil",
     "categorySlug": "brazil",
-    "futureFixtures": 38,
+    "futureFixtures": 32,
     "liveFixtures": 0,
     "tournamentId": 46881,
     "tournamentName": "U20 Catarinense, Serie A",
     "tournamentSlug": "u20-catarinense-serie-a",
-    "upcomingFixtures": 1
+    "upcomingFixtures": 0
   },
   {
     "categoryName": "Brazil",
@@ -15202,7 +15202,7 @@
   {
     "categoryName": "Brazil",
     "categorySlug": "brazil",
-    "futureFixtures": 0,
+    "futureFixtures": 56,
     "liveFixtures": 0,
     "tournamentId": 47123,
     "tournamentName": "U20 Alagoano, Serie A1",
@@ -15633,7 +15633,7 @@
     "categoryName": "Guatemala",
     "categorySlug": "guatemala",
     "futureFixtures": 0,
-    "liveFixtures": 0,
+    "liveFixtures": 3,
     "tournamentId": 48000,
     "tournamentName": "Primera Division",
     "tournamentSlug": "primera-division",
@@ -15763,7 +15763,7 @@
     "categoryName": "Serbia",
     "categorySlug": "serbia",
     "futureFixtures": 0,
-    "liveFixtures": 0,
+    "liveFixtures": 1,
     "tournamentId": 48213,
     "tournamentName": "Srpska Liga",
     "tournamentSlug": "srpska-liga",
@@ -15927,7 +15927,7 @@
     "tournamentId": 48421,
     "tournamentName": "Premier League, Women",
     "tournamentSlug": "premier-league-women",
-    "upcomingFixtures": 2
+    "upcomingFixtures": 0
   },
   {
     "categoryName": "Mauritania",
@@ -16072,7 +16072,7 @@
   {
     "categoryName": "Scotland",
     "categorySlug": "scotland",
-    "futureFixtures": 0,
+    "futureFixtures": 28,
     "liveFixtures": 0,
     "tournamentId": 48613,
     "tournamentName": "Premier League Cup, Women",
@@ -16352,12 +16352,12 @@
   {
     "categoryName": "Brazil",
     "categorySlug": "brazil",
-    "futureFixtures": 2,
+    "futureFixtures": 1,
     "liveFixtures": 0,
     "tournamentId": 49522,
     "tournamentName": "U20 Paulista, Women",
     "tournamentSlug": "u20-paulista-women",
-    "upcomingFixtures": 0
+    "upcomingFixtures": 1
   },
   {
     "categoryName": "International",
@@ -16382,7 +16382,7 @@
   {
     "categoryName": "Australia",
     "categorySlug": "australia",
-    "futureFixtures": 41,
+    "futureFixtures": 36,
     "liveFixtures": 0,
     "tournamentId": 49908,
     "tournamentName": "U23 Capital NPL",
@@ -16462,7 +16462,7 @@
   {
     "categoryName": "Australia",
     "categorySlug": "australia",
-    "futureFixtures": 59,
+    "futureFixtures": 53,
     "liveFixtures": 0,
     "tournamentId": 49924,
     "tournamentName": "Western Australia State League 2",
@@ -16472,7 +16472,7 @@
   {
     "categoryName": "Australia",
     "categorySlug": "australia",
-    "futureFixtures": 43,
+    "futureFixtures": 37,
     "liveFixtures": 0,
     "tournamentId": 49926,
     "tournamentName": "U23 Western Australia NPL",
@@ -16482,7 +16482,7 @@
   {
     "categoryName": "Australia",
     "categorySlug": "australia",
-    "futureFixtures": 56,
+    "futureFixtures": 49,
     "liveFixtures": 0,
     "tournamentId": 49928,
     "tournamentName": "Western Australia State League 1, Reserves",
@@ -16492,7 +16492,7 @@
   {
     "categoryName": "Australia",
     "categorySlug": "australia",
-    "futureFixtures": 60,
+    "futureFixtures": 54,
     "liveFixtures": 0,
     "tournamentId": 49930,
     "tournamentName": "Western Australia State League 2, Reserves",
@@ -16532,7 +16532,7 @@
   {
     "categoryName": "Australia",
     "categorySlug": "australia",
-    "futureFixtures": 48,
+    "futureFixtures": 44,
     "liveFixtures": 0,
     "tournamentId": 49938,
     "tournamentName": "Western Australia Division 1, Women",
@@ -16542,7 +16542,7 @@
   {
     "categoryName": "Australia",
     "categorySlug": "australia",
-    "futureFixtures": 54,
+    "futureFixtures": 49,
     "liveFixtures": 0,
     "tournamentId": 49940,
     "tournamentName": "Northern Territory Premier League",
@@ -16552,7 +16552,7 @@
   {
     "categoryName": "Australia",
     "categorySlug": "australia",
-    "futureFixtures": 25,
+    "futureFixtures": 21,
     "liveFixtures": 0,
     "tournamentId": 49942,
     "tournamentName": "Northern Territory Division 3",
@@ -16562,7 +16562,7 @@
   {
     "categoryName": "Australia",
     "categorySlug": "australia",
-    "futureFixtures": 30,
+    "futureFixtures": 24,
     "liveFixtures": 0,
     "tournamentId": 49944,
     "tournamentName": "Northern Territory Premier League, Reserves",
@@ -16572,7 +16572,7 @@
   {
     "categoryName": "Australia",
     "categorySlug": "australia",
-    "futureFixtures": 33,
+    "futureFixtures": 27,
     "liveFixtures": 0,
     "tournamentId": 49946,
     "tournamentName": "Northern Territory Premier League, Women",
@@ -16582,7 +16582,7 @@
   {
     "categoryName": "Australia",
     "categorySlug": "australia",
-    "futureFixtures": 0,
+    "futureFixtures": 1,
     "liveFixtures": 0,
     "tournamentId": 49948,
     "tournamentName": "Australia Cup, Preliminary",
@@ -16642,7 +16642,7 @@
   {
     "categoryName": "Chile",
     "categorySlug": "chile",
-    "futureFixtures": 0,
+    "futureFixtures": 4,
     "liveFixtures": 0,
     "tournamentId": 50740,
     "tournamentName": "Copa de la Liga",
@@ -16742,7 +16742,7 @@
   {
     "categoryName": "Australia",
     "categorySlug": "australia",
-    "futureFixtures": 14,
+    "futureFixtures": 12,
     "liveFixtures": 0,
     "tournamentId": 51062,
     "tournamentName": "U23 Northern Territory Premier League, Women",
@@ -17152,12 +17152,12 @@
   {
     "categoryName": "Peru",
     "categorySlug": "peru",
-    "futureFixtures": 14,
+    "futureFixtures": 0,
     "liveFixtures": 0,
     "tournamentId": 51780,
     "tournamentName": "Copa de la Liga",
     "tournamentSlug": "copa-de-la-liga",
-    "upcomingFixtures": 2
+    "upcomingFixtures": 0
   },
   {
     "categoryName": "International",
@@ -17187,12 +17187,12 @@
     "tournamentId": 52002,
     "tournamentName": "U20 Amazonense",
     "tournamentSlug": "u20-amazonense",
-    "upcomingFixtures": 1
+    "upcomingFixtures": 0
   },
   {
     "categoryName": "Brazil",
     "categorySlug": "brazil",
-    "futureFixtures": 4,
+    "futureFixtures": 3,
     "liveFixtures": 0,
     "tournamentId": 52004,
     "tournamentName": "U20 Baiano",
@@ -17202,7 +17202,7 @@
   {
     "categoryName": "Brazil",
     "categorySlug": "brazil",
-    "futureFixtures": 6,
+    "futureFixtures": 3,
     "liveFixtures": 0,
     "tournamentId": 52006,
     "tournamentName": "Maranhense, Serie B",
@@ -17232,7 +17232,7 @@
   {
     "categoryName": "Brazil",
     "categorySlug": "brazil",
-    "futureFixtures": 1,
+    "futureFixtures": 0,
     "liveFixtures": 0,
     "tournamentId": 52012,
     "tournamentName": "U20 Paraibano",
@@ -17302,7 +17302,7 @@
   {
     "categoryName": "Brazil",
     "categorySlug": "brazil",
-    "futureFixtures": 0,
+    "futureFixtures": 8,
     "liveFixtures": 0,
     "tournamentId": 52052,
     "tournamentName": "Paulista, Segunda Divisao U23",

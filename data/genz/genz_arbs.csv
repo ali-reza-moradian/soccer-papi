@@ -1,0 +1,14 @@
+ts_utc,game,market_type,market_key,line,side_a,venue_a,price_a,side_b,venue_b,price_b,implied_cost,roi_pct,net_edge_pct,arb_survived,would_trade,exec_status,confidence,note
+2026-06-30T21:03:46Z,26JUN30MEXECU,corners,corners|9.5,9.5,over,polymarket,0.3,under,kalshi,0.65,0.95,5.2632,3.5197,True,True,dryrun,high,computed
+2026-06-30T21:03:46Z,26JUN30MEXECU,corners,corners|8.5,8.5,over,polymarket,0.41,under,kalshi,0.5431,0.9531,4.9173,4.3841,True,True,dryrun,high,computed
+2026-06-30T21:03:46Z,26JUN30MEXECU,corners,corners|7.5,7.5,over,polymarket,0.52,under,kalshi,0.4375,0.9575,4.4346,3.3058,True,True,dryrun,high,computed
+2026-06-30T21:03:46Z,26JUN30MEXECU,corners,corners|10.5,10.5,over,polymarket,0.21,under,kalshi,0.75,0.96,4.1667,2.6694,True,True,dryrun,high,computed
+2026-06-30T21:03:46Z,26JUL01BELSEN,corners,corners|8.5,8.5,over,polymarket,0.55,under,kalshi,0.44,0.99,1.0101,-0.7937,False,False,dryrun,high,computed
+2026-06-30T21:03:46Z,26JUN30MEXECU,team_corners,team_corners|mexico|4.5,4.5,over,polymarket,0.45,under,kalshi,0.54,0.99,1.0101,-0.7937,False,False,dryrun,high,computed
+2026-06-30T21:03:46Z,26JUN30MEXECU,team_total,team_total|mexico|1.5,1.5,over,polymarket,0.34,under,kalshi,0.65,0.99,1.0101,-0.5964,False,False,dryrun,high,computed
+2026-06-30T21:03:46Z,26JUL01USABIH,spread,spread|1.5|usa,1.5,cover,polymarket,0.45,plus,kalshi,0.54,0.99,1.0101,-0.7937,False,False,dryrun,high,computed
+2026-06-30T21:03:46Z,26JUN30MEXECU,corners,corners|6.5,6.5,over,polymarket,0.66,under,kalshi,0.3381,0.9981,0.1927,-0.5964,False,False,dryrun,high,computed
+2026-06-30T21:03:46Z,26JUN30MEXECU,team_corners,team_corners|ecuador|3.5,3.5,over,polymarket,0.4982,under,kalshi,0.5,0.9982,0.182,-0.7937,False,False,dryrun,high,computed
+2026-06-30T21:03:46Z,26JUL01BELSEN,1h_total,1h_total|2.5,2.5,over,kalshi,0.1,under,polymarket,0.9,1.0,0.0,-0.6951,False,False,dryrun,high,computed
+2026-06-30T21:03:46Z,26JUN30MEXECU,2h_total,2h_total|2.5,2.5,over,polymarket,0.1,under,kalshi,0.9,1.0,0.0,-0.6951,False,False,dryrun,high,computed
+2026-06-30T21:03:46Z,26JUN30MEXECU,team_total,team_total|mexico|2.5,2.5,over,polymarket,0.12,under,kalshi,0.88,1.0,0.0,-0.7937,False,False,dryrun,high,computed

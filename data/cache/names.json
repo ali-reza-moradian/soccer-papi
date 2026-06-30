@@ -1,14 +1,5 @@
 {
   "by_fixture": {
-    "id1000001653452541": {
-      "category": "International",
-      "p1": "Germany",
-      "p2": "Paraguay",
-      "start_time": "2026-06-29T20:30:00.000Z",
-      "status_id": 0,
-      "status_name": "Pre-Game",
-      "tournament": "World Cup"
-    },
     "id1000001653452543": {
       "category": "International",
       "p1": "France",
@@ -18,11 +9,29 @@
       "status_name": "Pre-Game",
       "tournament": "World Cup"
     },
-    "id1000001653452547": {
+    "id1000001653452549": {
       "category": "International",
-      "p1": "Netherlands",
-      "p2": "Morocco",
-      "start_time": "2026-06-30T01:00:00.000Z",
+      "p1": "Portugal",
+      "p2": "Croatia",
+      "start_time": "2026-07-02T23:00:00.000Z",
+      "status_id": 0,
+      "status_name": "Pre-Game",
+      "tournament": "World Cup"
+    },
+    "id1000001653452551": {
+      "category": "International",
+      "p1": "Spain",
+      "p2": "Austria",
+      "start_time": "2026-07-02T19:00:00.000Z",
+      "status_id": 0,
+      "status_name": "Pre-Game",
+      "tournament": "World Cup"
+    },
+    "id1000001653452553": {
+      "category": "International",
+      "p1": "USA",
+      "p2": "Bosnia and Herzegovina",
+      "start_time": "2026-07-02T00:00:00.000Z",
       "status_id": 0,
       "status_name": "Pre-Game",
       "tournament": "World Cup"
@@ -32,15 +41,6 @@
       "p1": "Belgium",
       "p2": "Senegal",
       "start_time": "2026-07-01T20:00:00.000Z",
-      "status_id": 0,
-      "status_name": "Pre-Game",
-      "tournament": "World Cup"
-    },
-    "id1000001653452561": {
-      "category": "International",
-      "p1": "Ivory Coast",
-      "p2": "Norway",
-      "start_time": "2026-06-30T17:00:00.000Z",
       "status_id": 0,
       "status_name": "Pre-Game",
       "tournament": "World Cup"
@@ -65,19 +65,19 @@
     }
   },
   "by_participant": {
-    "4475": "Norway",
+    "4479": "Bosnia and Herzegovina",
     "4481": "France",
     "4688": "Sweden",
-    "4705": "Netherlands",
-    "4711": "Germany",
+    "4698": "Spain",
+    "4704": "Portugal",
     "4713": "England",
+    "4715": "Croatia",
     "4717": "Belgium",
+    "4718": "Austria",
+    "4724": "USA",
     "4739": "Senegal",
     "4757": "Ecuador",
-    "4768": "Ivory Coast",
-    "4778": "Morocco",
     "4781": "Mexico",
-    "4789": "Paraguay",
     "4823": "Congo DR"
   },
   "fingerprint": {
@@ -85,9 +85,9 @@
       16
     ],
     "window": {
-      "from": "2026-06-29T18:40:03Z",
-      "to": "2026-07-01T23:59:59Z"
+      "from": "2026-06-30T18:46:02Z",
+      "to": "2026-07-02T23:59:59Z"
     }
   },
-  "saved_at": 1782758403.40975
+  "saved_at": 1782845162.978369
 }

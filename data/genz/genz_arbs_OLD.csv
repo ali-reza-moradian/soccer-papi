@@ -1,0 +1,125 @@
+ts_utc,game,market_type,market_key,line,side_a,venue_a,price_a,side_b,venue_b,price_b,implied_cost,roi_pct,net_edge_pct,arb_survived,would_trade,exec_status,confidence,note
+2026-06-30T17:13:06Z,26JUN30CIVNOR,spread,spread|2.5|ivory coast_norway,2.5,ivory coast,polymarket,0.0266,norway,kalshi,0.07,0.0966,935.1967,875.0095,True,True,dryrun,high,computed
+2026-06-30T17:13:06Z,26JUL01BELSEN,spread,spread|2.5|belgium_senegal,2.5,belgium,polymarket,0.08,senegal,kalshi,0.03,0.11,809.0909,791.9722,True,True,dryrun,high,computed
+2026-06-30T17:13:06Z,26JUN30CIVNOR,spread,spread|1.5|ivory coast_norway,1.5,ivory coast,polymarket,0.09,norway,kalshi,0.21,0.3,233.3333,220.6997,True,True,dryrun,high,computed
+2026-06-30T17:13:06Z,26JUL01BELSEN,spread,spread|1.5|belgium_senegal,1.5,belgium,polymarket,0.21,senegal,kalshi,0.1,0.31,222.5806,215.8934,True,True,dryrun,high,computed
+2026-06-30T17:13:06Z,26JUN30FRASWE,spread,spread|2.5|france_sweden,2.5,france,polymarket,0.32,sweden,kalshi,0.01,0.33,203.0303,202.1148,True,True,dryrun,high,computed
+2026-06-30T17:13:06Z,26JUN30FRASWE,spread,spread|1.5|france_sweden,1.5,france,polymarket,0.54,sweden,kalshi,0.03,0.57,75.4386,74.7174,True,True,dryrun,high,computed
+2026-06-30T17:13:06Z,26JUN30CIVNOR,total_goals,total_goals|1.5,1.5,over,polymarket,0.27,under,kalshi,0.3,0.57,75.4386,71.0262,True,True,dryrun,high,computed
+2026-06-30T17:13:06Z,26JUN30CIVNOR,total_goals,total_goals|2.5,2.5,over,polymarket,0.08,under,kalshi,0.5892,0.6692,49.4288,45.5301,True,True,dryrun,high,computed
+2026-06-30T17:13:06Z,26JUN30MEXECU,2h_total,2h_total|0.5,0.5,over,polymarket,0.4,under,kalshi,0.33,0.73,36.9863,34.0206,True,True,dryrun,high,computed
+2026-06-30T17:13:06Z,26JUL01BELSEN,1h_total,1h_total|0.5,0.5,over,polymarket,0.3969,under,kalshi,0.34,0.7369,35.7022,37.7119,True,True,dryrun,high,computed
+2026-06-30T17:13:06Z,26JUN30MEXECU,2h_total,2h_total|1.5,1.5,over,polymarket,0.1201,under,kalshi,0.68,0.8001,24.978,22.5741,True,True,dryrun,high,computed
+2026-06-30T17:13:06Z,26JUL01BELSEN,1h_total,1h_total|1.5,1.5,over,polymarket,0.12,under,kalshi,0.72,0.84,19.0476,17.0213,True,True,dryrun,high,computed
+2026-06-30T17:13:06Z,26JUL01USABIH,total_goals,total_goals|2.5,2.5,over,polymarket,0.37,under,kalshi,0.47,0.84,19.0476,16.5254,True,True,dryrun,high,computed
+2026-06-30T17:13:06Z,26JUN30FRASWE,1h_total,1h_total|1.5,1.5,over,polymarket,0.34,under,kalshi,0.53,0.87,14.9425,12.5896,True,True,dryrun,high,computed
+2026-06-30T17:13:06Z,26JUL01USABIH,1h_total,1h_total|1.5,1.5,over,polymarket,0.2415,under,kalshi,0.67,0.9115,9.7042,7.9914,True,True,dryrun,high,computed
+2026-06-30T17:13:06Z,26JUN30FRASWE,1h_total,1h_total|0.5,0.5,over,polymarket,0.72,under,kalshi,0.2,0.92,8.6957,7.2961,True,True,dryrun,high,computed
+2026-06-30T17:13:06Z,26JUL01USABIH,1h_total,1h_total|0.5,0.5,over,polymarket,0.63,under,kalshi,0.3,0.93,7.5269,5.8201,True,True,dryrun,high,computed
+2026-06-30T17:13:06Z,26JUN30CIVNOR,corners,corners|9.5,9.5,over,polymarket,0.44,under,kalshi,0.5095,0.9495,5.3186,0.2004,True,True,dryrun,high,computed
+2026-06-30T17:13:06Z,26JUN30CIVNOR,corners,corners|10.5,10.5,over,polymarket,0.33,under,kalshi,0.6312,0.9612,4.0312,1.3171,True,True,dryrun,high,computed
+2026-06-30T17:13:06Z,26JUN30MEXECU,corners,corners|6.5,6.5,over,polymarket,0.63,under,kalshi,0.3365,0.9665,3.4661,2.459,True,True,dryrun,high,computed
+2026-06-30T17:13:06Z,26JUN30MEXECU,corners,corners|8.5,8.5,over,polymarket,0.39,under,kalshi,0.5775,0.9675,3.3592,2.2495,True,True,dryrun,high,computed
+2026-06-30T17:13:06Z,26JUN30MEXECU,team_corners,team_corners|mexico|4.5,4.5,over,polymarket,0.41,under,kalshi,0.5575,0.9675,3.3592,2.2495,True,True,dryrun,high,computed
+2026-06-30T17:13:06Z,26JUL01USABIH,total_goals,total_goals|0.5,0.5,over,polymarket,0.9,under,kalshi,0.07,0.97,3.0928,2.5641,True,True,dryrun,high,computed
+2026-06-30T17:13:06Z,26JUN30CIVNOR,corners,corners|8.5,8.5,over,polymarket,0.5721,under,kalshi,0.4,0.9721,2.8738,3.4126,True,True,dryrun,high,computed
+2026-06-30T17:13:06Z,26JUN30CIVNOR,corners,corners|7.5,7.5,over,polymarket,0.7095,under,kalshi,0.2678,0.9774,2.3173,1.56,True,True,dryrun,high,computed
+2026-06-30T17:13:06Z,26JUN30MEXECU,corners,corners|9.5,9.5,over,polymarket,0.3,under,kalshi,0.68,0.98,2.0408,0.4016,True,True,dryrun,high,computed
+2026-06-30T17:13:06Z,26JUN30MEXECU,corners,corners|10.5,10.5,over,polymarket,0.22,under,kalshi,0.77,0.99,1.0101,-0.2991,False,False,dryrun,high,computed
+2026-06-30T17:13:06Z,26JUN30MEXECU,corners,corners|7.5,7.5,over,polymarket,0.52,under,kalshi,0.47,0.99,1.0101,-0.7937,False,False,dryrun,high,computed
+2026-06-30T17:13:06Z,26JUN30MEXECU,team_corners,team_corners|ecuador|3.5,3.5,over,polymarket,0.48,under,kalshi,0.51,0.99,1.0101,-1.7682,False,False,dryrun,high,computed
+2026-06-30T17:13:06Z,26JUN30FRASWE,btts,btts,,no,polymarket,0.44,yes,kalshi,0.55,0.99,1.0101,-0.7937,False,False,dryrun,high,computed
+2026-06-30T17:13:06Z,26JUN30FRASWE,team_corners,team_corners|france|5.5,5.5,over,polymarket,0.61,under,kalshi,0.38,0.99,1.0101,-0.6951,False,False,dryrun,high,computed
+2026-06-30T17:13:06Z,26JUN30CIVNOR,1h_btts,1h_btts,,no,kalshi,0.86,yes,polymarket,0.13,0.99,1.0101,-1.7682,False,False,dryrun,high,computed
+2026-06-30T17:13:06Z,26JUN30CIVNOR,team_total,team_total|norway|2.5,2.5,over,polymarket,0.16,under,kalshi,0.83,0.99,1.0101,0.0,False,False,dryrun,high,computed
+2026-06-30T17:13:06Z,26JUL01USABIH,spread,spread|1.5|bosnia_usa,1.5,bosnia,kalshi,0.54,usa,polymarket,0.45,0.99,1.0101,-0.7937,False,False,dryrun,high,computed
+2026-06-30T17:13:06Z,26JUN30CIVNOR,team_total,team_total|norway|1.5,1.5,over,polymarket,0.4,under,kalshi,0.59,0.99,1.0101,-0.6951,False,False,dryrun,high,computed
+2026-06-30T17:13:06Z,26JUN30FRASWE,corners,corners|8.5,8.5,over,polymarket,0.6461,under,kalshi,0.35,0.9961,0.3877,-0.5964,False,False,dryrun,high,computed
+2026-06-30T17:13:06Z,26JUL01BELSEN,corners,corners|8.5,8.5,over,polymarket,0.5497,under,kalshi,0.45,0.9997,0.0259,-1.2658,False,False,dryrun,high,computed
+2026-06-30T17:13:06Z,26JUN30MEXECU,2h_total,2h_total|2.5,2.5,over,polymarket,0.1,under,kalshi,0.9,1.0,0.0,-0.6951,False,False,dryrun,high,computed
+2026-06-30T17:13:06Z,26JUN30MEXECU,team_total,team_total|mexico|1.5,1.5,over,polymarket,0.34,under,kalshi,0.66,1.0,0.0,-1.5748,False,False,dryrun,high,computed
+2026-06-30T17:13:06Z,26JUN30FRASWE,team_corners,team_corners|france|7.5,7.5,over,polymarket,0.34,under,kalshi,0.66,1.0,0.0,-1.5748,False,False,dryrun,high,computed
+2026-06-30T17:13:06Z,26JUN30FRASWE,team_total,team_total|france|1.5,1.5,over,polymarket,0.76,under,kalshi,0.24,1.0,0.0,-1.2833,False,False,dryrun,high,computed
+2026-06-30T17:34:01Z,26JUN30CIVNOR,total_goals,total_goals|1.5,1.5,over,polymarket,0.25,under,kalshi,0.4,0.65,53.8462,,,False,rejected_implausible,high,roi exceeds plausible bound — review pairing
+2026-06-30T17:34:01Z,26JUN30MEXECU,2h_total,2h_total|0.5,0.5,over,polymarket,0.4,under,kalshi,0.33,0.73,36.9863,,,False,rejected_implausible,high,roi exceeds plausible bound — review pairing
+2026-06-30T17:34:01Z,26JUL01BELSEN,1h_total,1h_total|0.5,0.5,over,polymarket,0.3969,under,kalshi,0.34,0.7369,35.7022,,,False,rejected_implausible,high,roi exceeds plausible bound — review pairing
+2026-06-30T17:34:01Z,26JUN30MEXECU,2h_total,2h_total|1.5,1.5,over,polymarket,0.1201,under,kalshi,0.68,0.8001,24.978,22.5741,True,True,dryrun,high,computed
+2026-06-30T17:34:01Z,26JUL01BELSEN,1h_total,1h_total|1.5,1.5,over,polymarket,0.12,under,kalshi,0.72,0.84,19.0476,17.0213,True,True,dryrun,high,computed
+2026-06-30T17:34:01Z,26JUL01USABIH,total_goals,total_goals|2.5,2.5,over,polymarket,0.37,under,kalshi,0.47,0.84,19.0476,16.5254,True,True,dryrun,high,computed
+2026-06-30T17:34:01Z,26JUN30CIVNOR,total_goals,total_goals|2.5,2.5,over,polymarket,0.145,under,kalshi,0.7,0.845,18.3432,21.0121,True,True,dryrun,high,computed
+2026-06-30T17:34:01Z,26JUN30FRASWE,1h_total,1h_total|1.5,1.5,over,polymarket,0.34,under,kalshi,0.53,0.87,14.9425,12.5896,True,True,dryrun,high,computed
+2026-06-30T17:34:01Z,26JUL01USABIH,1h_total,1h_total|1.5,1.5,over,polymarket,0.2415,under,kalshi,0.67,0.9115,9.7042,7.9914,True,True,dryrun,high,computed
+2026-06-30T17:34:01Z,26JUN30FRASWE,1h_total,1h_total|0.5,0.5,over,polymarket,0.72,under,kalshi,0.2,0.92,8.6957,7.2961,True,True,dryrun,high,computed
+2026-06-30T17:34:01Z,26JUL01USABIH,1h_total,1h_total|0.5,0.5,over,polymarket,0.63,under,kalshi,0.3,0.93,7.5269,5.8201,True,True,dryrun,high,computed
+2026-06-30T17:34:01Z,26JUN30MEXECU,corners,corners|8.5,8.5,over,polymarket,0.39,under,kalshi,0.5775,0.9675,3.3592,2.2495,True,True,dryrun,high,computed
+2026-06-30T17:34:01Z,26JUN30MEXECU,team_corners,team_corners|mexico|4.5,4.5,over,polymarket,0.41,under,kalshi,0.5575,0.9675,3.3592,2.2495,True,True,dryrun,high,computed
+2026-06-30T17:34:01Z,26JUN30MEXECU,corners,corners|6.5,6.5,over,polymarket,0.63,under,kalshi,0.3375,0.9675,3.3567,2.459,True,True,dryrun,high,computed
+2026-06-30T17:34:01Z,26JUL01USABIH,total_goals,total_goals|0.5,0.5,over,polymarket,0.9,under,kalshi,0.07,0.97,3.0928,2.5641,True,True,dryrun,high,computed
+2026-06-30T17:34:01Z,26JUN30MEXECU,corners,corners|7.5,7.5,over,polymarket,0.51,under,kalshi,0.47,0.98,2.0408,0.2004,True,True,dryrun,high,computed
+2026-06-30T17:34:01Z,26JUN30MEXECU,corners,corners|9.5,9.5,over,polymarket,0.3,under,kalshi,0.68,0.98,2.0408,0.4016,True,True,dryrun,high,computed
+2026-06-30T17:34:01Z,26JUN30MEXECU,corners,corners|10.5,10.5,over,polymarket,0.22,under,kalshi,0.77,0.99,1.0101,-0.2991,False,False,dryrun,high,computed
+2026-06-30T17:34:01Z,26JUN30MEXECU,team_corners,team_corners|ecuador|3.5,3.5,over,polymarket,0.48,under,kalshi,0.51,0.99,1.0101,-0.7937,False,False,dryrun,high,computed
+2026-06-30T17:34:01Z,26JUN30FRASWE,btts,btts,,no,polymarket,0.44,yes,kalshi,0.55,0.99,1.0101,-0.7937,False,False,dryrun,high,computed
+2026-06-30T17:34:01Z,26JUN30FRASWE,corners,corners|7.5,7.5,over,polymarket,0.75,under,kalshi,0.24,0.99,1.0101,-1.2833,False,False,dryrun,high,computed
+2026-06-30T17:34:01Z,26JUN30FRASWE,team_corners,team_corners|france|5.5,5.5,over,polymarket,0.61,under,kalshi,0.38,0.99,1.0101,-0.6951,False,False,dryrun,high,computed
+2026-06-30T17:34:01Z,26JUL01USABIH,spread,spread|1.5|usa,1.5,cover,polymarket,0.45,plus,kalshi,0.54,0.99,1.0101,-0.7937,False,False,dryrun,high,computed
+2026-06-30T17:34:01Z,26JUN30FRASWE,corners,corners|10.5,10.5,over,polymarket,0.4291,under,kalshi,0.57,0.9991,0.0924,0.046,True,False,dryrun,high,computed
+2026-06-30T17:34:01Z,26JUL01BELSEN,corners,corners|8.5,8.5,over,polymarket,0.5498,under,kalshi,0.45,0.9998,0.025,-1.2833,False,False,dryrun,high,computed
+2026-06-30T17:34:01Z,26JUN30MEXECU,2h_total,2h_total|2.5,2.5,over,polymarket,0.1,under,kalshi,0.9,1.0,0.0,-0.6951,False,False,dryrun,high,computed
+2026-06-30T17:34:01Z,26JUN30FRASWE,team_total,team_total|france|1.5,1.5,over,polymarket,0.76,under,kalshi,0.24,1.0,0.0,-1.2833,False,False,dryrun,high,computed
+2026-06-30T17:53:04Z,26JUN30CIVNOR,total_goals,total_goals|1.5,1.5,over,polymarket,0.21,under,kalshi,0.19,0.4,150.0,,,False,rejected_implausible,high,roi exceeds plausible bound — review pairing
+2026-06-30T17:53:04Z,26JUN30CIVNOR,total_goals,total_goals|2.5,2.5,over,polymarket,0.05,under,kalshi,0.52,0.57,75.4386,,,False,rejected_implausible,high,roi exceeds plausible bound — review pairing
+2026-06-30T17:53:04Z,26JUN30MEXECU,2h_total,2h_total|0.5,0.5,over,polymarket,0.4,under,kalshi,0.32,0.72,38.8889,,,False,rejected_implausible,high,roi exceeds plausible bound — review pairing
+2026-06-30T17:53:04Z,26JUL01BELSEN,1h_total,1h_total|0.5,0.5,over,polymarket,0.3898,under,kalshi,0.34,0.7298,37.0298,,,False,rejected_implausible,high,roi exceeds plausible bound — review pairing
+2026-06-30T17:53:04Z,26JUN30MEXECU,2h_total,2h_total|1.5,1.5,over,polymarket,0.1201,under,kalshi,0.68,0.8001,24.978,,,False,rejected_implausible,high,roi exceeds plausible bound — review pairing
+2026-06-30T17:53:04Z,26JUL01USABIH,total_goals,total_goals|2.5,2.5,over,polymarket,0.37,under,kalshi,0.47,0.84,19.0476,,,False,rejected_implausible,high,roi exceeds plausible bound — review pairing
+2026-06-30T17:53:04Z,26JUL01BELSEN,1h_total,1h_total|1.5,1.5,over,polymarket,0.1208,under,kalshi,0.72,0.8408,18.9343,,,False,rejected_implausible,high,roi exceeds plausible bound — review pairing
+2026-06-30T17:53:04Z,26JUN30FRASWE,1h_total,1h_total|1.5,1.5,over,polymarket,0.34,under,kalshi,0.53,0.87,14.9425,,,False,rejected_implausible,high,roi exceeds plausible bound — review pairing
+2026-06-30T17:53:04Z,26JUL01USABIH,1h_total,1h_total|1.5,1.5,over,polymarket,0.2415,under,kalshi,0.67,0.9115,9.7042,,,False,rejected_implausible,high,roi exceeds plausible bound — review pairing
+2026-06-30T17:53:04Z,26JUN30FRASWE,1h_total,1h_total|0.5,0.5,over,polymarket,0.72,under,kalshi,0.2,0.92,8.6957,,,False,rejected_implausible,high,roi exceeds plausible bound — review pairing
+2026-06-30T17:53:04Z,26JUL01USABIH,1h_total,1h_total|0.5,0.5,over,polymarket,0.63,under,kalshi,0.3,0.93,7.5269,5.8201,True,True,dryrun,high,computed
+2026-06-30T17:53:04Z,26JUN30MEXECU,corners,corners|10.5,10.5,over,polymarket,0.23,under,kalshi,0.74,0.97,3.0928,1.626,True,True,dryrun,high,computed
+2026-06-30T17:53:04Z,26JUN30MEXECU,corners,corners|6.5,6.5,over,polymarket,0.63,under,kalshi,0.34,0.97,3.0928,1.4199,True,True,dryrun,high,computed
+2026-06-30T17:53:04Z,26JUN30MEXECU,corners,corners|7.5,7.5,over,polymarket,0.51,under,kalshi,0.46,0.97,3.0928,1.2146,True,True,dryrun,high,computed
+2026-06-30T17:53:04Z,26JUL01USABIH,total_goals,total_goals|0.5,0.5,over,polymarket,0.9,under,kalshi,0.07,0.97,3.0928,2.5641,True,True,dryrun,high,computed
+2026-06-30T17:53:04Z,26JUN30MEXECU,corners,corners|8.5,8.5,over,polymarket,0.39,under,kalshi,0.58,0.97,3.0928,1.2146,True,True,dryrun,high,computed
+2026-06-30T17:53:04Z,26JUN30MEXECU,team_corners,team_corners|mexico|4.5,4.5,over,polymarket,0.41,under,kalshi,0.56,0.97,3.0928,1.2146,True,True,dryrun,high,computed
+2026-06-30T17:53:04Z,26JUN30MEXECU,corners,corners|9.5,9.5,over,polymarket,0.3,under,kalshi,0.68,0.98,2.0408,0.4016,True,True,dryrun,high,computed
+2026-06-30T17:53:04Z,26JUN30MEXECU,team_corners,team_corners|ecuador|3.5,3.5,over,polymarket,0.48,under,kalshi,0.5,0.98,2.0408,0.2004,True,True,dryrun,high,computed
+2026-06-30T17:53:04Z,26JUN30FRASWE,corners,corners|9.5,9.5,over,polymarket,0.54,under,kalshi,0.44,0.98,2.0408,0.2004,True,True,dryrun,high,computed
+2026-06-30T17:53:04Z,26JUN30FRASWE,team_corners,team_corners|sweden|2.5,2.5,over,polymarket,0.59,under,kalshi,0.39,0.98,2.0408,0.3009,True,True,dryrun,high,computed
+2026-06-30T17:53:04Z,26JUN30FRASWE,btts,btts,,no,polymarket,0.44,yes,kalshi,0.55,0.99,1.0101,-0.7937,False,False,dryrun,high,computed
+2026-06-30T17:53:04Z,26JUN30FRASWE,team_corners,team_corners|france|5.5,5.5,over,polymarket,0.62,under,kalshi,0.37,0.99,1.0101,-0.6951,False,False,dryrun,high,computed
+2026-06-30T17:53:04Z,26JUL01USABIH,spread,spread|1.5|usa,1.5,cover,polymarket,0.45,plus,kalshi,0.54,0.99,1.0101,-0.7937,False,False,dryrun,high,computed
+2026-06-30T17:53:04Z,26JUL01BELSEN,corners,corners|8.5,8.5,over,polymarket,0.5498,under,kalshi,0.45,0.9998,0.025,-1.2833,False,False,dryrun,high,computed
+2026-06-30T17:53:04Z,26JUN30MEXECU,2h_total,2h_total|2.5,2.5,over,polymarket,0.1,under,kalshi,0.9,1.0,0.0,-0.6951,False,False,dryrun,high,computed
+2026-06-30T17:53:04Z,26JUN30MEXECU,team_total,team_total|mexico|1.5,1.5,over,polymarket,0.34,under,kalshi,0.66,1.0,0.0,-1.5748,False,False,dryrun,high,computed
+2026-06-30T19:19:35Z,26JUL01BELSEN,1h_total,1h_total|0.5,0.5,over,polymarket,0.3889,under,kalshi,0.34,0.7289,37.199,,,False,rejected_implausible,high,roi exceeds plausible bound — review pairing
+2026-06-30T19:19:35Z,26JUN30MEXECU,2h_total,2h_total|0.5,0.5,over,polymarket,0.4,under,kalshi,0.33,0.73,36.9863,,,False,rejected_implausible,high,roi exceeds plausible bound — review pairing
+2026-06-30T19:19:35Z,26JUN30MEXECU,2h_total,2h_total|1.5,1.5,over,polymarket,0.1201,under,kalshi,0.67,0.7901,26.5597,,,False,rejected_implausible,high,roi exceeds plausible bound — review pairing
+2026-06-30T19:19:35Z,26JUL01USABIH,total_goals,total_goals|2.5,2.5,over,polymarket,0.3698,under,kalshi,0.47,0.8397,19.0831,,,False,rejected_implausible,high,roi exceeds plausible bound — review pairing
+2026-06-30T19:19:35Z,26JUL01BELSEN,1h_total,1h_total|1.5,1.5,over,polymarket,0.12,under,kalshi,0.72,0.84,19.0476,,,False,rejected_implausible,high,roi exceeds plausible bound — review pairing
+2026-06-30T19:19:35Z,26JUN30FRASWE,1h_total,1h_total|1.5,1.5,over,polymarket,0.35,under,kalshi,0.53,0.88,13.6364,,,False,rejected_implausible,high,roi exceeds plausible bound — review pairing
+2026-06-30T19:19:35Z,26JUL01USABIH,1h_total,1h_total|1.5,1.5,over,polymarket,0.2415,under,kalshi,0.66,0.9015,10.921,,,False,rejected_implausible,high,roi exceeds plausible bound — review pairing
+2026-06-30T19:19:35Z,26JUN30FRASWE,1h_total,1h_total|0.5,0.5,over,polymarket,0.72,under,kalshi,0.21,0.93,7.5269,6.1571,True,True,dryrun,high,computed
+2026-06-30T19:19:35Z,26JUL01USABIH,1h_total,1h_total|0.5,0.5,over,polymarket,0.63,under,kalshi,0.3,0.93,7.5269,5.8201,True,True,dryrun,high,computed
+2026-06-30T19:19:35Z,26JUN30MEXECU,corners,corners|8.5,8.5,over,polymarket,0.38,under,kalshi,0.5556,0.9356,6.8813,5.4852,True,True,dryrun,high,computed
+2026-06-30T19:19:35Z,26JUN30MEXECU,corners,corners|7.5,7.5,over,polymarket,0.51,under,kalshi,0.44,0.95,5.2632,3.3058,True,True,dryrun,high,computed
+2026-06-30T19:19:35Z,26JUN30MEXECU,corners,corners|9.5,9.5,over,polymarket,0.3,under,kalshi,0.65,0.95,5.2632,3.5197,True,True,dryrun,high,computed
+2026-06-30T19:19:35Z,26JUN30FRASWE,corners,corners|10.5,10.5,over,polymarket,0.45,under,kalshi,0.51,0.96,4.1667,2.2495,True,True,dryrun,high,computed
+2026-06-30T19:19:35Z,26JUN30FRASWE,corners,corners|11.5,11.5,over,polymarket,0.34,under,kalshi,0.62,0.96,4.1667,2.3541,True,True,dryrun,high,computed
+2026-06-30T19:19:35Z,26JUN30MEXECU,corners,corners|10.5,10.5,over,polymarket,0.23,under,kalshi,0.74,0.97,3.0928,2.6694,True,True,dryrun,high,computed
+2026-06-30T19:19:35Z,26JUN30MEXECU,team_corners,team_corners|mexico|4.5,4.5,over,polymarket,0.42,under,kalshi,0.55,0.97,3.0928,1.2146,True,True,dryrun,high,computed
+2026-06-30T19:19:35Z,26JUL01USABIH,total_goals,total_goals|0.5,0.5,over,polymarket,0.9,under,kalshi,0.07,0.97,3.0928,2.5641,True,True,dryrun,high,computed
+2026-06-30T19:19:35Z,26JUN30MEXECU,team_corners,team_corners|ecuador|3.5,3.5,over,polymarket,0.48,under,kalshi,0.5,0.98,2.0408,0.2004,True,True,dryrun,high,computed
+2026-06-30T19:19:35Z,26JUN30FRASWE,corners,corners|8.5,8.5,over,polymarket,0.67,under,kalshi,0.31,0.98,2.0408,0.5025,True,True,dryrun,high,computed
+2026-06-30T19:19:35Z,26JUN30FRASWE,corners,corners|9.5,9.5,over,polymarket,0.55,under,kalshi,0.43,0.98,2.0408,0.2004,True,True,dryrun,high,computed
+2026-06-30T19:19:35Z,26JUN30MEXECU,corners,corners|6.5,6.5,over,polymarket,0.65,under,kalshi,0.3364,0.9864,1.3753,0.4016,True,True,dryrun,high,computed
+2026-06-30T19:19:35Z,26JUL01BELSEN,corners,corners|8.5,8.5,over,polymarket,0.5498,under,kalshi,0.44,0.9898,1.0356,-0.2991,False,False,dryrun,high,computed
+2026-06-30T19:19:35Z,26JUN30FRASWE,2h_total,2h_total|2.5,2.5,over,polymarket,0.3,under,kalshi,0.69,0.99,1.0101,-0.4975,False,False,dryrun,high,computed
+2026-06-30T19:19:35Z,26JUN30FRASWE,corners,corners|7.5,7.5,over,polymarket,0.77,under,kalshi,0.22,0.99,1.0101,-0.2991,False,False,dryrun,high,computed
+2026-06-30T19:19:35Z,26JUN30FRASWE,team_corners,team_corners|france|5.5,5.5,over,polymarket,0.64,under,kalshi,0.35,0.99,1.0101,-1.6716,False,False,dryrun,high,computed
+2026-06-30T19:19:35Z,26JUL01USABIH,spread,spread|1.5|usa,1.5,cover,polymarket,0.45,plus,kalshi,0.54,0.99,1.0101,-0.7937,False,False,dryrun,high,computed
+2026-06-30T19:19:35Z,26JUN30FRASWE,spread,spread|1.5|sweden,1.5,cover,polymarket,0.019,plus,kalshi,0.98,0.999,0.1001,-0.0999,False,False,dryrun,high,computed
+2026-06-30T19:19:35Z,26JUN30MEXECU,2h_total,2h_total|2.5,2.5,over,polymarket,0.1,under,kalshi,0.9,1.0,0.0,-0.6951,False,False,dryrun,high,computed
+2026-06-30T19:19:35Z,26JUN30FRASWE,total_goals,total_goals|1.5,1.5,over,polymarket,0.88,under,kalshi,0.12,1.0,0.0,-0.7937,False,False,dryrun,high,computed

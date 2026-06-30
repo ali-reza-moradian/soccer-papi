@@ -1,0 +1,3392 @@
+[
+ {
+  "group": "C\u00f4te d'Ivoire vs. Norway",
+  "slug": "fifwc-civ-nor-2026-06-30",
+  "question": "Will C\u00f4te d'Ivoire win on 2026-06-30?",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.255",
+   "0.745"
+  ]
+ },
+ {
+  "group": "C\u00f4te d'Ivoire vs. Norway",
+  "slug": "fifwc-civ-nor-2026-06-30",
+  "question": "Will C\u00f4te d'Ivoire vs. Norway end in a draw?",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.285",
+   "0.715"
+  ]
+ },
+ {
+  "group": "C\u00f4te d'Ivoire vs. Norway",
+  "slug": "fifwc-civ-nor-2026-06-30",
+  "question": "Will Norway win on 2026-06-30?",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.455",
+   "0.545"
+  ]
+ },
+ {
+  "group": "Halftime Result",
+  "slug": "fifwc-civ-nor-2026-06-30-halftime-result",
+  "question": "C\u00f4te d'Ivoire leading at halftime?",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.225",
+   "0.775"
+  ]
+ },
+ {
+  "group": "Halftime Result",
+  "slug": "fifwc-civ-nor-2026-06-30-halftime-result",
+  "question": "C\u00f4te d'Ivoire vs. Norway: Draw at halftime?",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.435",
+   "0.565"
+  ]
+ },
+ {
+  "group": "Halftime Result",
+  "slug": "fifwc-civ-nor-2026-06-30-halftime-result",
+  "question": "Norway leading at halftime?",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.345",
+   "0.655"
+  ]
+ },
+ {
+  "group": "Second Half Result",
+  "slug": "fifwc-civ-nor-2026-06-30-second-half-result",
+  "question": "C\u00f4te d'Ivoire to win the second half?",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.24",
+   "0.76"
+  ]
+ },
+ {
+  "group": "Second Half Result",
+  "slug": "fifwc-civ-nor-2026-06-30-second-half-result",
+  "question": "C\u00f4te d'Ivoire vs. Norway: Second half draw?",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.345",
+   "0.655"
+  ]
+ },
+ {
+  "group": "Second Half Result",
+  "slug": "fifwc-civ-nor-2026-06-30-second-half-result",
+  "question": "Norway to win the second half?",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.395",
+   "0.605"
+  ]
+ },
+ {
+  "group": "Exact Score",
+  "slug": "fifwc-civ-nor-2026-06-30-exact-score",
+  "question": "Exact Score: C\u00f4te d'Ivoire 0 - 0 Norway?",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.075",
+   "0.925"
+  ]
+ },
+ {
+  "group": "Exact Score",
+  "slug": "fifwc-civ-nor-2026-06-30-exact-score",
+  "question": "Exact Score: C\u00f4te d'Ivoire 0 - 1 Norway?",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.095",
+   "0.905"
+  ]
+ },
+ {
+  "group": "Exact Score",
+  "slug": "fifwc-civ-nor-2026-06-30-exact-score",
+  "question": "Exact Score: C\u00f4te d'Ivoire 1 - 0 Norway?",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.075",
+   "0.925"
+  ]
+ },
+ {
+  "group": "Exact Score",
+  "slug": "fifwc-civ-nor-2026-06-30-exact-score",
+  "question": "Exact Score: C\u00f4te d'Ivoire 0 - 2 Norway?",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.085",
+   "0.915"
+  ]
+ },
+ {
+  "group": "Exact Score",
+  "slug": "fifwc-civ-nor-2026-06-30-exact-score",
+  "question": "Exact Score: C\u00f4te d'Ivoire 1 - 1 Norway?",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.145",
+   "0.855"
+  ]
+ },
+ {
+  "group": "Exact Score",
+  "slug": "fifwc-civ-nor-2026-06-30-exact-score",
+  "question": "Exact Score: C\u00f4te d'Ivoire 2 - 0 Norway?",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.0405",
+   "0.9595"
+  ]
+ },
+ {
+  "group": "Exact Score",
+  "slug": "fifwc-civ-nor-2026-06-30-exact-score",
+  "question": "Exact Score: C\u00f4te d'Ivoire 0 - 3 Norway?",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.038",
+   "0.962"
+  ]
+ },
+ {
+  "group": "Exact Score",
+  "slug": "fifwc-civ-nor-2026-06-30-exact-score",
+  "question": "Exact Score: C\u00f4te d'Ivoire 1 - 2 Norway?",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.105",
+   "0.895"
+  ]
+ },
+ {
+  "group": "Exact Score",
+  "slug": "fifwc-civ-nor-2026-06-30-exact-score",
+  "question": "Exact Score: C\u00f4te d'Ivoire 2 - 1 Norway?",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.075",
+   "0.925"
+  ]
+ },
+ {
+  "group": "Exact Score",
+  "slug": "fifwc-civ-nor-2026-06-30-exact-score",
+  "question": "Exact Score: C\u00f4te d'Ivoire 3 - 0 Norway?",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.0115",
+   "0.9885"
+  ]
+ },
+ {
+  "group": "Exact Score",
+  "slug": "fifwc-civ-nor-2026-06-30-exact-score",
+  "question": "Exact Score: C\u00f4te d'Ivoire 1 - 3 Norway?",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.055",
+   "0.945"
+  ]
+ },
+ {
+  "group": "Exact Score",
+  "slug": "fifwc-civ-nor-2026-06-30-exact-score",
+  "question": "Exact Score: C\u00f4te d'Ivoire 2 - 2 Norway?",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.065",
+   "0.935"
+  ]
+ },
+ {
+  "group": "Exact Score",
+  "slug": "fifwc-civ-nor-2026-06-30-exact-score",
+  "question": "Exact Score: C\u00f4te d'Ivoire 3 - 1 Norway?",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.0265",
+   "0.9735"
+  ]
+ },
+ {
+  "group": "Exact Score",
+  "slug": "fifwc-civ-nor-2026-06-30-exact-score",
+  "question": "Exact Score: C\u00f4te d'Ivoire 2 - 3 Norway?",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.0315",
+   "0.9685"
+  ]
+ },
+ {
+  "group": "Exact Score",
+  "slug": "fifwc-civ-nor-2026-06-30-exact-score",
+  "question": "Exact Score: C\u00f4te d'Ivoire 3 - 2 Norway?",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.0225",
+   "0.9775"
+  ]
+ },
+ {
+  "group": "Exact Score",
+  "slug": "fifwc-civ-nor-2026-06-30-exact-score",
+  "question": "Exact Score: C\u00f4te d'Ivoire 3 - 3 Norway?",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.0135",
+   "0.9865"
+  ]
+ },
+ {
+  "group": "Exact Score",
+  "slug": "fifwc-civ-nor-2026-06-30-exact-score",
+  "question": "Exact Score: Any Other Score?",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.095",
+   "0.905"
+  ]
+ },
+ {
+  "group": "First Team to Score",
+  "slug": "fifwc-civ-nor-2026-06-30-first-to-score",
+  "question": "C\u00f4te d'Ivoire to score first vs. Norway?",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.385",
+   "0.615"
+  ]
+ },
+ {
+  "group": "First Team to Score",
+  "slug": "fifwc-civ-nor-2026-06-30-first-to-score",
+  "question": "Norway to score first vs. C\u00f4te d'Ivoire?",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.555",
+   "0.445"
+  ]
+ },
+ {
+  "group": "First Team to Score",
+  "slug": "fifwc-civ-nor-2026-06-30-first-to-score",
+  "question": "C\u00f4te d'Ivoire vs. Norway: Neither team to score first?",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.065",
+   "0.935"
+  ]
+ },
+ {
+  "group": "More Markets",
+  "slug": "fifwc-civ-nor-2026-06-30-more-markets",
+  "question": "C\u00f4te d'Ivoire vs. Norway: O/U 1.5",
+  "outcomes": "[\"Over\", \"Under\"]",
+  "prices": [
+   "0.775",
+   "0.225"
+  ]
+ },
+ {
+  "group": "More Markets",
+  "slug": "fifwc-civ-nor-2026-06-30-more-markets",
+  "question": "C\u00f4te d'Ivoire vs. Norway: O/U 2.5",
+  "outcomes": "[\"Over\", \"Under\"]",
+  "prices": [
+   "0.505",
+   "0.495"
+  ]
+ },
+ {
+  "group": "More Markets",
+  "slug": "fifwc-civ-nor-2026-06-30-more-markets",
+  "question": "C\u00f4te d'Ivoire vs. Norway: O/U 3.5",
+  "outcomes": "[\"Over\", \"Under\"]",
+  "prices": [
+   "0.295",
+   "0.705"
+  ]
+ },
+ {
+  "group": "More Markets",
+  "slug": "fifwc-civ-nor-2026-06-30-more-markets",
+  "question": "C\u00f4te d'Ivoire vs. Norway: O/U 4.5",
+  "outcomes": "[\"Over\", \"Under\"]",
+  "prices": [
+   "0.145",
+   "0.855"
+  ]
+ },
+ {
+  "group": "More Markets",
+  "slug": "fifwc-civ-nor-2026-06-30-more-markets",
+  "question": "C\u00f4te d'Ivoire vs. Norway: O/U 5.5",
+  "outcomes": "[\"Over\", \"Under\"]",
+  "prices": [
+   "0.065",
+   "0.935"
+  ]
+ },
+ {
+  "group": "More Markets",
+  "slug": "fifwc-civ-nor-2026-06-30-more-markets",
+  "question": "C\u00f4te d'Ivoire vs. Norway: O/U 6.5",
+  "outcomes": "[\"Over\", \"Under\"]",
+  "prices": [
+   "0.0245",
+   "0.9755"
+  ]
+ },
+ {
+  "group": "More Markets",
+  "slug": "fifwc-civ-nor-2026-06-30-more-markets",
+  "question": "C\u00f4te d'Ivoire vs. Norway: O/U 7.5",
+  "outcomes": "[\"Over\", \"Under\"]",
+  "prices": [
+   "0.0085",
+   "0.9915"
+  ]
+ },
+ {
+  "group": "More Markets",
+  "slug": "fifwc-civ-nor-2026-06-30-more-markets",
+  "question": "C\u00f4te d'Ivoire vs. Norway: O/U 8.5",
+  "outcomes": "[\"Over\", \"Under\"]",
+  "prices": [
+   "0.0035",
+   "0.9965"
+  ]
+ },
+ {
+  "group": "More Markets",
+  "slug": "fifwc-civ-nor-2026-06-30-more-markets",
+  "question": "C\u00f4te d'Ivoire vs. Norway: Both Teams to Score",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.585",
+   "0.415"
+  ]
+ },
+ {
+  "group": "More Markets",
+  "slug": "fifwc-civ-nor-2026-06-30-more-markets",
+  "question": "C\u00f4te d'Ivoire vs. Norway: Both Teams to Score in First Half",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.205",
+   "0.795"
+  ]
+ },
+ {
+  "group": "More Markets",
+  "slug": "fifwc-civ-nor-2026-06-30-more-markets",
+  "question": "Spread: C\u00f4te d'Ivoire (-1.5)",
+  "outcomes": "[\"C\u00f4te d'Ivoire\", \"Norway\"]",
+  "prices": [
+   "0.095",
+   "0.905"
+  ]
+ },
+ {
+  "group": "More Markets",
+  "slug": "fifwc-civ-nor-2026-06-30-more-markets",
+  "question": "Spread: Norway (-1.5)",
+  "outcomes": "[\"Norway\", \"C\u00f4te d'Ivoire\"]",
+  "prices": [
+   "0.235",
+   "0.765"
+  ]
+ },
+ {
+  "group": "More Markets",
+  "slug": "fifwc-civ-nor-2026-06-30-more-markets",
+  "question": "Spread: C\u00f4te d'Ivoire (-2.5)",
+  "outcomes": "[\"C\u00f4te d'Ivoire\", \"Norway\"]",
+  "prices": [
+   "0.0235",
+   "0.9765"
+  ]
+ },
+ {
+  "group": "More Markets",
+  "slug": "fifwc-civ-nor-2026-06-30-more-markets",
+  "question": "Spread: Norway (-2.5)",
+  "outcomes": "[\"Norway\", \"C\u00f4te d'Ivoire\"]",
+  "prices": [
+   "0.09",
+   "0.91"
+  ]
+ },
+ {
+  "group": "More Markets",
+  "slug": "fifwc-civ-nor-2026-06-30-more-markets",
+  "question": "Spread: C\u00f4te d'Ivoire (-3.5)",
+  "outcomes": "[\"C\u00f4te d'Ivoire\", \"Norway\"]",
+  "prices": [
+   "0.005",
+   "0.995"
+  ]
+ },
+ {
+  "group": "More Markets",
+  "slug": "fifwc-civ-nor-2026-06-30-more-markets",
+  "question": "Spread: Norway (-3.5)",
+  "outcomes": "[\"Norway\", \"C\u00f4te d'Ivoire\"]",
+  "prices": [
+   "0.0285",
+   "0.9715"
+  ]
+ },
+ {
+  "group": "More Markets",
+  "slug": "fifwc-civ-nor-2026-06-30-more-markets",
+  "question": "Spread: C\u00f4te d'Ivoire (-4.5)",
+  "outcomes": "[\"C\u00f4te d'Ivoire\", \"Norway\"]",
+  "prices": [
+   "0.0015",
+   "0.9985"
+  ]
+ },
+ {
+  "group": "More Markets",
+  "slug": "fifwc-civ-nor-2026-06-30-more-markets",
+  "question": "Spread: Norway (-4.5)",
+  "outcomes": "[\"Norway\", \"C\u00f4te d'Ivoire\"]",
+  "prices": [
+   "0.006",
+   "0.994"
+  ]
+ },
+ {
+  "group": "More Markets",
+  "slug": "fifwc-civ-nor-2026-06-30-more-markets",
+  "question": "Spread: C\u00f4te d'Ivoire (-5.5)",
+  "outcomes": "[\"C\u00f4te d'Ivoire\", \"Norway\"]",
+  "prices": [
+   "0.0005",
+   "0.9995"
+  ]
+ },
+ {
+  "group": "More Markets",
+  "slug": "fifwc-civ-nor-2026-06-30-more-markets",
+  "question": "Spread: Norway (-5.5)",
+  "outcomes": "[\"Norway\", \"C\u00f4te d'Ivoire\"]",
+  "prices": [
+   "0.0025",
+   "0.9975"
+  ]
+ },
+ {
+  "group": "More Markets",
+  "slug": "fifwc-civ-nor-2026-06-30-more-markets",
+  "question": "C\u00f4te d'Ivoire vs. Norway: O/U 0.5",
+  "outcomes": "[\"Over\", \"Under\"]",
+  "prices": [
+   "0.925",
+   "0.075"
+  ]
+ },
+ {
+  "group": "More Markets",
+  "slug": "fifwc-civ-nor-2026-06-30-more-markets",
+  "question": "C\u00f4te d'Ivoire vs. Norway: 1st Half O/U 0.5",
+  "outcomes": "[\"Over\", \"Under\"]",
+  "prices": [
+   "0.675",
+   "0.325"
+  ]
+ },
+ {
+  "group": "More Markets",
+  "slug": "fifwc-civ-nor-2026-06-30-more-markets",
+  "question": "C\u00f4te d'Ivoire vs. Norway: 1st Half O/U 1.5",
+  "outcomes": "[\"Over\", \"Under\"]",
+  "prices": [
+   "0.315",
+   "0.685"
+  ]
+ },
+ {
+  "group": "More Markets",
+  "slug": "fifwc-civ-nor-2026-06-30-more-markets",
+  "question": "C\u00f4te d'Ivoire vs. Norway: 1st Half O/U 2.5",
+  "outcomes": "[\"Over\", \"Under\"]",
+  "prices": [
+   "0.105",
+   "0.895"
+  ]
+ },
+ {
+  "group": "More Markets",
+  "slug": "fifwc-civ-nor-2026-06-30-more-markets",
+  "question": "C\u00f4te d'Ivoire vs. Norway: C\u00f4te d'Ivoire O/U 0.5",
+  "outcomes": "[\"Over\", \"Under\"]",
+  "prices": [
+   "0.705",
+   "0.295"
+  ]
+ },
+ {
+  "group": "More Markets",
+  "slug": "fifwc-civ-nor-2026-06-30-more-markets",
+  "question": "C\u00f4te d'Ivoire vs. Norway: C\u00f4te d'Ivoire O/U 1.5",
+  "outcomes": "[\"Over\", \"Under\"]",
+  "prices": [
+   "0.315",
+   "0.685"
+  ]
+ },
+ {
+  "group": "More Markets",
+  "slug": "fifwc-civ-nor-2026-06-30-more-markets",
+  "question": "C\u00f4te d'Ivoire vs. Norway: C\u00f4te d'Ivoire O/U 2.5",
+  "outcomes": "[\"Over\", \"Under\"]",
+  "prices": [
+   "0.105",
+   "0.895"
+  ]
+ },
+ {
+  "group": "More Markets",
+  "slug": "fifwc-civ-nor-2026-06-30-more-markets",
+  "question": "C\u00f4te d'Ivoire vs. Norway: Norway O/U 0.5",
+  "outcomes": "[\"Over\", \"Under\"]",
+  "prices": [
+   "0.805",
+   "0.195"
+  ]
+ },
+ {
+  "group": "More Markets",
+  "slug": "fifwc-civ-nor-2026-06-30-more-markets",
+  "question": "C\u00f4te d'Ivoire vs. Norway: Norway O/U 1.5",
+  "outcomes": "[\"Over\", \"Under\"]",
+  "prices": [
+   "0.475",
+   "0.525"
+  ]
+ },
+ {
+  "group": "More Markets",
+  "slug": "fifwc-civ-nor-2026-06-30-more-markets",
+  "question": "C\u00f4te d'Ivoire vs. Norway: Norway O/U 2.5",
+  "outcomes": "[\"Over\", \"Under\"]",
+  "prices": [
+   "0.205",
+   "0.795"
+  ]
+ },
+ {
+  "group": "More Markets",
+  "slug": "fifwc-civ-nor-2026-06-30-more-markets",
+  "question": "C\u00f4te d'Ivoire vs. Norway: C\u00f4te d'Ivoire 1st Half O/U 0.5",
+  "outcomes": "[\"Over\", \"Under\"]",
+  "prices": [
+   "0.38",
+   "0.62"
+  ]
+ },
+ {
+  "group": "More Markets",
+  "slug": "fifwc-civ-nor-2026-06-30-more-markets",
+  "question": "C\u00f4te d'Ivoire vs. Norway: C\u00f4te d'Ivoire 1st Half O/U 1.5",
+  "outcomes": "[\"Over\", \"Under\"]",
+  "prices": [
+   "0.075",
+   "0.925"
+  ]
+ },
+ {
+  "group": "More Markets",
+  "slug": "fifwc-civ-nor-2026-06-30-more-markets",
+  "question": "C\u00f4te d'Ivoire vs. Norway: Norway 1st Half O/U 0.5",
+  "outcomes": "[\"Over\", \"Under\"]",
+  "prices": [
+   "0.485",
+   "0.515"
+  ]
+ },
+ {
+  "group": "More Markets",
+  "slug": "fifwc-civ-nor-2026-06-30-more-markets",
+  "question": "C\u00f4te d'Ivoire vs. Norway: Norway 1st Half O/U 1.5",
+  "outcomes": "[\"Over\", \"Under\"]",
+  "prices": [
+   "0.145",
+   "0.855"
+  ]
+ },
+ {
+  "group": "More Markets",
+  "slug": "fifwc-civ-nor-2026-06-30-more-markets",
+  "question": "C\u00f4te d'Ivoire vs. Norway: Both Teams to Score in Second Half",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.305",
+   "0.695"
+  ]
+ },
+ {
+  "group": "More Markets",
+  "slug": "fifwc-civ-nor-2026-06-30-more-markets",
+  "question": "C\u00f4te d'Ivoire vs. Norway: 2nd Half O/U 0.5",
+  "outcomes": "[\"Over\", \"Under\"]",
+  "prices": [
+   "0.77",
+   "0.23"
+  ]
+ },
+ {
+  "group": "More Markets",
+  "slug": "fifwc-civ-nor-2026-06-30-more-markets",
+  "question": "C\u00f4te d'Ivoire vs. Norway: 2nd Half O/U 1.5",
+  "outcomes": "[\"Over\", \"Under\"]",
+  "prices": [
+   "0.465",
+   "0.535"
+  ]
+ },
+ {
+  "group": "More Markets",
+  "slug": "fifwc-civ-nor-2026-06-30-more-markets",
+  "question": "C\u00f4te d'Ivoire vs. Norway: 2nd Half O/U 2.5",
+  "outcomes": "[\"Over\", \"Under\"]",
+  "prices": [
+   "0.22",
+   "0.78"
+  ]
+ },
+ {
+  "group": "More Markets",
+  "slug": "fifwc-civ-nor-2026-06-30-more-markets",
+  "question": "C\u00f4te d'Ivoire vs. Norway: C\u00f4te d'Ivoire 2nd Half O/U 0.5",
+  "outcomes": "[\"Over\", \"Under\"]",
+  "prices": [
+   "0.48",
+   "0.52"
+  ]
+ },
+ {
+  "group": "More Markets",
+  "slug": "fifwc-civ-nor-2026-06-30-more-markets",
+  "question": "C\u00f4te d'Ivoire vs. Norway: C\u00f4te d'Ivoire 2nd Half O/U 1.5",
+  "outcomes": "[\"Over\", \"Under\"]",
+  "prices": [
+   "0.18",
+   "0.82"
+  ]
+ },
+ {
+  "group": "More Markets",
+  "slug": "fifwc-civ-nor-2026-06-30-more-markets",
+  "question": "C\u00f4te d'Ivoire vs. Norway: Norway 2nd Half O/U 0.5",
+  "outcomes": "[\"Over\", \"Under\"]",
+  "prices": [
+   "0.6",
+   "0.4"
+  ]
+ },
+ {
+  "group": "More Markets",
+  "slug": "fifwc-civ-nor-2026-06-30-more-markets",
+  "question": "C\u00f4te d'Ivoire vs. Norway: Norway 2nd Half O/U 1.5",
+  "outcomes": "[\"Over\", \"Under\"]",
+  "prices": [
+   "0.215",
+   "0.785"
+  ]
+ },
+ {
+  "group": "More Markets",
+  "slug": "fifwc-civ-nor-2026-06-30-more-markets",
+  "question": "C\u00f4te d'Ivoire vs. Norway: Team to Advance",
+  "outcomes": "[\"C\u00f4te d'Ivoire\", \"Norway\"]",
+  "prices": [
+   "0.365",
+   "0.635"
+  ]
+ },
+ {
+  "group": "More Markets",
+  "slug": "fifwc-civ-nor-2026-06-30-more-markets",
+  "question": "C\u00f4te d'Ivoire vs. Norway: Will the Match Go to Extra Time?",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.29",
+   "0.71"
+  ]
+ },
+ {
+  "group": "More Markets",
+  "slug": "fifwc-civ-nor-2026-06-30-more-markets",
+  "question": "C\u00f4te d'Ivoire vs. Norway: Will the Match Go to a Penalty Shootout?",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.17",
+   "0.83"
+  ]
+ },
+ {
+  "group": "Total Corners",
+  "slug": "fifwc-civ-nor-2026-06-30-total-corners",
+  "question": "C\u00f4te d'Ivoire vs. Norway: O/U 8.5 Total Corners",
+  "outcomes": "[\"Over\", \"Under\"]",
+  "prices": [
+   "0.605",
+   "0.395"
+  ]
+ },
+ {
+  "group": "Total Corners",
+  "slug": "fifwc-civ-nor-2026-06-30-total-corners",
+  "question": "C\u00f4te d'Ivoire vs. Norway: O/U 10.5 Total Corners",
+  "outcomes": "[\"Over\", \"Under\"]",
+  "prices": [
+   "0.365",
+   "0.635"
+  ]
+ },
+ {
+  "group": "Total Corners",
+  "slug": "fifwc-civ-nor-2026-06-30-total-corners",
+  "question": "C\u00f4te d'Ivoire vs. Norway: O/U 11.5 Total Corners",
+  "outcomes": "[\"Over\", \"Under\"]",
+  "prices": [
+   "0.26",
+   "0.74"
+  ]
+ },
+ {
+  "group": "Total Corners",
+  "slug": "fifwc-civ-nor-2026-06-30-total-corners",
+  "question": "C\u00f4te d'Ivoire vs. Norway: O/U 12.5 Total Corners",
+  "outcomes": "[\"Over\", \"Under\"]",
+  "prices": [
+   "0.18",
+   "0.82"
+  ]
+ },
+ {
+  "group": "Total Corners",
+  "slug": "fifwc-civ-nor-2026-06-30-total-corners",
+  "question": "C\u00f4te d'Ivoire vs. Norway: O/U 6.5 Total Corners",
+  "outcomes": "[\"Over\", \"Under\"]",
+  "prices": [
+   "0.825",
+   "0.175"
+  ]
+ },
+ {
+  "group": "Total Corners",
+  "slug": "fifwc-civ-nor-2026-06-30-total-corners",
+  "question": "C\u00f4te d'Ivoire vs. Norway: O/U 7.5 Total Corners",
+  "outcomes": "[\"Over\", \"Under\"]",
+  "prices": [
+   "0.735",
+   "0.265"
+  ]
+ },
+ {
+  "group": "Total Corners",
+  "slug": "fifwc-civ-nor-2026-06-30-total-corners",
+  "question": "C\u00f4te d'Ivoire vs. Norway: O/U 9.5 Total Corners",
+  "outcomes": "[\"Over\", \"Under\"]",
+  "prices": [
+   "0.465",
+   "0.535"
+  ]
+ },
+ {
+  "group": "Total Corners",
+  "slug": "fifwc-civ-nor-2026-06-30-total-corners",
+  "question": "C\u00f4te d'Ivoire vs. Norway: 1st Half O/U 3.5 Total Corners",
+  "outcomes": "[\"Over\", \"Under\"]",
+  "prices": [
+   "0.625",
+   "0.375"
+  ]
+ },
+ {
+  "group": "Total Corners",
+  "slug": "fifwc-civ-nor-2026-06-30-total-corners",
+  "question": "C\u00f4te d'Ivoire vs. Norway: 1st Half O/U 4.5 Total Corners",
+  "outcomes": "[\"Over\", \"Under\"]",
+  "prices": [
+   "0.465",
+   "0.535"
+  ]
+ },
+ {
+  "group": "Total Corners",
+  "slug": "fifwc-civ-nor-2026-06-30-total-corners",
+  "question": "C\u00f4te d'Ivoire vs. Norway: 1st Half O/U 5.5 Total Corners",
+  "outcomes": "[\"Over\", \"Under\"]",
+  "prices": [
+   "0.295",
+   "0.705"
+  ]
+ },
+ {
+  "group": "Total Corners",
+  "slug": "fifwc-civ-nor-2026-06-30-total-corners",
+  "question": "C\u00f4te d'Ivoire vs. Norway: 2nd Half O/U 3.5 Total Corners",
+  "outcomes": "[\"Over\", \"Under\"]",
+  "prices": [
+   "0.735",
+   "0.265"
+  ]
+ },
+ {
+  "group": "Total Corners",
+  "slug": "fifwc-civ-nor-2026-06-30-total-corners",
+  "question": "C\u00f4te d'Ivoire vs. Norway: 2nd Half O/U 4.5 Total Corners",
+  "outcomes": "[\"Over\", \"Under\"]",
+  "prices": [
+   "0.525",
+   "0.475"
+  ]
+ },
+ {
+  "group": "Total Corners",
+  "slug": "fifwc-civ-nor-2026-06-30-total-corners",
+  "question": "C\u00f4te d'Ivoire vs. Norway: 2nd Half O/U 5.5 Total Corners",
+  "outcomes": "[\"Over\", \"Under\"]",
+  "prices": [
+   "0.395",
+   "0.605"
+  ]
+ },
+ {
+  "group": "Total Corners",
+  "slug": "fifwc-civ-nor-2026-06-30-total-corners",
+  "question": "C\u00f4te d'Ivoire vs. Norway: Total Corners Odd or Even?",
+  "outcomes": "[\"Odd\", \"Even\"]",
+  "prices": [
+   "0.5",
+   "0.5"
+  ]
+ },
+ {
+  "group": "Total Corners",
+  "slug": "fifwc-civ-nor-2026-06-30-total-corners",
+  "question": "C\u00f4te d'Ivoire vs. Norway: Team to Take First Corner",
+  "outcomes": "[\"C\u00f4te d'Ivoire\", \"Norway\"]",
+  "prices": [
+   "0.44",
+   "0.56"
+  ]
+ },
+ {
+  "group": "Total Corners",
+  "slug": "fifwc-civ-nor-2026-06-30-total-corners",
+  "question": "C\u00f4te d'Ivoire vs. Norway: C\u00f4te d'Ivoire O/U 2.5 Corners",
+  "outcomes": "[\"Over\", \"Under\"]",
+  "prices": [
+   "0.755",
+   "0.245"
+  ]
+ },
+ {
+  "group": "Total Corners",
+  "slug": "fifwc-civ-nor-2026-06-30-total-corners",
+  "question": "C\u00f4te d'Ivoire vs. Norway: C\u00f4te d'Ivoire O/U 3.5 Corners",
+  "outcomes": "[\"Over\", \"Under\"]",
+  "prices": [
+   "0.535",
+   "0.465"
+  ]
+ },
+ {
+  "group": "Total Corners",
+  "slug": "fifwc-civ-nor-2026-06-30-total-corners",
+  "question": "C\u00f4te d'Ivoire vs. Norway: C\u00f4te d'Ivoire O/U 4.5 Corners",
+  "outcomes": "[\"Over\", \"Under\"]",
+  "prices": [
+   "0.37",
+   "0.63"
+  ]
+ },
+ {
+  "group": "Total Corners",
+  "slug": "fifwc-civ-nor-2026-06-30-total-corners",
+  "question": "C\u00f4te d'Ivoire vs. Norway: Norway O/U 3.5 Corners",
+  "outcomes": "[\"Over\", \"Under\"]",
+  "prices": [
+   "0.785",
+   "0.215"
+  ]
+ },
+ {
+  "group": "Total Corners",
+  "slug": "fifwc-civ-nor-2026-06-30-total-corners",
+  "question": "C\u00f4te d'Ivoire vs. Norway: Norway O/U 4.5 Corners",
+  "outcomes": "[\"Over\", \"Under\"]",
+  "prices": [
+   "0.64",
+   "0.36"
+  ]
+ },
+ {
+  "group": "Total Corners",
+  "slug": "fifwc-civ-nor-2026-06-30-total-corners",
+  "question": "C\u00f4te d'Ivoire vs. Norway: Norway O/U 5.5 Corners",
+  "outcomes": "[\"Over\", \"Under\"]",
+  "prices": [
+   "0.445",
+   "0.555"
+  ]
+ },
+ {
+  "group": "Total Corners",
+  "slug": "fifwc-civ-nor-2026-06-30-total-corners",
+  "question": "C\u00f4te d'Ivoire vs. Norway: Norway O/U 6.5 Corners",
+  "outcomes": "[\"Over\", \"Under\"]",
+  "prices": [
+   "0.32",
+   "0.68"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Alexander S\u00f8rloth: 1+ goals",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.255",
+   "0.745"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Alexander S\u00f8rloth: 2+ goals",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.03",
+   "0.97"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Alexander S\u00f8rloth: 3+ goals",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.0055",
+   "0.9945"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Amad Diallo: 1+ goals",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.13",
+   "0.87"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Amad Diallo: 2+ goals",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.0175",
+   "0.9825"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Amad Diallo: 3+ goals",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.006",
+   "0.994"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Ange-Yoan Bonny: 1+ goals",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.17",
+   "0.83"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Ange-Yoan Bonny: 2+ goals",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.0155",
+   "0.9845"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Ange-Yoan Bonny: 3+ goals",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.1205",
+   "0.8795"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Antonio Nusa: 1+ goals",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.145",
+   "0.855"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Antonio Nusa: 2+ goals",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.0145",
+   "0.9855"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Antonio Nusa: 3+ goals",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.0055",
+   "0.9945"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Elye Wahi: 1+ goals",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.085",
+   "0.915"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Elye Wahi: 2+ goals",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.0205",
+   "0.9795"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Elye Wahi: 3+ goals",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.121",
+   "0.879"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Erling Haaland: 1+ goals",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.525",
+   "0.475"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Erling Haaland: 2+ goals",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.185",
+   "0.815"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Erling Haaland: 3+ goals",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.0505",
+   "0.9495"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Evann Guessand: 1+ goals",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.055",
+   "0.945"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Evann Guessand: 2+ goals",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.017",
+   "0.983"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Evann Guessand: 3+ goals",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.1205",
+   "0.8795"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Jens Hauge: 1+ goals",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.045",
+   "0.955"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Jens Hauge: 2+ goals",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.033",
+   "0.967"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Jens Hauge: 3+ goals",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.0245",
+   "0.9755"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "J\u00f8rgen Strand Larsen: 1+ goals",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.08",
+   "0.92"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "J\u00f8rgen Strand Larsen: 2+ goals",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.13",
+   "0.87"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "J\u00f8rgen Strand Larsen: 3+ goals",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.1205",
+   "0.8795"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Oumar Diakit\u00e9: 1+ goals",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.055",
+   "0.945"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Oumar Diakit\u00e9: 2+ goals",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.0155",
+   "0.9845"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Oumar Diakit\u00e9: 3+ goals",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.1205",
+   "0.8795"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Egil Selvik: 2+ saves",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.495",
+   "0.505"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Egil Selvik: 3+ saves",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.49",
+   "0.51"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Egil Selvik: 4+ saves",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.49",
+   "0.51"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Egil Selvik: 5+ saves",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.495",
+   "0.505"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Yahia Fofana: 2+ saves",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.5",
+   "0.5"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Yahia Fofana: 3+ saves",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.5",
+   "0.5"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Yahia Fofana: 4+ saves",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.5",
+   "0.5"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Yahia Fofana: 5+ saves",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.5",
+   "0.5"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Andreas Schjelderup: 1+ goals",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.04",
+   "0.96"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Andreas Schjelderup: 2+ goals",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.0255",
+   "0.9745"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Andreas Schjelderup: 3+ goals",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.1205",
+   "0.8795"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Nicolas P\u00e9p\u00e9: 1+ goals",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.165",
+   "0.835"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Nicolas P\u00e9p\u00e9: 2+ goals",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.0205",
+   "0.9795"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Nicolas P\u00e9p\u00e9: 3+ goals",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.0095",
+   "0.9905"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Oscar Bobb: 1+ goals",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.05",
+   "0.95"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Oscar Bobb: 2+ goals",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.1255",
+   "0.8745"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Oscar Bobb: 3+ goals",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.023",
+   "0.977"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Thelo Aasgaard: 1+ goals",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.095",
+   "0.905"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Thelo Aasgaard: 2+ goals",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.0185",
+   "0.9815"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Elye Wahi: 3+ goals + assists",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.321",
+   "0.679"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Elye Wahi: 4+ goals + assists",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.49",
+   "0.51"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Jens Hauge: 1+ goals + assists",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.4",
+   "0.6"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Jens Hauge: 2+ goals + assists",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.315",
+   "0.685"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Jens Hauge: 3+ goals + assists",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.31",
+   "0.69"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Jens Hauge: 4+ goals + assists",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.495",
+   "0.505"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "J\u00f8rgen Strand Larsen: 1+ goals + assists",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.4",
+   "0.6"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "J\u00f8rgen Strand Larsen: 2+ goals + assists",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.31",
+   "0.69"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "J\u00f8rgen Strand Larsen: 3+ goals + assists",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.3",
+   "0.7"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "J\u00f8rgen Strand Larsen: 4+ goals + assists",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.49",
+   "0.51"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Nicolas P\u00e9p\u00e9: 1+ goals + assists",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.27",
+   "0.73"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Alexander S\u00f8rloth: 3+ shots",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.375",
+   "0.625"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Alexander S\u00f8rloth: 4+ shots",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.5",
+   "0.5"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Amad Diallo: 3+ shots",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.5",
+   "0.5"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Andreas Schjelderup: 3+ shots",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.5",
+   "0.5"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Antonio Nusa: 4+ shots",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.515",
+   "0.485"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Antonio Nusa: 5+ shots",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.355",
+   "0.645"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Elye Wahi: 3+ shots",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.22",
+   "0.78"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Elye Wahi: 4+ shots",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.5",
+   "0.5"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Elye Wahi: 5+ shots",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.5",
+   "0.5"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Jens Hauge: 3+ shots",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.5",
+   "0.5"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Jens Hauge: 4+ shots",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.345",
+   "0.655"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Jens Hauge: 5+ shots",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.4565",
+   "0.5435"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "J\u00f8rgen Strand Larsen: 3+ shots",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.1",
+   "0.9"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "J\u00f8rgen Strand Larsen: 4+ shots",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.05",
+   "0.95"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "J\u00f8rgen Strand Larsen: 5+ shots",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.04",
+   "0.96"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Nicolas P\u00e9p\u00e9: 3+ shots",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.23",
+   "0.77"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Nicolas P\u00e9p\u00e9: 4+ shots",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.5",
+   "0.5"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Nicolas P\u00e9p\u00e9: 5+ shots",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.105",
+   "0.895"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Thelo Aasgaard: 3+ shots",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.065",
+   "0.935"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Thelo Aasgaard: 4+ shots",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.035",
+   "0.965"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Thelo Aasgaard: 5+ shots",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.5",
+   "0.5"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Alexander S\u00f8rloth: 4+ shots on target",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.5",
+   "0.5"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Elye Wahi: 4+ shots on target",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.5",
+   "0.5"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Erling Haaland: 4+ shots on target",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.21",
+   "0.79"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "J\u00f8rgen Strand Larsen: 4+ shots on target",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.5",
+   "0.5"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Alexander S\u00f8rloth: 1+ shots",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.8",
+   "0.2"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Alexander S\u00f8rloth: 2+ shots",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.505",
+   "0.495"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Amad Diallo: 1+ shots",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.515",
+   "0.485"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Amad Diallo: 2+ shots",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.37",
+   "0.63"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Andreas Schjelderup: 2+ assists",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.13",
+   "0.87"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Antonio Nusa: 1+ assists",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.17",
+   "0.83"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Antonio Nusa: 2+ assists",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.019",
+   "0.981"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Elye Wahi: 1+ assists",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.07",
+   "0.93"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Elye Wahi: 2+ assists",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.13",
+   "0.87"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Nicolas P\u00e9p\u00e9: 2+ assists",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.13",
+   "0.87"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Oscar Bobb: 1+ assists",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.115",
+   "0.885"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Oscar Bobb: 2+ assists",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.13",
+   "0.87"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Thelo Aasgaard: 1+ assists",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.105",
+   "0.895"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Thelo Aasgaard: 2+ assists",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.13",
+   "0.87"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Alexander S\u00f8rloth: 1+ goals + assists",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.225",
+   "0.775"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Antonio Nusa: 4+ goals + assists",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.088",
+   "0.912"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Elye Wahi: 1+ goals + assists",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.4",
+   "0.6"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Elye Wahi: 2+ goals + assists",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.325",
+   "0.675"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Nicolas P\u00e9p\u00e9: 2+ goals + assists",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.5",
+   "0.5"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Nicolas P\u00e9p\u00e9: 3+ goals + assists",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.2635",
+   "0.7365"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Nicolas P\u00e9p\u00e9: 4+ goals + assists",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.49",
+   "0.51"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Thelo Aasgaard: 3+ goals",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.1205",
+   "0.8795"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Erling Haaland: 1+ assists",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.15",
+   "0.85"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Erling Haaland: 2+ assists",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.02",
+   "0.98"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Erling Haaland: 1+ shots on target",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.745",
+   "0.255"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Erling Haaland: 2+ shots on target",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.445",
+   "0.555"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Erling Haaland: 3+ shots on target",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.17",
+   "0.83"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Oscar Bobb: 1+ goals + assists",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.395",
+   "0.605"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Oscar Bobb: 2+ goals + assists",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.315",
+   "0.685"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Oscar Bobb: 3+ goals + assists",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.27",
+   "0.73"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Oscar Bobb: 4+ goals + assists",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.28",
+   "0.72"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Thelo Aasgaard: 1+ goals + assists",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.395",
+   "0.605"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Thelo Aasgaard: 2+ goals + assists",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.315",
+   "0.685"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Thelo Aasgaard: 3+ goals + assists",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.325",
+   "0.675"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Thelo Aasgaard: 4+ goals + assists",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.495",
+   "0.505"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Alexander S\u00f8rloth: 1+ shots on target",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.355",
+   "0.645"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Alexander S\u00f8rloth: 2+ shots on target",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.49",
+   "0.51"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Alexander S\u00f8rloth: 3+ shots on target",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.105",
+   "0.895"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Amad Diallo: 1+ shots on target",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.28",
+   "0.72"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Amad Diallo: 2+ shots on target",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.125",
+   "0.875"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Amad Diallo: 3+ shots on target",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.49",
+   "0.51"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Andreas Schjelderup: 2+ shots on target",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.49",
+   "0.51"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Andreas Schjelderup: 3+ shots on target",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.49",
+   "0.51"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Antonio Nusa: 1+ shots on target",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.28",
+   "0.72"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Antonio Nusa: 2+ shots on target",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.49",
+   "0.51"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Antonio Nusa: 3+ shots on target",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.49",
+   "0.51"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Elye Wahi: 1+ shots on target",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.28",
+   "0.72"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Elye Wahi: 2+ shots on target",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.49",
+   "0.51"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Elye Wahi: 3+ shots on target",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.49",
+   "0.51"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Jens Hauge: 1+ shots on target",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.28",
+   "0.72"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Jens Hauge: 2+ shots on target",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.49",
+   "0.51"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Jens Hauge: 3+ shots on target",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.49",
+   "0.51"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "J\u00f8rgen Strand Larsen: 3+ shots on target",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.49",
+   "0.51"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Nicolas P\u00e9p\u00e9: 1+ shots on target",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.28",
+   "0.72"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Nicolas P\u00e9p\u00e9: 2+ shots on target",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.49",
+   "0.51"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Andreas Schjelderup: 1+ shots",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.46",
+   "0.54"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Andreas Schjelderup: 2+ shots",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.495",
+   "0.505"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Antonio Nusa: 1+ shots",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.775",
+   "0.225"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Antonio Nusa: 2+ shots",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.615",
+   "0.385"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Elye Wahi: 1+ shots",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.505",
+   "0.495"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Elye Wahi: 2+ shots",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.495",
+   "0.505"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Jens Hauge: 1+ shots",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.455",
+   "0.545"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Jens Hauge: 2+ shots",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.495",
+   "0.505"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "J\u00f8rgen Strand Larsen: 1+ shots",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.385",
+   "0.615"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "J\u00f8rgen Strand Larsen: 2+ shots",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.23",
+   "0.77"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Nicolas P\u00e9p\u00e9: 1+ shots",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.705",
+   "0.295"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Nicolas P\u00e9p\u00e9: 2+ shots",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.555",
+   "0.445"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Oscar Bobb: 1+ shots",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.52",
+   "0.48"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Oscar Bobb: 2+ shots",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.49",
+   "0.51"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Thelo Aasgaard: 1+ shots",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.34",
+   "0.66"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Thelo Aasgaard: 2+ shots",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.185",
+   "0.815"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Alexander S\u00f8rloth: 1+ assists",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.165",
+   "0.835"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Alexander S\u00f8rloth: 2+ assists",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.13",
+   "0.87"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Amad Diallo: 1+ assists",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.09",
+   "0.91"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Amad Diallo: 2+ assists",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.13",
+   "0.87"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Andreas Schjelderup: 1+ assists",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.12",
+   "0.88"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Jens Hauge: 1+ assists",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.12",
+   "0.88"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Jens Hauge: 2+ assists",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.13",
+   "0.87"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "J\u00f8rgen Strand Larsen: 1+ assists",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.105",
+   "0.895"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "J\u00f8rgen Strand Larsen: 2+ assists",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.13",
+   "0.87"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Nicolas P\u00e9p\u00e9: 1+ assists",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.135",
+   "0.865"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Alexander S\u00f8rloth: 2+ goals + assists",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.315",
+   "0.685"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Alexander S\u00f8rloth: 3+ goals + assists",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.3",
+   "0.7"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Alexander S\u00f8rloth: 4+ goals + assists",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.49",
+   "0.51"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Amad Diallo: 1+ goals + assists",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.185",
+   "0.815"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Amad Diallo: 2+ goals + assists",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.315",
+   "0.685"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Amad Diallo: 3+ goals + assists",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.27",
+   "0.73"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Amad Diallo: 4+ goals + assists",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.005",
+   "0.995"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Andreas Schjelderup: 1+ goals + assists",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.395",
+   "0.605"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Andreas Schjelderup: 2+ goals + assists",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.32",
+   "0.68"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Andreas Schjelderup: 3+ goals + assists",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.27",
+   "0.73"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Andreas Schjelderup: 4+ goals + assists",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.4945",
+   "0.5055"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Antonio Nusa: 1+ goals + assists",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.205",
+   "0.795"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Antonio Nusa: 2+ goals + assists",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.29",
+   "0.71"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Antonio Nusa: 3+ goals + assists",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.27",
+   "0.73"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Andreas Schjelderup: 1+ shots on target",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.28",
+   "0.72"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "J\u00f8rgen Strand Larsen: 1+ shots on target",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.28",
+   "0.72"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "J\u00f8rgen Strand Larsen: 2+ shots on target",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.49",
+   "0.51"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Nicolas P\u00e9p\u00e9: 3+ shots on target",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.49",
+   "0.51"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Oscar Bobb: 1+ shots on target",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.28",
+   "0.72"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Oscar Bobb: 2+ shots on target",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.49",
+   "0.51"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Oscar Bobb: 3+ shots on target",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.49",
+   "0.51"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Thelo Aasgaard: 1+ shots on target",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.28",
+   "0.72"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Thelo Aasgaard: 2+ shots on target",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.49",
+   "0.51"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Thelo Aasgaard: 3+ shots on target",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.49",
+   "0.51"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Erling Haaland: 1+ goals + assists",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.49",
+   "0.51"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Erling Haaland: 2+ goals + assists",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.5",
+   "0.5"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Erling Haaland: 3+ goals + assists",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.5",
+   "0.5"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Erling Haaland: 4+ goals + assists",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.495",
+   "0.505"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Alexander S\u00f8rloth: 5+ shots",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.06",
+   "0.94"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Amad Diallo: 4+ shots",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.5",
+   "0.5"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Amad Diallo: 5+ shots",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.5",
+   "0.5"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Andreas Schjelderup: 4+ shots",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.5",
+   "0.5"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Andreas Schjelderup: 5+ shots",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.5",
+   "0.5"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Antonio Nusa: 3+ shots",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.34",
+   "0.66"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Ange-Yoan Bonny: 1+ shots",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.845",
+   "0.155"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Ange-Yoan Bonny: 2+ shots",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.745",
+   "0.255"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Ange-Yoan Bonny: 3+ shots",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.2",
+   "0.8"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Ange-Yoan Bonny: 4+ shots",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.055",
+   "0.945"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Ange-Yoan Bonny: 5+ shots",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.355",
+   "0.645"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Ange-Yoan Bonny: 1+ assists",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.085",
+   "0.915"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Ange-Yoan Bonny: 2+ assists",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.13",
+   "0.87"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Ange-Yoan Bonny: 1+ shots on target",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.28",
+   "0.72"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Ange-Yoan Bonny: 2+ shots on target",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.5",
+   "0.5"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Ange-Yoan Bonny: 3+ shots on target",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.5",
+   "0.5"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Ange-Yoan Bonny: 4+ shots on target",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.5",
+   "0.5"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Ange-Yoan Bonny: 1+ goals + assists",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.4",
+   "0.6"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Ange-Yoan Bonny: 2+ goals + assists",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.325",
+   "0.675"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Ange-Yoan Bonny: 3+ goals + assists",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.345",
+   "0.655"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Ange-Yoan Bonny: 4+ goals + assists",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.4955",
+   "0.5045"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Evann Guessand: 1+ shots",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.5",
+   "0.5"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Evann Guessand: 2+ shots",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.5",
+   "0.5"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Evann Guessand: 3+ shots",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.495",
+   "0.505"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Evann Guessand: 4+ shots",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.495",
+   "0.505"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Evann Guessand: 5+ shots",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.4995",
+   "0.5005"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Oumar Diakit\u00e9: 1+ shots",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.5",
+   "0.5"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Oumar Diakit\u00e9: 2+ shots",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.495",
+   "0.505"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Oumar Diakit\u00e9: 3+ shots",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.5",
+   "0.5"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Oumar Diakit\u00e9: 4+ shots",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.4995",
+   "0.5005"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Oumar Diakit\u00e9: 5+ shots",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.4995",
+   "0.5005"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Evann Guessand: 1+ assists",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.105",
+   "0.895"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Evann Guessand: 2+ assists",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.5",
+   "0.5"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Oumar Diakit\u00e9: 1+ assists",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.105",
+   "0.895"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Oumar Diakit\u00e9: 2+ assists",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.13",
+   "0.87"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Evann Guessand: 1+ shots on target",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.28",
+   "0.72"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Evann Guessand: 2+ shots on target",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.5",
+   "0.5"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Evann Guessand: 3+ shots on target",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.5",
+   "0.5"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Oumar Diakit\u00e9: 1+ shots on target",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.28",
+   "0.72"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Oumar Diakit\u00e9: 2+ shots on target",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.5",
+   "0.5"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Oumar Diakit\u00e9: 3+ shots on target",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.5",
+   "0.5"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Evann Guessand: 1+ goals + assists",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.42",
+   "0.58"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Evann Guessand: 2+ goals + assists",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.37",
+   "0.63"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Evann Guessand: 3+ goals + assists",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.27",
+   "0.73"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Evann Guessand: 4+ goals + assists",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.5",
+   "0.5"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Oumar Diakit\u00e9: 1+ goals + assists",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.425",
+   "0.575"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Oumar Diakit\u00e9: 2+ goals + assists",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.355",
+   "0.645"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Oumar Diakit\u00e9: 3+ goals + assists",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.27",
+   "0.73"
+  ]
+ },
+ {
+  "group": "Player Props",
+  "slug": "fifwc-civ-nor-2026-06-30-player-props",
+  "question": "Oumar Diakit\u00e9: 4+ goals + assists",
+  "outcomes": "[\"Yes\", \"No\"]",
+  "prices": [
+   "0.5",
+   "0.5"
+  ]
+ }
+]

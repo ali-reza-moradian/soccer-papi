@@ -1,0 +1,5155 @@
+﻿{
+ "26JUL01BELSEN": {
+  "kalshi_suffix": "26JUL01BELSEN",
+  "poly_base_slug": "fifwc-bel-sen-2026-07-01",
+  "home": "Senegal",
+  "away": "Belgium",
+  "date": "2026-07-01",
+  "kickoff_utc": "2026-07-01T23:00:00Z",
+  "nodes": [
+   {
+    "twin_key": "moneyline##away",
+    "market_type": "moneyline",
+    "market_key": "moneyline",
+    "side": "away",
+    "outcome_label": "Reg Time: Belgium",
+    "line": null,
+    "kind": "3way",
+    "confidence": "high",
+    "kalshi_ticker": "KXWCGAME-26JUL01BELSEN-BEL",
+    "kalshi_side": "YES",
+    "poly_token_id": "51550519425443949709378847779649788844021865732808641475643382400046061806350",
+    "poly_side": "Belgium"
+   },
+   {
+    "twin_key": "moneyline##draw",
+    "market_type": "moneyline",
+    "market_key": "moneyline",
+    "side": "draw",
+    "outcome_label": "Reg Time: Tie",
+    "line": null,
+    "kind": "3way",
+    "confidence": "high",
+    "kalshi_ticker": "KXWCGAME-26JUL01BELSEN-TIE",
+    "kalshi_side": "YES",
+    "poly_token_id": "70734912499390294762635620491284391639475146683001061643495623464632375277430",
+    "poly_side": "Draw"
+   },
+   {
+    "twin_key": "moneyline##home",
+    "market_type": "moneyline",
+    "market_key": "moneyline",
+    "side": "home",
+    "outcome_label": "Reg Time: Senegal",
+    "line": null,
+    "kind": "3way",
+    "confidence": "high",
+    "kalshi_ticker": "KXWCGAME-26JUL01BELSEN-SEN",
+    "kalshi_side": "YES",
+    "poly_token_id": "101186338300259647808521159297117949746868383615820554531962956488824987030486",
+    "poly_side": "Senegal"
+   }
+  ],
+  "unmatched": [
+   {
+    "venue": "kalshi",
+    "market_type": "1h_btts",
+    "outcome_label": "no",
+    "identifier": "KXWC1HBTTS-26JUL01BELSEN-BTTS"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "1h_btts",
+    "outcome_label": "yes",
+    "identifier": "KXWC1HBTTS-26JUL01BELSEN-BTTS"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "1h_result",
+    "outcome_label": "Belgium wins 1st Half",
+    "identifier": "KXWC1H-26JUL01BELSEN-BEL"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "1h_result",
+    "outcome_label": "Tie 1st Half",
+    "identifier": "KXWC1H-26JUL01BELSEN-TIE"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "1h_result",
+    "outcome_label": "Senegal wins 1st Half",
+    "identifier": "KXWC1H-26JUL01BELSEN-SEN"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "2h_btts",
+    "outcome_label": "no",
+    "identifier": "KXWC2HBTTS-26JUL01BELSEN-BTTS"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "2h_btts",
+    "outcome_label": "yes",
+    "identifier": "KXWC2HBTTS-26JUL01BELSEN-BTTS"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "2h_result",
+    "outcome_label": "Belgium wins 2nd Half",
+    "identifier": "KXWC2H-26JUL01BELSEN-BEL"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "2h_result",
+    "outcome_label": "Tie 2nd Half",
+    "identifier": "KXWC2H-26JUL01BELSEN-TIE"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "2h_result",
+    "outcome_label": "Senegal wins 2nd Half",
+    "identifier": "KXWC2H-26JUL01BELSEN-SEN"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "advance",
+    "outcome_label": "Belgium",
+    "identifier": "KXWCADVANCE-26JUL01BELSEN-SEN"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "advance",
+    "outcome_label": "Senegal",
+    "identifier": "KXWCADVANCE-26JUL01BELSEN-SEN"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "btts",
+    "outcome_label": "no",
+    "identifier": "KXWCBTTS-26JUL01BELSEN-BTTS"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "btts",
+    "outcome_label": "yes",
+    "identifier": "KXWCBTTS-26JUL01BELSEN-BTTS"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "corners",
+    "outcome_label": "over",
+    "identifier": "KXWCCORNERS-26JUL01BELSEN-11"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "corners",
+    "outcome_label": "under",
+    "identifier": "KXWCCORNERS-26JUL01BELSEN-11"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "corners",
+    "outcome_label": "over",
+    "identifier": "KXWCCORNERS-26JUL01BELSEN-7"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "corners",
+    "outcome_label": "under",
+    "identifier": "KXWCCORNERS-26JUL01BELSEN-7"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "corners",
+    "outcome_label": "over",
+    "identifier": "KXWCCORNERS-26JUL01BELSEN-8"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "corners",
+    "outcome_label": "under",
+    "identifier": "KXWCCORNERS-26JUL01BELSEN-8"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "corners",
+    "outcome_label": "over",
+    "identifier": "KXWCCORNERS-26JUL01BELSEN-9"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "corners",
+    "outcome_label": "under",
+    "identifier": "KXWCCORNERS-26JUL01BELSEN-9"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "corners",
+    "outcome_label": "over",
+    "identifier": "KXWCCORNERS-26JUL01BELSEN-10"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "corners",
+    "outcome_label": "under",
+    "identifier": "KXWCCORNERS-26JUL01BELSEN-10"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "0-0",
+    "identifier": "KXWCSCORE-26JUL01BELSEN-BEL0SEN0"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "0-1",
+    "identifier": "KXWCSCORE-26JUL01BELSEN-BEL1SEN0"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "0-2",
+    "identifier": "KXWCSCORE-26JUL01BELSEN-BEL2SEN0"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "0-3",
+    "identifier": "KXWCSCORE-26JUL01BELSEN-BEL3SEN0"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "0-4",
+    "identifier": "KXWCSCORE-26JUL01BELSEN-BEL4SEN0"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "0-5",
+    "identifier": "KXWCSCORE-26JUL01BELSEN-BEL5SEN0"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "1-0",
+    "identifier": "KXWCSCORE-26JUL01BELSEN-BEL0SEN1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "1-1",
+    "identifier": "KXWCSCORE-26JUL01BELSEN-BEL1SEN1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "1-2",
+    "identifier": "KXWCSCORE-26JUL01BELSEN-BEL2SEN1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "1-3",
+    "identifier": "KXWCSCORE-26JUL01BELSEN-BEL3SEN1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "1-4",
+    "identifier": "KXWCSCORE-26JUL01BELSEN-BEL4SEN1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "1-5",
+    "identifier": "KXWCSCORE-26JUL01BELSEN-BEL5SEN1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "2-0",
+    "identifier": "KXWCSCORE-26JUL01BELSEN-BEL0SEN2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "2-1",
+    "identifier": "KXWCSCORE-26JUL01BELSEN-BEL1SEN2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "2-2",
+    "identifier": "KXWCSCORE-26JUL01BELSEN-BEL2SEN2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "2-3",
+    "identifier": "KXWCSCORE-26JUL01BELSEN-BEL3SEN2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "2-4",
+    "identifier": "KXWCSCORE-26JUL01BELSEN-BEL4SEN2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "3-0",
+    "identifier": "KXWCSCORE-26JUL01BELSEN-BEL0SEN3"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "3-1",
+    "identifier": "KXWCSCORE-26JUL01BELSEN-BEL1SEN3"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "3-2",
+    "identifier": "KXWCSCORE-26JUL01BELSEN-BEL2SEN3"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "3-3",
+    "identifier": "KXWCSCORE-26JUL01BELSEN-BEL3SEN3"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "3-4",
+    "identifier": "KXWCSCORE-26JUL01BELSEN-BEL4SEN3"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "4-0",
+    "identifier": "KXWCSCORE-26JUL01BELSEN-BEL0SEN4"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "4-1",
+    "identifier": "KXWCSCORE-26JUL01BELSEN-BEL1SEN4"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "4-2",
+    "identifier": "KXWCSCORE-26JUL01BELSEN-BEL2SEN4"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "4-3",
+    "identifier": "KXWCSCORE-26JUL01BELSEN-BEL3SEN4"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "first_to_score",
+    "outcome_label": "Belgium",
+    "identifier": "KXWCFTTS-26JUL01BELSEN-BEL"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "first_to_score",
+    "outcome_label": "Senegal",
+    "identifier": "KXWCFTTS-26JUL01BELSEN-SEN"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "first_to_score",
+    "outcome_label": "No Goal",
+    "identifier": "KXWCFTTS-26JUL01BELSEN-NONE"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Kevin De Bruyne",
+    "identifier": "KXWCGOAL-26JUL01BELSEN-BELKDEBR11-1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Kevin De Bruyne",
+    "identifier": "KXWCGOAL-26JUL01BELSEN-BELKDEBR11-2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Jeremy Doku",
+    "identifier": "KXWCGOAL-26JUL01BELSEN-BELJDOKU11-1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Jeremy Doku",
+    "identifier": "KXWCGOAL-26JUL01BELSEN-BELJDOKU11-2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Pape Gueye",
+    "identifier": "KXWCGOAL-26JUL01BELSEN-SENPGUEYE18-1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Nicolas Jackson",
+    "identifier": "KXWCGOAL-26JUL01BELSEN-SENNJACKS11-1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Nicolas Jackson",
+    "identifier": "KXWCGOAL-26JUL01BELSEN-SENNJACKS11-2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Charles De Ketelaere",
+    "identifier": "KXWCGOAL-26JUL01BELSEN-BELCDEKE17-1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Charles De Ketelaere",
+    "identifier": "KXWCGOAL-26JUL01BELSEN-BELCDEKE17-2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Sadio Mane",
+    "identifier": "KXWCGOAL-26JUL01BELSEN-SENSMANE10-1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Sadio Mane",
+    "identifier": "KXWCGOAL-26JUL01BELSEN-SENSMANE10-2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Ismaila Sarr",
+    "identifier": "KXWCGOAL-26JUL01BELSEN-SENISARR7-1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Ismaila Sarr",
+    "identifier": "KXWCGOAL-26JUL01BELSEN-SENISARR7-2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Youri Tielemans",
+    "identifier": "KXWCGOAL-26JUL01BELSEN-BELYTIELE8-1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Youri Tielemans",
+    "identifier": "KXWCGOAL-26JUL01BELSEN-BELYTIELE8-2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Leandro Trossard",
+    "identifier": "KXWCGOAL-26JUL01BELSEN-BELLTROSS19-1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Leandro Trossard",
+    "identifier": "KXWCGOAL-26JUL01BELSEN-BELLTROSS19-2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Kevin De Bruyne",
+    "identifier": "KXWCSOA-26JUL01BELSEN-BELKDEBR11"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Kevin De Bruyne",
+    "identifier": "KXWCSOA-26JUL01BELSEN-BELKDEBR11"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Jeremy Doku",
+    "identifier": "KXWCSOA-26JUL01BELSEN-BELJDOKU11"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Jeremy Doku",
+    "identifier": "KXWCSOA-26JUL01BELSEN-BELJDOKU11"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Pape Gueye",
+    "identifier": "KXWCSOA-26JUL01BELSEN-SENPGUEYE18"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Pape Gueye",
+    "identifier": "KXWCSOA-26JUL01BELSEN-SENPGUEYE18"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Nicolas Jackson",
+    "identifier": "KXWCSOA-26JUL01BELSEN-SENNJACKS11"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Nicolas Jackson",
+    "identifier": "KXWCSOA-26JUL01BELSEN-SENNJACKS11"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Charles De Ketelaere",
+    "identifier": "KXWCSOA-26JUL01BELSEN-BELCDEKE17"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Charles De Ketelaere",
+    "identifier": "KXWCSOA-26JUL01BELSEN-BELCDEKE17"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Sadio Mane",
+    "identifier": "KXWCSOA-26JUL01BELSEN-SENSMANE10"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Sadio Mane",
+    "identifier": "KXWCSOA-26JUL01BELSEN-SENSMANE10"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Ismaila Sarr",
+    "identifier": "KXWCSOA-26JUL01BELSEN-SENISARR7"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Ismaila Sarr",
+    "identifier": "KXWCSOA-26JUL01BELSEN-SENISARR7"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Youri Tielemans",
+    "identifier": "KXWCSOA-26JUL01BELSEN-BELYTIELE8"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Youri Tielemans",
+    "identifier": "KXWCSOA-26JUL01BELSEN-BELYTIELE8"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Leandro Trossard",
+    "identifier": "KXWCSOA-26JUL01BELSEN-BELLTROSS19"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Leandro Trossard",
+    "identifier": "KXWCSOA-26JUL01BELSEN-BELLTROSS19"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "spread",
+    "outcome_label": "Belgium",
+    "identifier": "KXWCSPREAD-26JUL01BELSEN-SEN2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "spread",
+    "outcome_label": "Senegal",
+    "identifier": "KXWCSPREAD-26JUL01BELSEN-SEN2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "spread",
+    "outcome_label": "Belgium",
+    "identifier": "KXWCSPREAD-26JUL01BELSEN-SEN3"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "spread",
+    "outcome_label": "Senegal",
+    "identifier": "KXWCSPREAD-26JUL01BELSEN-SEN3"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_corners",
+    "outcome_label": "Belgium",
+    "identifier": "KXWCTCORNERS-26JUL01BELSEN-BEL5"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_corners",
+    "outcome_label": "Belgium",
+    "identifier": "KXWCTCORNERS-26JUL01BELSEN-BEL5"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_corners",
+    "outcome_label": "Belgium",
+    "identifier": "KXWCTCORNERS-26JUL01BELSEN-BEL7"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_corners",
+    "outcome_label": "Belgium",
+    "identifier": "KXWCTCORNERS-26JUL01BELSEN-BEL7"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_corners",
+    "outcome_label": "Belgium",
+    "identifier": "KXWCTCORNERS-26JUL01BELSEN-BEL9"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_corners",
+    "outcome_label": "Belgium",
+    "identifier": "KXWCTCORNERS-26JUL01BELSEN-BEL9"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_corners",
+    "outcome_label": "Senegal",
+    "identifier": "KXWCTCORNERS-26JUL01BELSEN-SEN5"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_corners",
+    "outcome_label": "Senegal",
+    "identifier": "KXWCTCORNERS-26JUL01BELSEN-SEN5"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_corners",
+    "outcome_label": "Senegal",
+    "identifier": "KXWCTCORNERS-26JUL01BELSEN-SEN7"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_corners",
+    "outcome_label": "Senegal",
+    "identifier": "KXWCTCORNERS-26JUL01BELSEN-SEN7"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_corners",
+    "outcome_label": "Senegal",
+    "identifier": "KXWCTCORNERS-26JUL01BELSEN-SEN9"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_corners",
+    "outcome_label": "Senegal",
+    "identifier": "KXWCTCORNERS-26JUL01BELSEN-SEN9"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_total",
+    "outcome_label": "Belgium",
+    "identifier": "KXWCTEAMTOTAL-26JUL01BELSEN-BEL1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_total",
+    "outcome_label": "Belgium",
+    "identifier": "KXWCTEAMTOTAL-26JUL01BELSEN-BEL1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_total",
+    "outcome_label": "Belgium",
+    "identifier": "KXWCTEAMTOTAL-26JUL01BELSEN-BEL2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_total",
+    "outcome_label": "Belgium",
+    "identifier": "KXWCTEAMTOTAL-26JUL01BELSEN-BEL2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_total",
+    "outcome_label": "Belgium",
+    "identifier": "KXWCTEAMTOTAL-26JUL01BELSEN-BEL3"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_total",
+    "outcome_label": "Belgium",
+    "identifier": "KXWCTEAMTOTAL-26JUL01BELSEN-BEL3"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_total",
+    "outcome_label": "Belgium",
+    "identifier": "KXWCTEAMTOTAL-26JUL01BELSEN-BEL4"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_total",
+    "outcome_label": "Belgium",
+    "identifier": "KXWCTEAMTOTAL-26JUL01BELSEN-BEL4"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_total",
+    "outcome_label": "Senegal",
+    "identifier": "KXWCTEAMTOTAL-26JUL01BELSEN-SEN1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_total",
+    "outcome_label": "Senegal",
+    "identifier": "KXWCTEAMTOTAL-26JUL01BELSEN-SEN1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_total",
+    "outcome_label": "Senegal",
+    "identifier": "KXWCTEAMTOTAL-26JUL01BELSEN-SEN2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_total",
+    "outcome_label": "Senegal",
+    "identifier": "KXWCTEAMTOTAL-26JUL01BELSEN-SEN2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_total",
+    "outcome_label": "Senegal",
+    "identifier": "KXWCTEAMTOTAL-26JUL01BELSEN-SEN3"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_total",
+    "outcome_label": "Senegal",
+    "identifier": "KXWCTEAMTOTAL-26JUL01BELSEN-SEN3"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "totals",
+    "outcome_label": "over",
+    "identifier": "KXWCTOTAL-26JUL01BELSEN-1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "totals",
+    "outcome_label": "under",
+    "identifier": "KXWCTOTAL-26JUL01BELSEN-1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "totals",
+    "outcome_label": "over",
+    "identifier": "KXWCTOTAL-26JUL01BELSEN-2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "totals",
+    "outcome_label": "under",
+    "identifier": "KXWCTOTAL-26JUL01BELSEN-2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "totals",
+    "outcome_label": "over",
+    "identifier": "KXWCTOTAL-26JUL01BELSEN-3"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "totals",
+    "outcome_label": "under",
+    "identifier": "KXWCTOTAL-26JUL01BELSEN-3"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "totals",
+    "outcome_label": "over",
+    "identifier": "KXWCTOTAL-26JUL01BELSEN-4"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "totals",
+    "outcome_label": "under",
+    "identifier": "KXWCTOTAL-26JUL01BELSEN-4"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "totals",
+    "outcome_label": "over",
+    "identifier": "KXWCTOTAL-26JUL01BELSEN-5"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "totals",
+    "outcome_label": "under",
+    "identifier": "KXWCTOTAL-26JUL01BELSEN-5"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "totals",
+    "outcome_label": "over",
+    "identifier": "KXWCTOTAL-26JUL01BELSEN-6"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "totals",
+    "outcome_label": "under",
+    "identifier": "KXWCTOTAL-26JUL01BELSEN-6"
+   }
+  ]
+ },
+ "26JUL01ENGCOD": {
+  "kalshi_suffix": "26JUL01ENGCOD",
+  "poly_base_slug": "fifwc-eng-cod-2026-07-01",
+  "home": "DR Congo",
+  "away": "England",
+  "date": "2026-07-01",
+  "kickoff_utc": "2026-07-01T19:00:00Z",
+  "nodes": [],
+  "unmatched": [
+   {
+    "venue": "kalshi",
+    "market_type": "1h_btts",
+    "outcome_label": "no",
+    "identifier": "KXWC1HBTTS-26JUL01ENGCOD-BTTS"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "1h_btts",
+    "outcome_label": "yes",
+    "identifier": "KXWC1HBTTS-26JUL01ENGCOD-BTTS"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "1h_result",
+    "outcome_label": "England wins 1st Half",
+    "identifier": "KXWC1H-26JUL01ENGCOD-ENG"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "1h_result",
+    "outcome_label": "Tie 1st Half",
+    "identifier": "KXWC1H-26JUL01ENGCOD-TIE"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "2h_btts",
+    "outcome_label": "no",
+    "identifier": "KXWC2HBTTS-26JUL01ENGCOD-BTTS"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "2h_btts",
+    "outcome_label": "yes",
+    "identifier": "KXWC2HBTTS-26JUL01ENGCOD-BTTS"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "2h_result",
+    "outcome_label": "England wins 2nd Half",
+    "identifier": "KXWC2H-26JUL01ENGCOD-ENG"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "2h_result",
+    "outcome_label": "Tie 2nd Half",
+    "identifier": "KXWC2H-26JUL01ENGCOD-TIE"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "advance",
+    "outcome_label": "DR Congo",
+    "identifier": "KXWCADVANCE-26JUL01ENGCOD-ENG"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "advance",
+    "outcome_label": "England",
+    "identifier": "KXWCADVANCE-26JUL01ENGCOD-ENG"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "btts",
+    "outcome_label": "no",
+    "identifier": "KXWCBTTS-26JUL01ENGCOD-BTTS"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "btts",
+    "outcome_label": "yes",
+    "identifier": "KXWCBTTS-26JUL01ENGCOD-BTTS"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "corners",
+    "outcome_label": "over",
+    "identifier": "KXWCCORNERS-26JUL01ENGCOD-11"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "corners",
+    "outcome_label": "under",
+    "identifier": "KXWCCORNERS-26JUL01ENGCOD-11"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "corners",
+    "outcome_label": "over",
+    "identifier": "KXWCCORNERS-26JUL01ENGCOD-12"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "corners",
+    "outcome_label": "under",
+    "identifier": "KXWCCORNERS-26JUL01ENGCOD-12"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "corners",
+    "outcome_label": "over",
+    "identifier": "KXWCTCORNERS-26JUL01ENGCOD-COD3"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "corners",
+    "outcome_label": "under",
+    "identifier": "KXWCTCORNERS-26JUL01ENGCOD-COD3"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "corners",
+    "outcome_label": "over",
+    "identifier": "KXWCTCORNERS-26JUL01ENGCOD-COD5"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "corners",
+    "outcome_label": "under",
+    "identifier": "KXWCTCORNERS-26JUL01ENGCOD-COD5"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "corners",
+    "outcome_label": "over",
+    "identifier": "KXWCTCORNERS-26JUL01ENGCOD-COD7"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "corners",
+    "outcome_label": "under",
+    "identifier": "KXWCTCORNERS-26JUL01ENGCOD-COD7"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "corners",
+    "outcome_label": "over",
+    "identifier": "KXWCCORNERS-26JUL01ENGCOD-8"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "corners",
+    "outcome_label": "under",
+    "identifier": "KXWCCORNERS-26JUL01ENGCOD-8"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "corners",
+    "outcome_label": "over",
+    "identifier": "KXWCCORNERS-26JUL01ENGCOD-9"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "corners",
+    "outcome_label": "under",
+    "identifier": "KXWCCORNERS-26JUL01ENGCOD-9"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "corners",
+    "outcome_label": "over",
+    "identifier": "KXWCCORNERS-26JUL01ENGCOD-10"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "corners",
+    "outcome_label": "under",
+    "identifier": "KXWCCORNERS-26JUL01ENGCOD-10"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "0-0",
+    "identifier": "KXWCSCORE-26JUL01ENGCOD-ENG0COD0"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "0-1",
+    "identifier": "KXWCSCORE-26JUL01ENGCOD-ENG1COD0"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "0-2",
+    "identifier": "KXWCSCORE-26JUL01ENGCOD-ENG2COD0"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "0-3",
+    "identifier": "KXWCSCORE-26JUL01ENGCOD-ENG3COD0"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "0-4",
+    "identifier": "KXWCSCORE-26JUL01ENGCOD-ENG4COD0"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "0-5",
+    "identifier": "KXWCSCORE-26JUL01ENGCOD-ENG5COD0"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "0-6",
+    "identifier": "KXWCSCORE-26JUL01ENGCOD-ENG6COD0"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "0-7",
+    "identifier": "KXWCSCORE-26JUL01ENGCOD-ENG7COD0"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "1-0",
+    "identifier": "KXWCSCORE-26JUL01ENGCOD-ENG0COD1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "1-1",
+    "identifier": "KXWCSCORE-26JUL01ENGCOD-ENG1COD1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "1-2",
+    "identifier": "KXWCSCORE-26JUL01ENGCOD-ENG2COD1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "1-3",
+    "identifier": "KXWCSCORE-26JUL01ENGCOD-ENG3COD1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "1-4",
+    "identifier": "KXWCSCORE-26JUL01ENGCOD-ENG4COD1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "1-5",
+    "identifier": "KXWCSCORE-26JUL01ENGCOD-ENG5COD1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "1-6",
+    "identifier": "KXWCSCORE-26JUL01ENGCOD-ENG6COD1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "2-0",
+    "identifier": "KXWCSCORE-26JUL01ENGCOD-ENG0COD2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "2-1",
+    "identifier": "KXWCSCORE-26JUL01ENGCOD-ENG1COD2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "2-2",
+    "identifier": "KXWCSCORE-26JUL01ENGCOD-ENG2COD2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "2-3",
+    "identifier": "KXWCSCORE-26JUL01ENGCOD-ENG3COD2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "2-4",
+    "identifier": "KXWCSCORE-26JUL01ENGCOD-ENG4COD2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "2-5",
+    "identifier": "KXWCSCORE-26JUL01ENGCOD-ENG5COD2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "3-1",
+    "identifier": "KXWCSCORE-26JUL01ENGCOD-ENG1COD3"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "3-2",
+    "identifier": "KXWCSCORE-26JUL01ENGCOD-ENG2COD3"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "3-3",
+    "identifier": "KXWCSCORE-26JUL01ENGCOD-ENG3COD3"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "first_to_score",
+    "outcome_label": "England",
+    "identifier": "KXWCFTTS-26JUL01ENGCOD-ENG"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "first_to_score",
+    "outcome_label": "Congo DR",
+    "identifier": "KXWCFTTS-26JUL01ENGCOD-COD"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "first_to_score",
+    "outcome_label": "No Goal",
+    "identifier": "KXWCFTTS-26JUL01ENGCOD-NONE"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "moneyline",
+    "outcome_label": "Reg Time: England",
+    "identifier": "KXWCGAME-26JUL01ENGCOD-ENG"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "moneyline",
+    "outcome_label": "Reg Time: Tie",
+    "identifier": "KXWCGAME-26JUL01ENGCOD-TIE"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Elliot Anderson",
+    "identifier": "KXWCGOAL-26JUL01ENGCOD-ENGEANDER8-1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Jude Bellingham",
+    "identifier": "KXWCGOAL-26JUL01ENGCOD-ENGJBELLI5-1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Jude Bellingham",
+    "identifier": "KXWCGOAL-26JUL01ENGCOD-ENGJBELLI5-2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Aaron Wan-Bissaka",
+    "identifier": "KXWCGOAL-26JUL01ENGCOD-CODAWANB29-1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Harry Kane",
+    "identifier": "KXWCGOAL-26JUL01ENGCOD-ENGHKANE9-1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Harry Kane",
+    "identifier": "KXWCGOAL-26JUL01ENGCOD-ENGHKANE9-2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Harry Kane",
+    "identifier": "KXWCGOAL-26JUL01ENGCOD-ENGHKANE9-3"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Samuel Moutoussamy",
+    "identifier": "KXWCGOAL-26JUL01ENGCOD-CODSMOUTO8-1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Declan Rice",
+    "identifier": "KXWCGOAL-26JUL01ENGCOD-ENGDRICE41-1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Declan Rice",
+    "identifier": "KXWCGOAL-26JUL01ENGCOD-ENGDRICE41-2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Yoane Wissa",
+    "identifier": "KXWCGOAL-26JUL01ENGCOD-CODYWISSA9-1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Yoane Wissa",
+    "identifier": "KXWCGOAL-26JUL01ENGCOD-CODYWISSA9-2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Elliot Anderson",
+    "identifier": "KXWCSOA-26JUL01ENGCOD-ENGEANDER8"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Elliot Anderson",
+    "identifier": "KXWCSOA-26JUL01ENGCOD-ENGEANDER8"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Jude Bellingham",
+    "identifier": "KXWCSOA-26JUL01ENGCOD-ENGJBELLI5"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Jude Bellingham",
+    "identifier": "KXWCSOA-26JUL01ENGCOD-ENGJBELLI5"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Aaron Wan-Bissaka",
+    "identifier": "KXWCSOA-26JUL01ENGCOD-CODAWANB29"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Aaron Wan-Bissaka",
+    "identifier": "KXWCSOA-26JUL01ENGCOD-CODAWANB29"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Harry Kane",
+    "identifier": "KXWCSOA-26JUL01ENGCOD-ENGHKANE9"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Harry Kane",
+    "identifier": "KXWCSOA-26JUL01ENGCOD-ENGHKANE9"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Samuel Moutoussamy",
+    "identifier": "KXWCSOA-26JUL01ENGCOD-CODSMOUTO8"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Samuel Moutoussamy",
+    "identifier": "KXWCSOA-26JUL01ENGCOD-CODSMOUTO8"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Declan Rice",
+    "identifier": "KXWCSOA-26JUL01ENGCOD-ENGDRICE41"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Declan Rice",
+    "identifier": "KXWCSOA-26JUL01ENGCOD-ENGDRICE41"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Yoane Wissa",
+    "identifier": "KXWCSOA-26JUL01ENGCOD-CODYWISSA9"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Yoane Wissa",
+    "identifier": "KXWCSOA-26JUL01ENGCOD-CODYWISSA9"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "spread",
+    "outcome_label": "DR Congo",
+    "identifier": "KXWCSPREAD-26JUL01ENGCOD-ENG2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "spread",
+    "outcome_label": "England",
+    "identifier": "KXWCSPREAD-26JUL01ENGCOD-ENG2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "spread",
+    "outcome_label": "DR Congo",
+    "identifier": "KXWCSPREAD-26JUL01ENGCOD-ENG3"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "spread",
+    "outcome_label": "England",
+    "identifier": "KXWCSPREAD-26JUL01ENGCOD-ENG3"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_corners",
+    "outcome_label": "England",
+    "identifier": "KXWCTCORNERS-26JUL01ENGCOD-ENG11"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_corners",
+    "outcome_label": "England",
+    "identifier": "KXWCTCORNERS-26JUL01ENGCOD-ENG11"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_corners",
+    "outcome_label": "England",
+    "identifier": "KXWCTCORNERS-26JUL01ENGCOD-ENG7"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_corners",
+    "outcome_label": "England",
+    "identifier": "KXWCTCORNERS-26JUL01ENGCOD-ENG7"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_corners",
+    "outcome_label": "England",
+    "identifier": "KXWCTCORNERS-26JUL01ENGCOD-ENG9"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_corners",
+    "outcome_label": "England",
+    "identifier": "KXWCTCORNERS-26JUL01ENGCOD-ENG9"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_total",
+    "outcome_label": "England",
+    "identifier": "KXWCTEAMTOTAL-26JUL01ENGCOD-ENG1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_total",
+    "outcome_label": "England",
+    "identifier": "KXWCTEAMTOTAL-26JUL01ENGCOD-ENG1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_total",
+    "outcome_label": "England",
+    "identifier": "KXWCTEAMTOTAL-26JUL01ENGCOD-ENG2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_total",
+    "outcome_label": "England",
+    "identifier": "KXWCTEAMTOTAL-26JUL01ENGCOD-ENG2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_total",
+    "outcome_label": "England",
+    "identifier": "KXWCTEAMTOTAL-26JUL01ENGCOD-ENG3"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_total",
+    "outcome_label": "England",
+    "identifier": "KXWCTEAMTOTAL-26JUL01ENGCOD-ENG3"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_total",
+    "outcome_label": "England",
+    "identifier": "KXWCTEAMTOTAL-26JUL01ENGCOD-ENG4"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_total",
+    "outcome_label": "England",
+    "identifier": "KXWCTEAMTOTAL-26JUL01ENGCOD-ENG4"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_total",
+    "outcome_label": "England",
+    "identifier": "KXWCTEAMTOTAL-26JUL01ENGCOD-ENG5"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_total",
+    "outcome_label": "England",
+    "identifier": "KXWCTEAMTOTAL-26JUL01ENGCOD-ENG5"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_total",
+    "outcome_label": "England",
+    "identifier": "KXWCTEAMTOTAL-26JUL01ENGCOD-ENG6"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_total",
+    "outcome_label": "England",
+    "identifier": "KXWCTEAMTOTAL-26JUL01ENGCOD-ENG6"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "totals",
+    "outcome_label": "over",
+    "identifier": "KXWCTOTAL-26JUL01ENGCOD-1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "totals",
+    "outcome_label": "under",
+    "identifier": "KXWCTOTAL-26JUL01ENGCOD-1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "totals",
+    "outcome_label": "over",
+    "identifier": "KXWCTOTAL-26JUL01ENGCOD-2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "totals",
+    "outcome_label": "under",
+    "identifier": "KXWCTOTAL-26JUL01ENGCOD-2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "totals",
+    "outcome_label": "over",
+    "identifier": "KXWCTOTAL-26JUL01ENGCOD-3"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "totals",
+    "outcome_label": "under",
+    "identifier": "KXWCTOTAL-26JUL01ENGCOD-3"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "totals",
+    "outcome_label": "over",
+    "identifier": "KXWCTOTAL-26JUL01ENGCOD-4"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "totals",
+    "outcome_label": "under",
+    "identifier": "KXWCTOTAL-26JUL01ENGCOD-4"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "totals",
+    "outcome_label": "over",
+    "identifier": "KXWCTOTAL-26JUL01ENGCOD-5"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "totals",
+    "outcome_label": "under",
+    "identifier": "KXWCTOTAL-26JUL01ENGCOD-5"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "totals",
+    "outcome_label": "over",
+    "identifier": "KXWCTOTAL-26JUL01ENGCOD-6"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "totals",
+    "outcome_label": "under",
+    "identifier": "KXWCTOTAL-26JUL01ENGCOD-6"
+   }
+  ]
+ },
+ "26JUN30MEXECU": {
+  "kalshi_suffix": "26JUN30MEXECU",
+  "poly_base_slug": "fifwc-mex-ecu-2026-06-30",
+  "home": "Ecuador",
+  "away": "Mexico",
+  "date": "2026-06-30",
+  "kickoff_utc": "2026-07-01T04:00:00Z",
+  "nodes": [
+   {
+    "twin_key": "moneyline##away",
+    "market_type": "moneyline",
+    "market_key": "moneyline",
+    "side": "away",
+    "outcome_label": "Reg Time: Mexico",
+    "line": null,
+    "kind": "3way",
+    "confidence": "high",
+    "kalshi_ticker": "KXWCGAME-26JUN30MEXECU-MEX",
+    "kalshi_side": "YES",
+    "poly_token_id": "114468314836265493179349149555121147219378704003010144698095755324094165081893",
+    "poly_side": "Mexico"
+   },
+   {
+    "twin_key": "moneyline##draw",
+    "market_type": "moneyline",
+    "market_key": "moneyline",
+    "side": "draw",
+    "outcome_label": "Reg Time: Tie",
+    "line": null,
+    "kind": "3way",
+    "confidence": "high",
+    "kalshi_ticker": "KXWCGAME-26JUN30MEXECU-TIE",
+    "kalshi_side": "YES",
+    "poly_token_id": "11866110555495951633661793493234198760714743866421175130577619510964118146114",
+    "poly_side": "Draw"
+   },
+   {
+    "twin_key": "moneyline##home",
+    "market_type": "moneyline",
+    "market_key": "moneyline",
+    "side": "home",
+    "outcome_label": "Reg Time: Ecuador",
+    "line": null,
+    "kind": "3way",
+    "confidence": "high",
+    "kalshi_ticker": "KXWCGAME-26JUN30MEXECU-ECU",
+    "kalshi_side": "YES",
+    "poly_token_id": "95900004446820028523281487282586307546683508186408363039386301983885387392092",
+    "poly_side": "Ecuador"
+   }
+  ],
+  "unmatched": [
+   {
+    "venue": "kalshi",
+    "market_type": "1h_btts",
+    "outcome_label": "no",
+    "identifier": "KXWC1HBTTS-26JUN30MEXECU-BTTS"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "1h_btts",
+    "outcome_label": "yes",
+    "identifier": "KXWC1HBTTS-26JUN30MEXECU-BTTS"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "1h_result",
+    "outcome_label": "Mexico wins 1st Half",
+    "identifier": "KXWC1H-26JUN30MEXECU-MEX"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "1h_result",
+    "outcome_label": "Tie 1st Half",
+    "identifier": "KXWC1H-26JUN30MEXECU-TIE"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "1h_result",
+    "outcome_label": "Ecuador wins 1st Half",
+    "identifier": "KXWC1H-26JUN30MEXECU-ECU"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "2h_btts",
+    "outcome_label": "no",
+    "identifier": "KXWC2HBTTS-26JUN30MEXECU-BTTS"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "2h_btts",
+    "outcome_label": "yes",
+    "identifier": "KXWC2HBTTS-26JUN30MEXECU-BTTS"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "2h_result",
+    "outcome_label": "Mexico wins 2nd Half",
+    "identifier": "KXWC2H-26JUN30MEXECU-MEX"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "2h_result",
+    "outcome_label": "Tie 2nd Half",
+    "identifier": "KXWC2H-26JUN30MEXECU-TIE"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "2h_result",
+    "outcome_label": "Ecuador wins 2nd Half",
+    "identifier": "KXWC2H-26JUN30MEXECU-ECU"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "advance",
+    "outcome_label": "Ecuador",
+    "identifier": "KXWCADVANCE-26JUN30MEXECU-MEX"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "advance",
+    "outcome_label": "Mexico",
+    "identifier": "KXWCADVANCE-26JUN30MEXECU-MEX"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "btts",
+    "outcome_label": "no",
+    "identifier": "KXWCBTTS-26JUN30MEXECU-BTTS"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "btts",
+    "outcome_label": "yes",
+    "identifier": "KXWCBTTS-26JUN30MEXECU-BTTS"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "corners",
+    "outcome_label": "over",
+    "identifier": "KXWCCORNERS-26JUN30MEXECU-11"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "corners",
+    "outcome_label": "under",
+    "identifier": "KXWCCORNERS-26JUN30MEXECU-11"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "corners",
+    "outcome_label": "over",
+    "identifier": "KXWCCORNERS-26JUN30MEXECU-7"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "corners",
+    "outcome_label": "under",
+    "identifier": "KXWCCORNERS-26JUN30MEXECU-7"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "corners",
+    "outcome_label": "over",
+    "identifier": "KXWCCORNERS-26JUN30MEXECU-8"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "corners",
+    "outcome_label": "under",
+    "identifier": "KXWCCORNERS-26JUN30MEXECU-8"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "corners",
+    "outcome_label": "over",
+    "identifier": "KXWCCORNERS-26JUN30MEXECU-9"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "corners",
+    "outcome_label": "under",
+    "identifier": "KXWCCORNERS-26JUN30MEXECU-9"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "corners",
+    "outcome_label": "over",
+    "identifier": "KXWCCORNERS-26JUN30MEXECU-10"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "corners",
+    "outcome_label": "under",
+    "identifier": "KXWCCORNERS-26JUN30MEXECU-10"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "0-0",
+    "identifier": "KXWCSCORE-26JUN30MEXECU-MEX0ECU0"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "0-1",
+    "identifier": "KXWCSCORE-26JUN30MEXECU-MEX1ECU0"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "0-2",
+    "identifier": "KXWCSCORE-26JUN30MEXECU-MEX2ECU0"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "0-3",
+    "identifier": "KXWCSCORE-26JUN30MEXECU-MEX3ECU0"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "0-4",
+    "identifier": "KXWCSCORE-26JUN30MEXECU-MEX4ECU0"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "0-5",
+    "identifier": "KXWCSCORE-26JUN30MEXECU-MEX5ECU0"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "1-0",
+    "identifier": "KXWCSCORE-26JUN30MEXECU-MEX0ECU1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "1-1",
+    "identifier": "KXWCSCORE-26JUN30MEXECU-MEX1ECU1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "1-2",
+    "identifier": "KXWCSCORE-26JUN30MEXECU-MEX2ECU1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "1-3",
+    "identifier": "KXWCSCORE-26JUN30MEXECU-MEX3ECU1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "1-4",
+    "identifier": "KXWCSCORE-26JUN30MEXECU-MEX4ECU1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "2-0",
+    "identifier": "KXWCSCORE-26JUN30MEXECU-MEX0ECU2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "2-1",
+    "identifier": "KXWCSCORE-26JUN30MEXECU-MEX1ECU2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "2-2",
+    "identifier": "KXWCSCORE-26JUN30MEXECU-MEX2ECU2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "2-3",
+    "identifier": "KXWCSCORE-26JUN30MEXECU-MEX3ECU2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "2-4",
+    "identifier": "KXWCSCORE-26JUN30MEXECU-MEX4ECU2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "3-0",
+    "identifier": "KXWCSCORE-26JUN30MEXECU-MEX0ECU3"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "3-1",
+    "identifier": "KXWCSCORE-26JUN30MEXECU-MEX1ECU3"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "3-2",
+    "identifier": "KXWCSCORE-26JUN30MEXECU-MEX2ECU3"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "3-3",
+    "identifier": "KXWCSCORE-26JUN30MEXECU-MEX3ECU3"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "4-0",
+    "identifier": "KXWCSCORE-26JUN30MEXECU-MEX0ECU4"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "4-1",
+    "identifier": "KXWCSCORE-26JUN30MEXECU-MEX1ECU4"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "first_to_score",
+    "outcome_label": "Mexico",
+    "identifier": "KXWCFTTS-26JUN30MEXECU-MEX"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "first_to_score",
+    "outcome_label": "Ecuador",
+    "identifier": "KXWCFTTS-26JUN30MEXECU-ECU"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "first_to_score",
+    "outcome_label": "No Goal",
+    "identifier": "KXWCFTTS-26JUN30MEXECU-NONE"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Roberto Alvarado",
+    "identifier": "KXWCGOAL-26JUN30MEXECU-MEXRALVAR25-1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Roberto Alvarado",
+    "identifier": "KXWCGOAL-26JUN30MEXECU-MEXRALVAR25-2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Moises Caicedo",
+    "identifier": "KXWCGOAL-26JUN30MEXECU-ECUMCAICE25-1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Piero Hincapie",
+    "identifier": "KXWCGOAL-26JUN30MEXECU-ECUPHINCA3-1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Raul Jimenez",
+    "identifier": "KXWCGOAL-26JUN30MEXECU-MEXRJIMEN7-1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Raul Jimenez",
+    "identifier": "KXWCGOAL-26JUN30MEXECU-MEXRJIMEN7-2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Willian Pacho",
+    "identifier": "KXWCGOAL-26JUN30MEXECU-ECUWPACHO51-1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Gonzalo Plata",
+    "identifier": "KXWCGOAL-26JUN30MEXECU-ECUGPLATA19-1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Gonzalo Plata",
+    "identifier": "KXWCGOAL-26JUN30MEXECU-ECUGPLATA19-2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Julian Quinones",
+    "identifier": "KXWCGOAL-26JUN30MEXECU-MEXJQUINO33-1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Julian Quinones",
+    "identifier": "KXWCGOAL-26JUN30MEXECU-MEXJQUINO33-2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Luis Romo",
+    "identifier": "KXWCGOAL-26JUN30MEXECU-MEXLROMO7-1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Enner Valencia",
+    "identifier": "KXWCGOAL-26JUN30MEXECU-ECUEVALEN13-1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Enner Valencia",
+    "identifier": "KXWCGOAL-26JUN30MEXECU-ECUEVALEN13-2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Pedro Vite",
+    "identifier": "KXWCGOAL-26JUN30MEXECU-ECUPVITE15-1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Roberto Alvarado",
+    "identifier": "KXWCSOA-26JUN30MEXECU-MEXRALVAR25"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Roberto Alvarado",
+    "identifier": "KXWCSOA-26JUN30MEXECU-MEXRALVAR25"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Moises Caicedo",
+    "identifier": "KXWCSOA-26JUN30MEXECU-ECUMCAICE25"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Moises Caicedo",
+    "identifier": "KXWCSOA-26JUN30MEXECU-ECUMCAICE25"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Piero Hincapie",
+    "identifier": "KXWCSOA-26JUN30MEXECU-ECUPHINCA3"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Piero Hincapie",
+    "identifier": "KXWCSOA-26JUN30MEXECU-ECUPHINCA3"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Raul Jimenez",
+    "identifier": "KXWCSOA-26JUN30MEXECU-MEXRJIMEN7"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Raul Jimenez",
+    "identifier": "KXWCSOA-26JUN30MEXECU-MEXRJIMEN7"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Willian Pacho",
+    "identifier": "KXWCSOA-26JUN30MEXECU-ECUWPACHO51"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Willian Pacho",
+    "identifier": "KXWCSOA-26JUN30MEXECU-ECUWPACHO51"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Gonzalo Plata",
+    "identifier": "KXWCSOA-26JUN30MEXECU-ECUGPLATA19"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Gonzalo Plata",
+    "identifier": "KXWCSOA-26JUN30MEXECU-ECUGPLATA19"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Julian Quinones",
+    "identifier": "KXWCSOA-26JUN30MEXECU-MEXJQUINO33"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Julian Quinones",
+    "identifier": "KXWCSOA-26JUN30MEXECU-MEXJQUINO33"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Luis Romo",
+    "identifier": "KXWCSOA-26JUN30MEXECU-MEXLROMO7"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Luis Romo",
+    "identifier": "KXWCSOA-26JUN30MEXECU-MEXLROMO7"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Enner Valencia",
+    "identifier": "KXWCSOA-26JUN30MEXECU-ECUEVALEN13"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Enner Valencia",
+    "identifier": "KXWCSOA-26JUN30MEXECU-ECUEVALEN13"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Pedro Vite",
+    "identifier": "KXWCSOA-26JUN30MEXECU-ECUPVITE15"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Pedro Vite",
+    "identifier": "KXWCSOA-26JUN30MEXECU-ECUPVITE15"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "spread",
+    "outcome_label": "Ecuador",
+    "identifier": "KXWCSPREAD-26JUN30MEXECU-MEX2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "spread",
+    "outcome_label": "Mexico",
+    "identifier": "KXWCSPREAD-26JUN30MEXECU-MEX2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "spread",
+    "outcome_label": "Ecuador",
+    "identifier": "KXWCSPREAD-26JUN30MEXECU-MEX3"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "spread",
+    "outcome_label": "Mexico",
+    "identifier": "KXWCSPREAD-26JUN30MEXECU-MEX3"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_corners",
+    "outcome_label": "Ecuador",
+    "identifier": "KXWCTCORNERS-26JUN30MEXECU-ECU4"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_corners",
+    "outcome_label": "Ecuador",
+    "identifier": "KXWCTCORNERS-26JUN30MEXECU-ECU4"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_corners",
+    "outcome_label": "Ecuador",
+    "identifier": "KXWCTCORNERS-26JUN30MEXECU-ECU6"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_corners",
+    "outcome_label": "Ecuador",
+    "identifier": "KXWCTCORNERS-26JUN30MEXECU-ECU6"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_corners",
+    "outcome_label": "Ecuador",
+    "identifier": "KXWCTCORNERS-26JUN30MEXECU-ECU8"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_corners",
+    "outcome_label": "Ecuador",
+    "identifier": "KXWCTCORNERS-26JUN30MEXECU-ECU8"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_corners",
+    "outcome_label": "Mexico",
+    "identifier": "KXWCTCORNERS-26JUN30MEXECU-MEX5"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_corners",
+    "outcome_label": "Mexico",
+    "identifier": "KXWCTCORNERS-26JUN30MEXECU-MEX5"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_corners",
+    "outcome_label": "Mexico",
+    "identifier": "KXWCTCORNERS-26JUN30MEXECU-MEX7"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_corners",
+    "outcome_label": "Mexico",
+    "identifier": "KXWCTCORNERS-26JUN30MEXECU-MEX7"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_corners",
+    "outcome_label": "Mexico",
+    "identifier": "KXWCTCORNERS-26JUN30MEXECU-MEX9"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_corners",
+    "outcome_label": "Mexico",
+    "identifier": "KXWCTCORNERS-26JUN30MEXECU-MEX9"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_total",
+    "outcome_label": "Ecuador",
+    "identifier": "KXWCTEAMTOTAL-26JUN30MEXECU-ECU1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_total",
+    "outcome_label": "Ecuador",
+    "identifier": "KXWCTEAMTOTAL-26JUN30MEXECU-ECU1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_total",
+    "outcome_label": "Ecuador",
+    "identifier": "KXWCTEAMTOTAL-26JUN30MEXECU-ECU2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_total",
+    "outcome_label": "Ecuador",
+    "identifier": "KXWCTEAMTOTAL-26JUN30MEXECU-ECU2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_total",
+    "outcome_label": "Ecuador",
+    "identifier": "KXWCTEAMTOTAL-26JUN30MEXECU-ECU3"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_total",
+    "outcome_label": "Ecuador",
+    "identifier": "KXWCTEAMTOTAL-26JUN30MEXECU-ECU3"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_total",
+    "outcome_label": "Mexico",
+    "identifier": "KXWCTEAMTOTAL-26JUN30MEXECU-MEX1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_total",
+    "outcome_label": "Mexico",
+    "identifier": "KXWCTEAMTOTAL-26JUN30MEXECU-MEX1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_total",
+    "outcome_label": "Mexico",
+    "identifier": "KXWCTEAMTOTAL-26JUN30MEXECU-MEX2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_total",
+    "outcome_label": "Mexico",
+    "identifier": "KXWCTEAMTOTAL-26JUN30MEXECU-MEX2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_total",
+    "outcome_label": "Mexico",
+    "identifier": "KXWCTEAMTOTAL-26JUN30MEXECU-MEX3"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_total",
+    "outcome_label": "Mexico",
+    "identifier": "KXWCTEAMTOTAL-26JUN30MEXECU-MEX3"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_total",
+    "outcome_label": "Mexico",
+    "identifier": "KXWCTEAMTOTAL-26JUN30MEXECU-MEX4"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_total",
+    "outcome_label": "Mexico",
+    "identifier": "KXWCTEAMTOTAL-26JUN30MEXECU-MEX4"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "totals",
+    "outcome_label": "over",
+    "identifier": "KXWCTOTAL-26JUN30MEXECU-1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "totals",
+    "outcome_label": "under",
+    "identifier": "KXWCTOTAL-26JUN30MEXECU-1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "totals",
+    "outcome_label": "over",
+    "identifier": "KXWCTOTAL-26JUN30MEXECU-2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "totals",
+    "outcome_label": "under",
+    "identifier": "KXWCTOTAL-26JUN30MEXECU-2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "totals",
+    "outcome_label": "over",
+    "identifier": "KXWCTOTAL-26JUN30MEXECU-3"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "totals",
+    "outcome_label": "under",
+    "identifier": "KXWCTOTAL-26JUN30MEXECU-3"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "totals",
+    "outcome_label": "over",
+    "identifier": "KXWCTOTAL-26JUN30MEXECU-4"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "totals",
+    "outcome_label": "under",
+    "identifier": "KXWCTOTAL-26JUN30MEXECU-4"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "totals",
+    "outcome_label": "over",
+    "identifier": "KXWCTOTAL-26JUN30MEXECU-5"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "totals",
+    "outcome_label": "under",
+    "identifier": "KXWCTOTAL-26JUN30MEXECU-5"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "totals",
+    "outcome_label": "over",
+    "identifier": "KXWCTOTAL-26JUN30MEXECU-6"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "totals",
+    "outcome_label": "under",
+    "identifier": "KXWCTOTAL-26JUN30MEXECU-6"
+   }
+  ]
+ },
+ "26JUN30FRASWE": {
+  "kalshi_suffix": "26JUN30FRASWE",
+  "poly_base_slug": "fifwc-fra-swe-2026-06-30",
+  "home": "Sweden",
+  "away": "France",
+  "date": "2026-06-30",
+  "kickoff_utc": "2026-07-01T00:00:00Z",
+  "nodes": [
+   {
+    "twin_key": "moneyline##away",
+    "market_type": "moneyline",
+    "market_key": "moneyline",
+    "side": "away",
+    "outcome_label": "Reg Time: France",
+    "line": null,
+    "kind": "3way",
+    "confidence": "high",
+    "kalshi_ticker": "KXWCGAME-26JUN30FRASWE-FRA",
+    "kalshi_side": "YES",
+    "poly_token_id": "91355094557016369228768123360298492968992168419338047915199416797057852525950",
+    "poly_side": "France"
+   },
+   {
+    "twin_key": "moneyline##draw",
+    "market_type": "moneyline",
+    "market_key": "moneyline",
+    "side": "draw",
+    "outcome_label": "Reg Time: Tie",
+    "line": null,
+    "kind": "3way",
+    "confidence": "high",
+    "kalshi_ticker": "KXWCGAME-26JUN30FRASWE-TIE",
+    "kalshi_side": "YES",
+    "poly_token_id": "19550592036274741049659200616233021499811235203601320680386451280519004661997",
+    "poly_side": "Draw"
+   },
+   {
+    "twin_key": "moneyline##home",
+    "market_type": "moneyline",
+    "market_key": "moneyline",
+    "side": "home",
+    "outcome_label": "Reg Time: Sweden",
+    "line": null,
+    "kind": "3way",
+    "confidence": "high",
+    "kalshi_ticker": "KXWCGAME-26JUN30FRASWE-SWE",
+    "kalshi_side": "YES",
+    "poly_token_id": "25101538316218147237997334564668091438563238337349407159868389076062854560259",
+    "poly_side": "Sweden"
+   }
+  ],
+  "unmatched": [
+   {
+    "venue": "kalshi",
+    "market_type": "1h_btts",
+    "outcome_label": "no",
+    "identifier": "KXWC1HBTTS-26JUN30FRASWE-BTTS"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "1h_btts",
+    "outcome_label": "yes",
+    "identifier": "KXWC1HBTTS-26JUN30FRASWE-BTTS"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "1h_result",
+    "outcome_label": "France wins 1st Half",
+    "identifier": "KXWC1H-26JUN30FRASWE-FRA"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "1h_result",
+    "outcome_label": "Tie 1st Half",
+    "identifier": "KXWC1H-26JUN30FRASWE-TIE"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "1h_result",
+    "outcome_label": "Sweden wins 1st Half",
+    "identifier": "KXWC1H-26JUN30FRASWE-SWE"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "2h_btts",
+    "outcome_label": "no",
+    "identifier": "KXWC2HBTTS-26JUN30FRASWE-BTTS"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "2h_btts",
+    "outcome_label": "yes",
+    "identifier": "KXWC2HBTTS-26JUN30FRASWE-BTTS"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "2h_result",
+    "outcome_label": "France wins 2nd Half",
+    "identifier": "KXWC2H-26JUN30FRASWE-FRA"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "2h_result",
+    "outcome_label": "Tie 2nd Half",
+    "identifier": "KXWC2H-26JUN30FRASWE-TIE"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "2h_result",
+    "outcome_label": "Sweden wins 2nd Half",
+    "identifier": "KXWC2H-26JUN30FRASWE-SWE"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "advance",
+    "outcome_label": "France",
+    "identifier": "KXWCADVANCE-26JUN30FRASWE-SWE"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "advance",
+    "outcome_label": "Sweden",
+    "identifier": "KXWCADVANCE-26JUN30FRASWE-SWE"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "btts",
+    "outcome_label": "no",
+    "identifier": "KXWCBTTS-26JUN30FRASWE-BTTS"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "btts",
+    "outcome_label": "yes",
+    "identifier": "KXWCBTTS-26JUN30FRASWE-BTTS"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "corners",
+    "outcome_label": "over",
+    "identifier": "KXWCCORNERS-26JUN30FRASWE-11"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "corners",
+    "outcome_label": "under",
+    "identifier": "KXWCCORNERS-26JUN30FRASWE-11"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "corners",
+    "outcome_label": "over",
+    "identifier": "KXWCCORNERS-26JUN30FRASWE-12"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "corners",
+    "outcome_label": "under",
+    "identifier": "KXWCCORNERS-26JUN30FRASWE-12"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "corners",
+    "outcome_label": "over",
+    "identifier": "KXWCCORNERS-26JUN30FRASWE-8"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "corners",
+    "outcome_label": "under",
+    "identifier": "KXWCCORNERS-26JUN30FRASWE-8"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "corners",
+    "outcome_label": "over",
+    "identifier": "KXWCCORNERS-26JUN30FRASWE-9"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "corners",
+    "outcome_label": "under",
+    "identifier": "KXWCCORNERS-26JUN30FRASWE-9"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "corners",
+    "outcome_label": "over",
+    "identifier": "KXWCCORNERS-26JUN30FRASWE-10"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "corners",
+    "outcome_label": "under",
+    "identifier": "KXWCCORNERS-26JUN30FRASWE-10"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "0-0",
+    "identifier": "KXWCSCORE-26JUN30FRASWE-FRA0SWE0"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "0-1",
+    "identifier": "KXWCSCORE-26JUN30FRASWE-FRA1SWE0"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "0-2",
+    "identifier": "KXWCSCORE-26JUN30FRASWE-FRA2SWE0"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "0-3",
+    "identifier": "KXWCSCORE-26JUN30FRASWE-FRA3SWE0"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "0-4",
+    "identifier": "KXWCSCORE-26JUN30FRASWE-FRA4SWE0"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "0-5",
+    "identifier": "KXWCSCORE-26JUN30FRASWE-FRA5SWE0"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "0-6",
+    "identifier": "KXWCSCORE-26JUN30FRASWE-FRA6SWE0"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "0-7",
+    "identifier": "KXWCSCORE-26JUN30FRASWE-FRA7SWE0"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "1-0",
+    "identifier": "KXWCSCORE-26JUN30FRASWE-FRA0SWE1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "1-1",
+    "identifier": "KXWCSCORE-26JUN30FRASWE-FRA1SWE1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "1-2",
+    "identifier": "KXWCSCORE-26JUN30FRASWE-FRA2SWE1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "1-3",
+    "identifier": "KXWCSCORE-26JUN30FRASWE-FRA3SWE1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "1-4",
+    "identifier": "KXWCSCORE-26JUN30FRASWE-FRA4SWE1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "1-5",
+    "identifier": "KXWCSCORE-26JUN30FRASWE-FRA5SWE1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "1-6",
+    "identifier": "KXWCSCORE-26JUN30FRASWE-FRA6SWE1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "1-7",
+    "identifier": "KXWCSCORE-26JUN30FRASWE-FRA7SWE1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "2-0",
+    "identifier": "KXWCSCORE-26JUN30FRASWE-FRA0SWE2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "2-1",
+    "identifier": "KXWCSCORE-26JUN30FRASWE-FRA1SWE2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "2-2",
+    "identifier": "KXWCSCORE-26JUN30FRASWE-FRA2SWE2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "2-3",
+    "identifier": "KXWCSCORE-26JUN30FRASWE-FRA3SWE2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "2-4",
+    "identifier": "KXWCSCORE-26JUN30FRASWE-FRA4SWE2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "2-5",
+    "identifier": "KXWCSCORE-26JUN30FRASWE-FRA5SWE2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "2-6",
+    "identifier": "KXWCSCORE-26JUN30FRASWE-FRA6SWE2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "3-1",
+    "identifier": "KXWCSCORE-26JUN30FRASWE-FRA1SWE3"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "3-2",
+    "identifier": "KXWCSCORE-26JUN30FRASWE-FRA2SWE3"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "3-3",
+    "identifier": "KXWCSCORE-26JUN30FRASWE-FRA3SWE3"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "3-4",
+    "identifier": "KXWCSCORE-26JUN30FRASWE-FRA4SWE3"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "3-5",
+    "identifier": "KXWCSCORE-26JUN30FRASWE-FRA5SWE3"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "first_to_score",
+    "outcome_label": "France",
+    "identifier": "KXWCFTTS-26JUN30FRASWE-FRA"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "first_to_score",
+    "outcome_label": "Sweden",
+    "identifier": "KXWCFTTS-26JUN30FRASWE-SWE"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "first_to_score",
+    "outcome_label": "No Goal",
+    "identifier": "KXWCFTTS-26JUN30FRASWE-NONE"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Yasin Ayari",
+    "identifier": "KXWCGOAL-26JUN30FRASWE-SWEYAYARI26-1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Ousmane Dembele",
+    "identifier": "KXWCGOAL-26JUN30FRASWE-FRAODEMBE10-1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Ousmane Dembele",
+    "identifier": "KXWCGOAL-26JUN30FRASWE-FRAODEMBE10-2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Ousmane Dembele",
+    "identifier": "KXWCGOAL-26JUN30FRASWE-FRAODEMBE10-3"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Desire Doue",
+    "identifier": "KXWCGOAL-26JUN30FRASWE-FRADDOUE14-1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Desire Doue",
+    "identifier": "KXWCGOAL-26JUN30FRASWE-FRADDOUE14-2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Desire Doue",
+    "identifier": "KXWCGOAL-26JUN30FRASWE-FRADDOUE14-3"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Anthony Elanga",
+    "identifier": "KXWCGOAL-26JUN30FRASWE-SWEAELANG20-1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Anthony Elanga",
+    "identifier": "KXWCGOAL-26JUN30FRASWE-SWEAELANG20-2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Viktor Gyokeres",
+    "identifier": "KXWCGOAL-26JUN30FRASWE-SWEVGYOKE14-1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Viktor Gyokeres",
+    "identifier": "KXWCGOAL-26JUN30FRASWE-SWEVGYOKE14-2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Alexander Isak",
+    "identifier": "KXWCGOAL-26JUN30FRASWE-SWEAISAK9-1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Alexander Isak",
+    "identifier": "KXWCGOAL-26JUN30FRASWE-SWEAISAK9-2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Jules Kounde",
+    "identifier": "KXWCGOAL-26JUN30FRASWE-FRAJKOUND23-1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Victor Lindelof",
+    "identifier": "KXWCGOAL-26JUN30FRASWE-SWEVLINDE3-1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Kylian Mbappe",
+    "identifier": "KXWCGOAL-26JUN30FRASWE-FRAKMBAPP10-1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Kylian Mbappe",
+    "identifier": "KXWCGOAL-26JUN30FRASWE-FRAKMBAPP10-2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Kylian Mbappe",
+    "identifier": "KXWCGOAL-26JUN30FRASWE-FRAKMBAPP10-3"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Michael Olise",
+    "identifier": "KXWCGOAL-26JUN30FRASWE-FRAMOLISE17-1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Michael Olise",
+    "identifier": "KXWCGOAL-26JUN30FRASWE-FRAMOLISE17-2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Michael Olise",
+    "identifier": "KXWCGOAL-26JUN30FRASWE-FRAMOLISE17-3"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Aurelien Tchouameni",
+    "identifier": "KXWCGOAL-26JUN30FRASWE-FRAATCHOU14-1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Yasin Ayari",
+    "identifier": "KXWCSOA-26JUN30FRASWE-SWEYAYARI26"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Yasin Ayari",
+    "identifier": "KXWCSOA-26JUN30FRASWE-SWEYAYARI26"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Ousmane Dembele",
+    "identifier": "KXWCSOA-26JUN30FRASWE-FRAODEMBE10"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Ousmane Dembele",
+    "identifier": "KXWCSOA-26JUN30FRASWE-FRAODEMBE10"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Desire Doue",
+    "identifier": "KXWCSOA-26JUN30FRASWE-FRADDOUE14"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Desire Doue",
+    "identifier": "KXWCSOA-26JUN30FRASWE-FRADDOUE14"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Anthony Elanga",
+    "identifier": "KXWCSOA-26JUN30FRASWE-SWEAELANG20"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Anthony Elanga",
+    "identifier": "KXWCSOA-26JUN30FRASWE-SWEAELANG20"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Viktor Gyokeres",
+    "identifier": "KXWCSOA-26JUN30FRASWE-SWEVGYOKE14"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Viktor Gyokeres",
+    "identifier": "KXWCSOA-26JUN30FRASWE-SWEVGYOKE14"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Alexander Isak",
+    "identifier": "KXWCSOA-26JUN30FRASWE-SWEAISAK9"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Alexander Isak",
+    "identifier": "KXWCSOA-26JUN30FRASWE-SWEAISAK9"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Jules Kounde",
+    "identifier": "KXWCSOA-26JUN30FRASWE-FRAJKOUND23"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Jules Kounde",
+    "identifier": "KXWCSOA-26JUN30FRASWE-FRAJKOUND23"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Victor Lindelof",
+    "identifier": "KXWCSOA-26JUN30FRASWE-SWEVLINDE3"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Victor Lindelof",
+    "identifier": "KXWCSOA-26JUN30FRASWE-SWEVLINDE3"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Kylian Mbappe",
+    "identifier": "KXWCSOA-26JUN30FRASWE-FRAKMBAPP10"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Kylian Mbappe",
+    "identifier": "KXWCSOA-26JUN30FRASWE-FRAKMBAPP10"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Michael Olise",
+    "identifier": "KXWCSOA-26JUN30FRASWE-FRAMOLISE17"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Michael Olise",
+    "identifier": "KXWCSOA-26JUN30FRASWE-FRAMOLISE17"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Aurelien Tchouameni",
+    "identifier": "KXWCSOA-26JUN30FRASWE-FRAATCHOU14"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Aurelien Tchouameni",
+    "identifier": "KXWCSOA-26JUN30FRASWE-FRAATCHOU14"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "spread",
+    "outcome_label": "France",
+    "identifier": "KXWCSPREAD-26JUN30FRASWE-SWE2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "spread",
+    "outcome_label": "Sweden",
+    "identifier": "KXWCSPREAD-26JUN30FRASWE-SWE2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "spread",
+    "outcome_label": "France",
+    "identifier": "KXWCSPREAD-26JUN30FRASWE-SWE3"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "spread",
+    "outcome_label": "Sweden",
+    "identifier": "KXWCSPREAD-26JUN30FRASWE-SWE3"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_corners",
+    "outcome_label": "France",
+    "identifier": "KXWCTCORNERS-26JUN30FRASWE-FRA6"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_corners",
+    "outcome_label": "France",
+    "identifier": "KXWCTCORNERS-26JUN30FRASWE-FRA6"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_corners",
+    "outcome_label": "France",
+    "identifier": "KXWCTCORNERS-26JUN30FRASWE-FRA8"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_corners",
+    "outcome_label": "France",
+    "identifier": "KXWCTCORNERS-26JUN30FRASWE-FRA8"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_corners",
+    "outcome_label": "France",
+    "identifier": "KXWCTCORNERS-26JUN30FRASWE-FRA10"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_corners",
+    "outcome_label": "France",
+    "identifier": "KXWCTCORNERS-26JUN30FRASWE-FRA10"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_corners",
+    "outcome_label": "Sweden",
+    "identifier": "KXWCTCORNERS-26JUN30FRASWE-SWE3"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_corners",
+    "outcome_label": "Sweden",
+    "identifier": "KXWCTCORNERS-26JUN30FRASWE-SWE3"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_corners",
+    "outcome_label": "Sweden",
+    "identifier": "KXWCTCORNERS-26JUN30FRASWE-SWE5"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_corners",
+    "outcome_label": "Sweden",
+    "identifier": "KXWCTCORNERS-26JUN30FRASWE-SWE5"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_corners",
+    "outcome_label": "Sweden",
+    "identifier": "KXWCTCORNERS-26JUN30FRASWE-SWE7"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_corners",
+    "outcome_label": "Sweden",
+    "identifier": "KXWCTCORNERS-26JUN30FRASWE-SWE7"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_total",
+    "outcome_label": "France",
+    "identifier": "KXWCTEAMTOTAL-26JUN30FRASWE-FRA1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_total",
+    "outcome_label": "France",
+    "identifier": "KXWCTEAMTOTAL-26JUN30FRASWE-FRA1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_total",
+    "outcome_label": "France",
+    "identifier": "KXWCTEAMTOTAL-26JUN30FRASWE-FRA2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_total",
+    "outcome_label": "France",
+    "identifier": "KXWCTEAMTOTAL-26JUN30FRASWE-FRA2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_total",
+    "outcome_label": "France",
+    "identifier": "KXWCTEAMTOTAL-26JUN30FRASWE-FRA3"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_total",
+    "outcome_label": "France",
+    "identifier": "KXWCTEAMTOTAL-26JUN30FRASWE-FRA3"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_total",
+    "outcome_label": "France",
+    "identifier": "KXWCTEAMTOTAL-26JUN30FRASWE-FRA4"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_total",
+    "outcome_label": "France",
+    "identifier": "KXWCTEAMTOTAL-26JUN30FRASWE-FRA4"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_total",
+    "outcome_label": "France",
+    "identifier": "KXWCTEAMTOTAL-26JUN30FRASWE-FRA5"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_total",
+    "outcome_label": "France",
+    "identifier": "KXWCTEAMTOTAL-26JUN30FRASWE-FRA5"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_total",
+    "outcome_label": "France",
+    "identifier": "KXWCTEAMTOTAL-26JUN30FRASWE-FRA6"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_total",
+    "outcome_label": "France",
+    "identifier": "KXWCTEAMTOTAL-26JUN30FRASWE-FRA6"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_total",
+    "outcome_label": "Sweden",
+    "identifier": "KXWCTEAMTOTAL-26JUN30FRASWE-SWE1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_total",
+    "outcome_label": "Sweden",
+    "identifier": "KXWCTEAMTOTAL-26JUN30FRASWE-SWE1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_total",
+    "outcome_label": "Sweden",
+    "identifier": "KXWCTEAMTOTAL-26JUN30FRASWE-SWE2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_total",
+    "outcome_label": "Sweden",
+    "identifier": "KXWCTEAMTOTAL-26JUN30FRASWE-SWE2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_total",
+    "outcome_label": "Sweden",
+    "identifier": "KXWCTEAMTOTAL-26JUN30FRASWE-SWE3"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_total",
+    "outcome_label": "Sweden",
+    "identifier": "KXWCTEAMTOTAL-26JUN30FRASWE-SWE3"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "totals",
+    "outcome_label": "over",
+    "identifier": "KXWCTOTAL-26JUN30FRASWE-1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "totals",
+    "outcome_label": "under",
+    "identifier": "KXWCTOTAL-26JUN30FRASWE-1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "totals",
+    "outcome_label": "over",
+    "identifier": "KXWCTOTAL-26JUN30FRASWE-2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "totals",
+    "outcome_label": "under",
+    "identifier": "KXWCTOTAL-26JUN30FRASWE-2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "totals",
+    "outcome_label": "over",
+    "identifier": "KXWCTOTAL-26JUN30FRASWE-3"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "totals",
+    "outcome_label": "under",
+    "identifier": "KXWCTOTAL-26JUN30FRASWE-3"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "totals",
+    "outcome_label": "over",
+    "identifier": "KXWCTOTAL-26JUN30FRASWE-4"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "totals",
+    "outcome_label": "under",
+    "identifier": "KXWCTOTAL-26JUN30FRASWE-4"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "totals",
+    "outcome_label": "over",
+    "identifier": "KXWCTOTAL-26JUN30FRASWE-5"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "totals",
+    "outcome_label": "under",
+    "identifier": "KXWCTOTAL-26JUN30FRASWE-5"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "totals",
+    "outcome_label": "over",
+    "identifier": "KXWCTOTAL-26JUN30FRASWE-6"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "totals",
+    "outcome_label": "under",
+    "identifier": "KXWCTOTAL-26JUN30FRASWE-6"
+   }
+  ]
+ },
+ "26JUN30CIVNOR": {
+  "kalshi_suffix": "26JUN30CIVNOR",
+  "poly_base_slug": "fifwc-civ-nor-2026-06-30",
+  "home": "Norway",
+  "away": "C├┤te d'Ivoire",
+  "date": "2026-06-30",
+  "kickoff_utc": "2026-06-30T20:00:00Z",
+  "nodes": [
+   {
+    "twin_key": "moneyline##away",
+    "market_type": "moneyline",
+    "market_key": "moneyline",
+    "side": "away",
+    "outcome_label": "Reg Time: Ivory Coast",
+    "line": null,
+    "kind": "3way",
+    "confidence": "high",
+    "kalshi_ticker": "KXWCGAME-26JUN30CIVNOR-CIV",
+    "kalshi_side": "YES",
+    "poly_token_id": "98208782378359603501620767364018891911813458818623897437496458106414463475954",
+    "poly_side": "C├┤te d'Ivoire"
+   },
+   {
+    "twin_key": "moneyline##draw",
+    "market_type": "moneyline",
+    "market_key": "moneyline",
+    "side": "draw",
+    "outcome_label": "Reg Time: Tie",
+    "line": null,
+    "kind": "3way",
+    "confidence": "high",
+    "kalshi_ticker": "KXWCGAME-26JUN30CIVNOR-TIE",
+    "kalshi_side": "YES",
+    "poly_token_id": "37296312398051842143439670490519490530978107178378280910956718479076858296950",
+    "poly_side": "Draw"
+   },
+   {
+    "twin_key": "moneyline##home",
+    "market_type": "moneyline",
+    "market_key": "moneyline",
+    "side": "home",
+    "outcome_label": "Reg Time: Norway",
+    "line": null,
+    "kind": "3way",
+    "confidence": "high",
+    "kalshi_ticker": "KXWCGAME-26JUN30CIVNOR-NOR",
+    "kalshi_side": "YES",
+    "poly_token_id": "1989490747510462311926239193828267168219710855677630578518070934222601555496",
+    "poly_side": "Norway"
+   }
+  ],
+  "unmatched": [
+   {
+    "venue": "kalshi",
+    "market_type": "1h_btts",
+    "outcome_label": "no",
+    "identifier": "KXWC1HBTTS-26JUN30CIVNOR-BTTS"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "1h_btts",
+    "outcome_label": "yes",
+    "identifier": "KXWC1HBTTS-26JUN30CIVNOR-BTTS"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "1h_result",
+    "outcome_label": "Ivory Coast wins 1st Half",
+    "identifier": "KXWC1H-26JUN30CIVNOR-CIV"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "1h_result",
+    "outcome_label": "Tie 1st Half",
+    "identifier": "KXWC1H-26JUN30CIVNOR-TIE"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "1h_result",
+    "outcome_label": "Norway wins 1st Half",
+    "identifier": "KXWC1H-26JUN30CIVNOR-NOR"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "2h_btts",
+    "outcome_label": "no",
+    "identifier": "KXWC2HBTTS-26JUN30CIVNOR-BTTS"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "2h_btts",
+    "outcome_label": "yes",
+    "identifier": "KXWC2HBTTS-26JUN30CIVNOR-BTTS"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "2h_result",
+    "outcome_label": "Ivory Coast wins 2nd Half",
+    "identifier": "KXWC2H-26JUN30CIVNOR-CIV"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "2h_result",
+    "outcome_label": "Tie 2nd Half",
+    "identifier": "KXWC2H-26JUN30CIVNOR-TIE"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "2h_result",
+    "outcome_label": "Norway wins 2nd Half",
+    "identifier": "KXWC2H-26JUN30CIVNOR-NOR"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "advance",
+    "outcome_label": "C├┤te d'Ivoire",
+    "identifier": "KXWCADVANCE-26JUN30CIVNOR-NOR"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "advance",
+    "outcome_label": "Norway",
+    "identifier": "KXWCADVANCE-26JUN30CIVNOR-NOR"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "btts",
+    "outcome_label": "no",
+    "identifier": "KXWCBTTS-26JUN30CIVNOR-BTTS"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "btts",
+    "outcome_label": "yes",
+    "identifier": "KXWCBTTS-26JUN30CIVNOR-BTTS"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "corners",
+    "outcome_label": "over",
+    "identifier": "KXWCCORNERS-26JUN30CIVNOR-11"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "corners",
+    "outcome_label": "under",
+    "identifier": "KXWCCORNERS-26JUN30CIVNOR-11"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "corners",
+    "outcome_label": "over",
+    "identifier": "KXWCCORNERS-26JUN30CIVNOR-7"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "corners",
+    "outcome_label": "under",
+    "identifier": "KXWCCORNERS-26JUN30CIVNOR-7"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "corners",
+    "outcome_label": "over",
+    "identifier": "KXWCCORNERS-26JUN30CIVNOR-8"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "corners",
+    "outcome_label": "under",
+    "identifier": "KXWCCORNERS-26JUN30CIVNOR-8"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "corners",
+    "outcome_label": "over",
+    "identifier": "KXWCCORNERS-26JUN30CIVNOR-9"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "corners",
+    "outcome_label": "under",
+    "identifier": "KXWCCORNERS-26JUN30CIVNOR-9"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "corners",
+    "outcome_label": "over",
+    "identifier": "KXWCCORNERS-26JUN30CIVNOR-10"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "corners",
+    "outcome_label": "under",
+    "identifier": "KXWCCORNERS-26JUN30CIVNOR-10"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "0-0",
+    "identifier": "KXWCSCORE-26JUN30CIVNOR-CIV0NOR0"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "0-1",
+    "identifier": "KXWCSCORE-26JUN30CIVNOR-CIV1NOR0"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "0-2",
+    "identifier": "KXWCSCORE-26JUN30CIVNOR-CIV2NOR0"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "0-3",
+    "identifier": "KXWCSCORE-26JUN30CIVNOR-CIV3NOR0"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "0-4",
+    "identifier": "KXWCSCORE-26JUN30CIVNOR-CIV4NOR0"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "1-0",
+    "identifier": "KXWCSCORE-26JUN30CIVNOR-CIV0NOR1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "1-1",
+    "identifier": "KXWCSCORE-26JUN30CIVNOR-CIV1NOR1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "1-2",
+    "identifier": "KXWCSCORE-26JUN30CIVNOR-CIV2NOR1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "1-3",
+    "identifier": "KXWCSCORE-26JUN30CIVNOR-CIV3NOR1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "1-4",
+    "identifier": "KXWCSCORE-26JUN30CIVNOR-CIV4NOR1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "2-0",
+    "identifier": "KXWCSCORE-26JUN30CIVNOR-CIV0NOR2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "2-1",
+    "identifier": "KXWCSCORE-26JUN30CIVNOR-CIV1NOR2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "2-2",
+    "identifier": "KXWCSCORE-26JUN30CIVNOR-CIV2NOR2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "2-3",
+    "identifier": "KXWCSCORE-26JUN30CIVNOR-CIV3NOR2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "2-4",
+    "identifier": "KXWCSCORE-26JUN30CIVNOR-CIV4NOR2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "3-0",
+    "identifier": "KXWCSCORE-26JUN30CIVNOR-CIV0NOR3"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "3-1",
+    "identifier": "KXWCSCORE-26JUN30CIVNOR-CIV1NOR3"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "3-2",
+    "identifier": "KXWCSCORE-26JUN30CIVNOR-CIV2NOR3"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "3-3",
+    "identifier": "KXWCSCORE-26JUN30CIVNOR-CIV3NOR3"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "3-4",
+    "identifier": "KXWCSCORE-26JUN30CIVNOR-CIV4NOR3"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "4-0",
+    "identifier": "KXWCSCORE-26JUN30CIVNOR-CIV0NOR4"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "4-1",
+    "identifier": "KXWCSCORE-26JUN30CIVNOR-CIV1NOR4"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "4-2",
+    "identifier": "KXWCSCORE-26JUN30CIVNOR-CIV2NOR4"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "4-3",
+    "identifier": "KXWCSCORE-26JUN30CIVNOR-CIV3NOR4"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "5-0",
+    "identifier": "KXWCSCORE-26JUN30CIVNOR-CIV0NOR5"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "5-1",
+    "identifier": "KXWCSCORE-26JUN30CIVNOR-CIV1NOR5"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "5-2",
+    "identifier": "KXWCSCORE-26JUN30CIVNOR-CIV2NOR5"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "first_to_score",
+    "outcome_label": "Ivory Coast",
+    "identifier": "KXWCFTTS-26JUN30CIVNOR-CIV"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "first_to_score",
+    "outcome_label": "Norway",
+    "identifier": "KXWCFTTS-26JUN30CIVNOR-NOR"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "first_to_score",
+    "outcome_label": "No Goal",
+    "identifier": "KXWCFTTS-26JUN30CIVNOR-NONE"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Emmanuel Agbadou",
+    "identifier": "KXWCGOAL-26JUN30CIVNOR-CIVEAGBAD12-1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Kristoffer Ajer",
+    "identifier": "KXWCGOAL-26JUN30CIVNOR-NORKAJER20-1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Fredrik Aursnes",
+    "identifier": "KXWCGOAL-26JUN30CIVNOR-NORFAURSN8-1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Patrick Berg",
+    "identifier": "KXWCGOAL-26JUN30CIVNOR-NORPBERG7-1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Sander Berge",
+    "identifier": "KXWCGOAL-26JUN30CIVNOR-NORSBERGE16-1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Ange Bonny",
+    "identifier": "KXWCGOAL-26JUN30CIVNOR-CIVABONNY14-1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Ange Bonny",
+    "identifier": "KXWCGOAL-26JUN30CIVNOR-CIVABONNY14-2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Amad Diallo",
+    "identifier": "KXWCGOAL-26JUN30CIVNOR-CIVADIALL16-1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Amad Diallo",
+    "identifier": "KXWCGOAL-26JUN30CIVNOR-CIVADIALL16-2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Yan Diomande",
+    "identifier": "KXWCGOAL-26JUN30CIVNOR-CIVYDIOMA49-1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Yan Diomande",
+    "identifier": "KXWCGOAL-26JUN30CIVNOR-CIVYDIOMA49-2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Guela Doue",
+    "identifier": "KXWCGOAL-26JUN30CIVNOR-CIVGDOUE22-1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Erling Haaland",
+    "identifier": "KXWCGOAL-26JUN30CIVNOR-NOREHAALA9-1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Erling Haaland",
+    "identifier": "KXWCGOAL-26JUN30CIVNOR-NOREHAALA9-2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Erling Haaland",
+    "identifier": "KXWCGOAL-26JUN30CIVNOR-NOREHAALA9-3"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Torbjorn Heggem",
+    "identifier": "KXWCGOAL-26JUN30CIVNOR-NORTHEGGE14-1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Franck Kessie",
+    "identifier": "KXWCGOAL-26JUN30CIVNOR-CIVFKESSI79-1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Franck Kessie",
+    "identifier": "KXWCGOAL-26JUN30CIVNOR-CIVFKESSI79-2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Ghislain Konan",
+    "identifier": "KXWCGOAL-26JUN30CIVNOR-CIVGKONAN3-1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Odilon Kossounou",
+    "identifier": "KXWCGOAL-26JUN30CIVNOR-CIVOKOSSO3-1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Antonio Nusa",
+    "identifier": "KXWCGOAL-26JUN30CIVNOR-NORANUSA7-1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Antonio Nusa",
+    "identifier": "KXWCGOAL-26JUN30CIVNOR-NORANUSA7-2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Martin Odegaard",
+    "identifier": "KXWCGOAL-26JUN30CIVNOR-NORMODEGA8-1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Martin Odegaard",
+    "identifier": "KXWCGOAL-26JUN30CIVNOR-NORMODEGA8-2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Christ Inao Oulai",
+    "identifier": "KXWCGOAL-26JUN30CIVNOR-CIVCINAO42-1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Christ Inao Oulai",
+    "identifier": "KXWCGOAL-26JUN30CIVNOR-CIVCINAO42-2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Marcus Pedersen",
+    "identifier": "KXWCGOAL-26JUN30CIVNOR-NORMPEDER16-1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Nicolas Pepe",
+    "identifier": "KXWCGOAL-26JUN30CIVNOR-CIVNPEPE19-1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Nicolas Pepe",
+    "identifier": "KXWCGOAL-26JUN30CIVNOR-CIVNPEPE19-2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Ibrahim Sangare",
+    "identifier": "KXWCGOAL-26JUN30CIVNOR-CIVISANGA6-1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Alexander Sorloth",
+    "identifier": "KXWCGOAL-26JUN30CIVNOR-NORASORLO9-1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Alexander Sorloth",
+    "identifier": "KXWCGOAL-26JUN30CIVNOR-NORASORLO9-2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "David Moller Wolfe",
+    "identifier": "KXWCGOAL-26JUN30CIVNOR-NORDWOLFE6-1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Emmanuel Agbadou",
+    "identifier": "KXWCSOA-26JUN30CIVNOR-CIVEAGBAD12"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Emmanuel Agbadou",
+    "identifier": "KXWCSOA-26JUN30CIVNOR-CIVEAGBAD12"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Kristoffer Ajer",
+    "identifier": "KXWCSOA-26JUN30CIVNOR-NORKAJER20"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Kristoffer Ajer",
+    "identifier": "KXWCSOA-26JUN30CIVNOR-NORKAJER20"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Fredrik Aursnes",
+    "identifier": "KXWCSOA-26JUN30CIVNOR-NORFAURSN8"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Fredrik Aursnes",
+    "identifier": "KXWCSOA-26JUN30CIVNOR-NORFAURSN8"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Patrick Berg",
+    "identifier": "KXWCSOA-26JUN30CIVNOR-NORPBERG7"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Patrick Berg",
+    "identifier": "KXWCSOA-26JUN30CIVNOR-NORPBERG7"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Sander Berge",
+    "identifier": "KXWCSOA-26JUN30CIVNOR-NORSBERGE16"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Sander Berge",
+    "identifier": "KXWCSOA-26JUN30CIVNOR-NORSBERGE16"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Ange Bonny",
+    "identifier": "KXWCSOA-26JUN30CIVNOR-CIVABONNY14"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Ange Bonny",
+    "identifier": "KXWCSOA-26JUN30CIVNOR-CIVABONNY14"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Amad Diallo",
+    "identifier": "KXWCSOA-26JUN30CIVNOR-CIVADIALL16"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Amad Diallo",
+    "identifier": "KXWCSOA-26JUN30CIVNOR-CIVADIALL16"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Yan Diomande",
+    "identifier": "KXWCSOA-26JUN30CIVNOR-CIVYDIOMA49"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Yan Diomande",
+    "identifier": "KXWCSOA-26JUN30CIVNOR-CIVYDIOMA49"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Guela Doue",
+    "identifier": "KXWCSOA-26JUN30CIVNOR-CIVGDOUE22"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Guela Doue",
+    "identifier": "KXWCSOA-26JUN30CIVNOR-CIVGDOUE22"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Erling Haaland",
+    "identifier": "KXWCSOA-26JUN30CIVNOR-NOREHAALA9"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Erling Haaland",
+    "identifier": "KXWCSOA-26JUN30CIVNOR-NOREHAALA9"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Torbjorn Heggem",
+    "identifier": "KXWCSOA-26JUN30CIVNOR-NORTHEGGE14"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Torbjorn Heggem",
+    "identifier": "KXWCSOA-26JUN30CIVNOR-NORTHEGGE14"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Franck Kessie",
+    "identifier": "KXWCSOA-26JUN30CIVNOR-CIVFKESSI79"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Franck Kessie",
+    "identifier": "KXWCSOA-26JUN30CIVNOR-CIVFKESSI79"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Ghislain Konan",
+    "identifier": "KXWCSOA-26JUN30CIVNOR-CIVGKONAN3"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Ghislain Konan",
+    "identifier": "KXWCSOA-26JUN30CIVNOR-CIVGKONAN3"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Odilon Kossounou",
+    "identifier": "KXWCSOA-26JUN30CIVNOR-CIVOKOSSO3"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Odilon Kossounou",
+    "identifier": "KXWCSOA-26JUN30CIVNOR-CIVOKOSSO3"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Antonio Nusa",
+    "identifier": "KXWCSOA-26JUN30CIVNOR-NORANUSA7"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Antonio Nusa",
+    "identifier": "KXWCSOA-26JUN30CIVNOR-NORANUSA7"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Martin Odegaard",
+    "identifier": "KXWCSOA-26JUN30CIVNOR-NORMODEGA8"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Martin Odegaard",
+    "identifier": "KXWCSOA-26JUN30CIVNOR-NORMODEGA8"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Christ Inao Oulai",
+    "identifier": "KXWCSOA-26JUN30CIVNOR-CIVCINAO42"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Christ Inao Oulai",
+    "identifier": "KXWCSOA-26JUN30CIVNOR-CIVCINAO42"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Marcus Pedersen",
+    "identifier": "KXWCSOA-26JUN30CIVNOR-NORMPEDER16"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Marcus Pedersen",
+    "identifier": "KXWCSOA-26JUN30CIVNOR-NORMPEDER16"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Nicolas Pepe",
+    "identifier": "KXWCSOA-26JUN30CIVNOR-CIVNPEPE19"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Nicolas Pepe",
+    "identifier": "KXWCSOA-26JUN30CIVNOR-CIVNPEPE19"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Ibrahim Sangare",
+    "identifier": "KXWCSOA-26JUN30CIVNOR-CIVISANGA6"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Ibrahim Sangare",
+    "identifier": "KXWCSOA-26JUN30CIVNOR-CIVISANGA6"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Alexander Sorloth",
+    "identifier": "KXWCSOA-26JUN30CIVNOR-NORASORLO9"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Alexander Sorloth",
+    "identifier": "KXWCSOA-26JUN30CIVNOR-NORASORLO9"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "David Moller Wolfe",
+    "identifier": "KXWCSOA-26JUN30CIVNOR-NORDWOLFE6"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "David Moller Wolfe",
+    "identifier": "KXWCSOA-26JUN30CIVNOR-NORDWOLFE6"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "spread",
+    "outcome_label": "C├┤te d'Ivoire",
+    "identifier": "KXWCSPREAD-26JUN30CIVNOR-NOR2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "spread",
+    "outcome_label": "Norway",
+    "identifier": "KXWCSPREAD-26JUN30CIVNOR-NOR2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "spread",
+    "outcome_label": "C├┤te d'Ivoire",
+    "identifier": "KXWCSPREAD-26JUN30CIVNOR-NOR3"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "spread",
+    "outcome_label": "Norway",
+    "identifier": "KXWCSPREAD-26JUN30CIVNOR-NOR3"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_corners",
+    "outcome_label": "C├┤te d'Ivoire",
+    "identifier": "KXWCTCORNERS-26JUN30CIVNOR-CIV4"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_corners",
+    "outcome_label": "C├┤te d'Ivoire",
+    "identifier": "KXWCTCORNERS-26JUN30CIVNOR-CIV4"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_corners",
+    "outcome_label": "C├┤te d'Ivoire",
+    "identifier": "KXWCTCORNERS-26JUN30CIVNOR-CIV6"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_corners",
+    "outcome_label": "C├┤te d'Ivoire",
+    "identifier": "KXWCTCORNERS-26JUN30CIVNOR-CIV6"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_corners",
+    "outcome_label": "C├┤te d'Ivoire",
+    "identifier": "KXWCTCORNERS-26JUN30CIVNOR-CIV8"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_corners",
+    "outcome_label": "C├┤te d'Ivoire",
+    "identifier": "KXWCTCORNERS-26JUN30CIVNOR-CIV8"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_corners",
+    "outcome_label": "Norway",
+    "identifier": "KXWCTCORNERS-26JUN30CIVNOR-NOR5"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_corners",
+    "outcome_label": "Norway",
+    "identifier": "KXWCTCORNERS-26JUN30CIVNOR-NOR5"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_corners",
+    "outcome_label": "Norway",
+    "identifier": "KXWCTCORNERS-26JUN30CIVNOR-NOR7"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_corners",
+    "outcome_label": "Norway",
+    "identifier": "KXWCTCORNERS-26JUN30CIVNOR-NOR7"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_corners",
+    "outcome_label": "Norway",
+    "identifier": "KXWCTCORNERS-26JUN30CIVNOR-NOR9"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_corners",
+    "outcome_label": "Norway",
+    "identifier": "KXWCTCORNERS-26JUN30CIVNOR-NOR9"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_total",
+    "outcome_label": "C├┤te d'Ivoire",
+    "identifier": "KXWCTEAMTOTAL-26JUN30CIVNOR-CIV1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_total",
+    "outcome_label": "C├┤te d'Ivoire",
+    "identifier": "KXWCTEAMTOTAL-26JUN30CIVNOR-CIV1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_total",
+    "outcome_label": "C├┤te d'Ivoire",
+    "identifier": "KXWCTEAMTOTAL-26JUN30CIVNOR-CIV2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_total",
+    "outcome_label": "C├┤te d'Ivoire",
+    "identifier": "KXWCTEAMTOTAL-26JUN30CIVNOR-CIV2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_total",
+    "outcome_label": "C├┤te d'Ivoire",
+    "identifier": "KXWCTEAMTOTAL-26JUN30CIVNOR-CIV3"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_total",
+    "outcome_label": "C├┤te d'Ivoire",
+    "identifier": "KXWCTEAMTOTAL-26JUN30CIVNOR-CIV3"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_total",
+    "outcome_label": "Norway",
+    "identifier": "KXWCTEAMTOTAL-26JUN30CIVNOR-NOR1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_total",
+    "outcome_label": "Norway",
+    "identifier": "KXWCTEAMTOTAL-26JUN30CIVNOR-NOR1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_total",
+    "outcome_label": "Norway",
+    "identifier": "KXWCTEAMTOTAL-26JUN30CIVNOR-NOR2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_total",
+    "outcome_label": "Norway",
+    "identifier": "KXWCTEAMTOTAL-26JUN30CIVNOR-NOR2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_total",
+    "outcome_label": "Norway",
+    "identifier": "KXWCTEAMTOTAL-26JUN30CIVNOR-NOR3"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_total",
+    "outcome_label": "Norway",
+    "identifier": "KXWCTEAMTOTAL-26JUN30CIVNOR-NOR3"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_total",
+    "outcome_label": "Norway",
+    "identifier": "KXWCTEAMTOTAL-26JUN30CIVNOR-NOR4"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_total",
+    "outcome_label": "Norway",
+    "identifier": "KXWCTEAMTOTAL-26JUN30CIVNOR-NOR4"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "totals",
+    "outcome_label": "over",
+    "identifier": "KXWCTOTAL-26JUN30CIVNOR-1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "totals",
+    "outcome_label": "under",
+    "identifier": "KXWCTOTAL-26JUN30CIVNOR-1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "totals",
+    "outcome_label": "over",
+    "identifier": "KXWCTOTAL-26JUN30CIVNOR-2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "totals",
+    "outcome_label": "under",
+    "identifier": "KXWCTOTAL-26JUN30CIVNOR-2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "totals",
+    "outcome_label": "over",
+    "identifier": "KXWCTOTAL-26JUN30CIVNOR-3"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "totals",
+    "outcome_label": "under",
+    "identifier": "KXWCTOTAL-26JUN30CIVNOR-3"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "totals",
+    "outcome_label": "over",
+    "identifier": "KXWCTOTAL-26JUN30CIVNOR-4"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "totals",
+    "outcome_label": "under",
+    "identifier": "KXWCTOTAL-26JUN30CIVNOR-4"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "totals",
+    "outcome_label": "over",
+    "identifier": "KXWCTOTAL-26JUN30CIVNOR-5"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "totals",
+    "outcome_label": "under",
+    "identifier": "KXWCTOTAL-26JUN30CIVNOR-5"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "totals",
+    "outcome_label": "over",
+    "identifier": "KXWCTOTAL-26JUN30CIVNOR-6"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "totals",
+    "outcome_label": "under",
+    "identifier": "KXWCTOTAL-26JUN30CIVNOR-6"
+   }
+  ]
+ },
+ "26JUL01USABIH": {
+  "kalshi_suffix": "26JUL01USABIH",
+  "poly_base_slug": "fifwc-usa-bih-2026-07-01",
+  "home": "Bosnia and Herzegovina",
+  "away": "USA",
+  "date": "2026-07-01",
+  "kickoff_utc": "2026-07-02T03:00:00Z",
+  "nodes": [
+   {
+    "twin_key": "moneyline##away",
+    "market_type": "moneyline",
+    "market_key": "moneyline",
+    "side": "away",
+    "outcome_label": "Reg Time: USA",
+    "line": null,
+    "kind": "3way",
+    "confidence": "high",
+    "kalshi_ticker": "KXWCGAME-26JUL01USABIH-USA",
+    "kalshi_side": "YES",
+    "poly_token_id": "4633569295739345295929299496370398790000429459208303788658430774702495448690",
+    "poly_side": "United States"
+   },
+   {
+    "twin_key": "moneyline##draw",
+    "market_type": "moneyline",
+    "market_key": "moneyline",
+    "side": "draw",
+    "outcome_label": "Reg Time: Tie",
+    "line": null,
+    "kind": "3way",
+    "confidence": "high",
+    "kalshi_ticker": "KXWCGAME-26JUL01USABIH-TIE",
+    "kalshi_side": "YES",
+    "poly_token_id": "7461808142402940723226612613163043078472639078077557222185478409281679793928",
+    "poly_side": "Draw"
+   },
+   {
+    "twin_key": "moneyline##home",
+    "market_type": "moneyline",
+    "market_key": "moneyline",
+    "side": "home",
+    "outcome_label": "Reg Time: Bosnia and Herzegovina",
+    "line": null,
+    "kind": "3way",
+    "confidence": "high",
+    "kalshi_ticker": "KXWCGAME-26JUL01USABIH-BIH",
+    "kalshi_side": "YES",
+    "poly_token_id": "34408866647976593954627079997680480471193582323801865990245640173708429835258",
+    "poly_side": "Bosnia and Herzegovina"
+   }
+  ],
+  "unmatched": [
+   {
+    "venue": "kalshi",
+    "market_type": "1h_btts",
+    "outcome_label": "no",
+    "identifier": "KXWC1HBTTS-26JUL01USABIH-BTTS"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "1h_btts",
+    "outcome_label": "yes",
+    "identifier": "KXWC1HBTTS-26JUL01USABIH-BTTS"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "1h_result",
+    "outcome_label": "USA wins 1st Half",
+    "identifier": "KXWC1H-26JUL01USABIH-USA"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "1h_result",
+    "outcome_label": "Tie 1st Half",
+    "identifier": "KXWC1H-26JUL01USABIH-TIE"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "1h_result",
+    "outcome_label": "Bosnia and Herzegovina wins 1st Half",
+    "identifier": "KXWC1H-26JUL01USABIH-BIH"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "2h_btts",
+    "outcome_label": "no",
+    "identifier": "KXWC2HBTTS-26JUL01USABIH-BTTS"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "2h_btts",
+    "outcome_label": "yes",
+    "identifier": "KXWC2HBTTS-26JUL01USABIH-BTTS"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "2h_result",
+    "outcome_label": "USA wins 2nd Half",
+    "identifier": "KXWC2H-26JUL01USABIH-USA"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "2h_result",
+    "outcome_label": "Tie 2nd Half",
+    "identifier": "KXWC2H-26JUL01USABIH-TIE"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "2h_result",
+    "outcome_label": "Bosnia and Herzegovina wins 2nd Half",
+    "identifier": "KXWC2H-26JUL01USABIH-BIH"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "advance",
+    "outcome_label": "Bosnia and Herzegovina",
+    "identifier": "KXWCADVANCE-26JUL01USABIH-USA"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "advance",
+    "outcome_label": "USA",
+    "identifier": "KXWCADVANCE-26JUL01USABIH-USA"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "btts",
+    "outcome_label": "no",
+    "identifier": "KXWCBTTS-26JUL01USABIH-BTTS"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "btts",
+    "outcome_label": "yes",
+    "identifier": "KXWCBTTS-26JUL01USABIH-BTTS"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "corners",
+    "outcome_label": "over",
+    "identifier": "KXWCCORNERS-26JUL01USABIH-11"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "corners",
+    "outcome_label": "under",
+    "identifier": "KXWCCORNERS-26JUL01USABIH-11"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "corners",
+    "outcome_label": "over",
+    "identifier": "KXWCCORNERS-26JUL01USABIH-12"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "corners",
+    "outcome_label": "under",
+    "identifier": "KXWCCORNERS-26JUL01USABIH-12"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "corners",
+    "outcome_label": "over",
+    "identifier": "KXWCCORNERS-26JUL01USABIH-8"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "corners",
+    "outcome_label": "under",
+    "identifier": "KXWCCORNERS-26JUL01USABIH-8"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "corners",
+    "outcome_label": "over",
+    "identifier": "KXWCCORNERS-26JUL01USABIH-9"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "corners",
+    "outcome_label": "under",
+    "identifier": "KXWCCORNERS-26JUL01USABIH-9"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "corners",
+    "outcome_label": "over",
+    "identifier": "KXWCCORNERS-26JUL01USABIH-10"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "corners",
+    "outcome_label": "under",
+    "identifier": "KXWCCORNERS-26JUL01USABIH-10"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "0-0",
+    "identifier": "KXWCSCORE-26JUL01USABIH-USA0BIH0"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "0-1",
+    "identifier": "KXWCSCORE-26JUL01USABIH-USA1BIH0"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "0-2",
+    "identifier": "KXWCSCORE-26JUL01USABIH-USA2BIH0"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "0-3",
+    "identifier": "KXWCSCORE-26JUL01USABIH-USA3BIH0"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "0-4",
+    "identifier": "KXWCSCORE-26JUL01USABIH-USA4BIH0"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "0-5",
+    "identifier": "KXWCSCORE-26JUL01USABIH-USA5BIH0"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "0-6",
+    "identifier": "KXWCSCORE-26JUL01USABIH-USA6BIH0"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "1-0",
+    "identifier": "KXWCSCORE-26JUL01USABIH-USA0BIH1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "1-1",
+    "identifier": "KXWCSCORE-26JUL01USABIH-USA1BIH1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "1-2",
+    "identifier": "KXWCSCORE-26JUL01USABIH-USA2BIH1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "1-3",
+    "identifier": "KXWCSCORE-26JUL01USABIH-USA3BIH1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "1-4",
+    "identifier": "KXWCSCORE-26JUL01USABIH-USA4BIH1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "1-5",
+    "identifier": "KXWCSCORE-26JUL01USABIH-USA5BIH1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "1-6",
+    "identifier": "KXWCSCORE-26JUL01USABIH-USA6BIH1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "2-0",
+    "identifier": "KXWCSCORE-26JUL01USABIH-USA0BIH2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "2-1",
+    "identifier": "KXWCSCORE-26JUL01USABIH-USA1BIH2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "2-2",
+    "identifier": "KXWCSCORE-26JUL01USABIH-USA2BIH2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "2-3",
+    "identifier": "KXWCSCORE-26JUL01USABIH-USA3BIH2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "2-4",
+    "identifier": "KXWCSCORE-26JUL01USABIH-USA4BIH2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "2-5",
+    "identifier": "KXWCSCORE-26JUL01USABIH-USA5BIH2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "3-0",
+    "identifier": "KXWCSCORE-26JUL01USABIH-USA0BIH3"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "3-1",
+    "identifier": "KXWCSCORE-26JUL01USABIH-USA1BIH3"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "3-2",
+    "identifier": "KXWCSCORE-26JUL01USABIH-USA2BIH3"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "3-3",
+    "identifier": "KXWCSCORE-26JUL01USABIH-USA3BIH3"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "exact_score",
+    "outcome_label": "3-4",
+    "identifier": "KXWCSCORE-26JUL01USABIH-USA4BIH3"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "first_to_score",
+    "outcome_label": "USA",
+    "identifier": "KXWCFTTS-26JUL01USABIH-USA"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "first_to_score",
+    "outcome_label": "Bosnia and Herzegovina",
+    "identifier": "KXWCFTTS-26JUL01USABIH-BIH"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "first_to_score",
+    "outcome_label": "No Goal",
+    "identifier": "KXWCFTTS-26JUL01USABIH-NONE"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Kerim Alajbegovic",
+    "identifier": "KXWCGOAL-26JUL01USABIH-BIHKALAJB27-1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Kerim Alajbegovic",
+    "identifier": "KXWCGOAL-26JUL01USABIH-BIHKALAJB27-2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Folarin Balogun",
+    "identifier": "KXWCGOAL-26JUL01USABIH-USAFBALOG9-1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Folarin Balogun",
+    "identifier": "KXWCGOAL-26JUL01USABIH-USAFBALOG9-2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Folarin Balogun",
+    "identifier": "KXWCGOAL-26JUL01USABIH-USAFBALOG9-3"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Ivan Basic",
+    "identifier": "KXWCGOAL-26JUL01USABIH-BIHIBASIC13-1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Ermedin Demirovic",
+    "identifier": "KXWCGOAL-26JUL01USABIH-BIHEDEMIR9-1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Ermedin Demirovic",
+    "identifier": "KXWCGOAL-26JUL01USABIH-BIHEDEMIR9-2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Sergino Dest",
+    "identifier": "KXWCGOAL-26JUL01USABIH-USASDEST8-1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Sergino Dest",
+    "identifier": "KXWCGOAL-26JUL01USABIH-USASDEST8-2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Alex Freeman",
+    "identifier": "KXWCGOAL-26JUL01USABIH-USAAFREEM3-1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Weston McKennie",
+    "identifier": "KXWCGOAL-26JUL01USABIH-USAWMCKEN22-1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Weston McKennie",
+    "identifier": "KXWCGOAL-26JUL01USABIH-USAWMCKEN22-2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Amar Memic",
+    "identifier": "KXWCGOAL-26JUL01USABIH-BIHAMEMIC99-1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Christian Pulisic",
+    "identifier": "KXWCGOAL-26JUL01USABIH-USACPULIS11-1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Christian Pulisic",
+    "identifier": "KXWCGOAL-26JUL01USABIH-USACPULIS11-2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Christian Pulisic",
+    "identifier": "KXWCGOAL-26JUL01USABIH-USACPULIS11-3"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Antonee Robinson",
+    "identifier": "KXWCGOAL-26JUL01USABIH-USAAROBIN33-1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "player_goals",
+    "outcome_label": "Antonee Robinson",
+    "identifier": "KXWCGOAL-26JUL01USABIH-USAAROBIN33-2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Kerim Alajbegovic",
+    "identifier": "KXWCSOA-26JUL01USABIH-BIHKALAJB27"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Kerim Alajbegovic",
+    "identifier": "KXWCSOA-26JUL01USABIH-BIHKALAJB27"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Folarin Balogun",
+    "identifier": "KXWCSOA-26JUL01USABIH-USAFBALOG9"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Folarin Balogun",
+    "identifier": "KXWCSOA-26JUL01USABIH-USAFBALOG9"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Ivan Basic",
+    "identifier": "KXWCSOA-26JUL01USABIH-BIHIBASIC13"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Ivan Basic",
+    "identifier": "KXWCSOA-26JUL01USABIH-BIHIBASIC13"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Ermedin Demirovic",
+    "identifier": "KXWCSOA-26JUL01USABIH-BIHEDEMIR9"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Ermedin Demirovic",
+    "identifier": "KXWCSOA-26JUL01USABIH-BIHEDEMIR9"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Sergino Dest",
+    "identifier": "KXWCSOA-26JUL01USABIH-USASDEST8"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Sergino Dest",
+    "identifier": "KXWCSOA-26JUL01USABIH-USASDEST8"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Alex Freeman",
+    "identifier": "KXWCSOA-26JUL01USABIH-USAAFREEM3"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Alex Freeman",
+    "identifier": "KXWCSOA-26JUL01USABIH-USAAFREEM3"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Weston McKennie",
+    "identifier": "KXWCSOA-26JUL01USABIH-USAWMCKEN22"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Weston McKennie",
+    "identifier": "KXWCSOA-26JUL01USABIH-USAWMCKEN22"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Amar Memic",
+    "identifier": "KXWCSOA-26JUL01USABIH-BIHAMEMIC99"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Amar Memic",
+    "identifier": "KXWCSOA-26JUL01USABIH-BIHAMEMIC99"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Christian Pulisic",
+    "identifier": "KXWCSOA-26JUL01USABIH-USACPULIS11"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Christian Pulisic",
+    "identifier": "KXWCSOA-26JUL01USABIH-USACPULIS11"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Antonee Robinson",
+    "identifier": "KXWCSOA-26JUL01USABIH-USAAROBIN33"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "soa",
+    "outcome_label": "Antonee Robinson",
+    "identifier": "KXWCSOA-26JUL01USABIH-USAAROBIN33"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "spread",
+    "outcome_label": "Bosnia and Herzegovina",
+    "identifier": "KXWCSPREAD-26JUL01USABIH-USA2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "spread",
+    "outcome_label": "USA",
+    "identifier": "KXWCSPREAD-26JUL01USABIH-USA2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "spread",
+    "outcome_label": "Bosnia and Herzegovina",
+    "identifier": "KXWCSPREAD-26JUL01USABIH-USA3"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "spread",
+    "outcome_label": "USA",
+    "identifier": "KXWCSPREAD-26JUL01USABIH-USA3"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_total",
+    "outcome_label": "Bosnia and Herzegovina",
+    "identifier": "KXWCTEAMTOTAL-26JUL01USABIH-BIH1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_total",
+    "outcome_label": "Bosnia and Herzegovina",
+    "identifier": "KXWCTEAMTOTAL-26JUL01USABIH-BIH1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_total",
+    "outcome_label": "Bosnia and Herzegovina",
+    "identifier": "KXWCTEAMTOTAL-26JUL01USABIH-BIH2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_total",
+    "outcome_label": "Bosnia and Herzegovina",
+    "identifier": "KXWCTEAMTOTAL-26JUL01USABIH-BIH2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_total",
+    "outcome_label": "Bosnia and Herzegovina",
+    "identifier": "KXWCTEAMTOTAL-26JUL01USABIH-BIH3"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_total",
+    "outcome_label": "Bosnia and Herzegovina",
+    "identifier": "KXWCTEAMTOTAL-26JUL01USABIH-BIH3"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_total",
+    "outcome_label": "USA",
+    "identifier": "KXWCTEAMTOTAL-26JUL01USABIH-USA1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_total",
+    "outcome_label": "USA",
+    "identifier": "KXWCTEAMTOTAL-26JUL01USABIH-USA1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_total",
+    "outcome_label": "USA",
+    "identifier": "KXWCTEAMTOTAL-26JUL01USABIH-USA2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_total",
+    "outcome_label": "USA",
+    "identifier": "KXWCTEAMTOTAL-26JUL01USABIH-USA2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_total",
+    "outcome_label": "USA",
+    "identifier": "KXWCTEAMTOTAL-26JUL01USABIH-USA3"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_total",
+    "outcome_label": "USA",
+    "identifier": "KXWCTEAMTOTAL-26JUL01USABIH-USA3"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_total",
+    "outcome_label": "USA",
+    "identifier": "KXWCTEAMTOTAL-26JUL01USABIH-USA4"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "team_total",
+    "outcome_label": "USA",
+    "identifier": "KXWCTEAMTOTAL-26JUL01USABIH-USA4"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "totals",
+    "outcome_label": "over",
+    "identifier": "KXWCTOTAL-26JUL01USABIH-1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "totals",
+    "outcome_label": "under",
+    "identifier": "KXWCTOTAL-26JUL01USABIH-1"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "totals",
+    "outcome_label": "over",
+    "identifier": "KXWCTOTAL-26JUL01USABIH-2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "totals",
+    "outcome_label": "under",
+    "identifier": "KXWCTOTAL-26JUL01USABIH-2"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "totals",
+    "outcome_label": "over",
+    "identifier": "KXWCTOTAL-26JUL01USABIH-3"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "totals",
+    "outcome_label": "under",
+    "identifier": "KXWCTOTAL-26JUL01USABIH-3"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "totals",
+    "outcome_label": "over",
+    "identifier": "KXWCTOTAL-26JUL01USABIH-4"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "totals",
+    "outcome_label": "under",
+    "identifier": "KXWCTOTAL-26JUL01USABIH-4"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "totals",
+    "outcome_label": "over",
+    "identifier": "KXWCTOTAL-26JUL01USABIH-5"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "totals",
+    "outcome_label": "under",
+    "identifier": "KXWCTOTAL-26JUL01USABIH-5"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "totals",
+    "outcome_label": "over",
+    "identifier": "KXWCTOTAL-26JUL01USABIH-6"
+   },
+   {
+    "venue": "kalshi",
+    "market_type": "totals",
+    "outcome_label": "under",
+    "identifier": "KXWCTOTAL-26JUL01USABIH-6"
+   }
+  ]
+ }
+}

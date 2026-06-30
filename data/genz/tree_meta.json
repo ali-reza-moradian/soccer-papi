@@ -1,0 +1,74 @@
+{
+  "built_utc": "2026-06-30T20:59:45Z",
+  "games": [
+    "26JUL01BELSEN",
+    "26JUL01ENGCOD",
+    "26JUL01USABIH",
+    "26JUL02ESPAUT",
+    "26JUL02PORCRO",
+    "26JUL02SUIDZA",
+    "26JUN30FRASWE",
+    "26JUN30MEXECU"
+  ],
+  "next_kickoffs": [
+    "2026-06-30T21:00:00Z",
+    "2026-07-01T01:00:00Z",
+    "2026-07-01T12:00:00Z",
+    "2026-07-01T20:00:00Z",
+    "2026-07-02T00:00:00Z",
+    "2026-07-02T12:00:00Z",
+    "2026-07-02T12:00:00Z",
+    "2026-07-02T19:00:00Z"
+  ],
+  "coverage": {
+    "26JUL02SUIDZA": {
+      "kalshi_ok": 20,
+      "kalshi_failed": [],
+      "poly_ok": 0,
+      "poly_failed": []
+    },
+    "26JUL02ESPAUT": {
+      "kalshi_ok": 20,
+      "kalshi_failed": [],
+      "poly_ok": 8,
+      "poly_failed": []
+    },
+    "26JUL02PORCRO": {
+      "kalshi_ok": 20,
+      "kalshi_failed": [],
+      "poly_ok": 0,
+      "poly_failed": []
+    },
+    "26JUL01BELSEN": {
+      "kalshi_ok": 20,
+      "kalshi_failed": [],
+      "poly_ok": 8,
+      "poly_failed": []
+    },
+    "26JUL01ENGCOD": {
+      "kalshi_ok": 20,
+      "kalshi_failed": [],
+      "poly_ok": 0,
+      "poly_failed": []
+    },
+    "26JUN30MEXECU": {
+      "kalshi_ok": 20,
+      "kalshi_failed": [],
+      "poly_ok": 8,
+      "poly_failed": []
+    },
+    "26JUN30FRASWE": {
+      "kalshi_ok": 20,
+      "kalshi_failed": [],
+      "poly_ok": 8,
+      "poly_failed": []
+    },
+    "26JUL01USABIH": {
+      "kalshi_ok": 20,
+      "kalshi_failed": [],
+      "poly_ok": 8,
+      "poly_failed": []
+    }
+  },
+  "kalshi_series_failed_any_game": []
+}

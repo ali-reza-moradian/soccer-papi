@@ -205,6 +205,151 @@ def test_merge_matches_cross_midnight_utc_fixture():
 
 
 # --------------------------------------------------------------------------- #
+# NEW *_dollars SCHEMA: one-sided WC legs (yes side null, priced only on the     #
+# deep NO side) + orderbook_fp ladders. Real CIV-NOR shape from the live bug.    #
+# --------------------------------------------------------------------------- #
+# KXWCGAME-26JUN30CIVNOR: Norway/Tie/Ivory Coast, each quoted ONLY on the NO side.
+# yes_ask = 1 - no_bid_dollars -> Norway 0.47, Tie 0.29, Ivory Coast 0.27.
+CN_EVENT = "KXWCGAME-26JUN30CIVNOR"
+BY_FIXTURE_CN = {
+    "idCN": {"p1": "Norway", "p2": "Ivory Coast", "start_time": "2026-06-30T18:00:00.000Z",
+             "status_id": 0, "tournament": "World Cup"},
+}
+NOW_CN = datetime(2026, 6, 30, 10, 0, 0, tzinfo=timezone.utc)
+
+
+def _mkt_no_side(yes_sub_title, no_bid, no_ask, no_bid_size, *, event=CN_EVENT, status="active"):
+    """A market in the live one-sided shape: the YES fields are null; price + a deep ladder live only
+    on the NO side (no_*_dollars + orderbook_fp.no_dollars), exactly like KXWCGAME-26JUN30CIVNOR."""
+    deeper = f"{float(no_bid) - 0.01:.4f}"
+    return {
+        "event_ticker": event, "ticker": f"{event}-{yes_sub_title[:3].upper()}",
+        "yes_sub_title": yes_sub_title, "status": status,
+        "yes_ask_dollars": None, "yes_bid_dollars": None, "yes_ask_size_fp": None,
+        "no_ask_dollars": no_ask, "no_bid_dollars": no_bid, "no_bid_size_fp": no_bid_size,
+        "last_price_dollars": "0.4700",
+        "orderbook_fp": {"no_dollars": [[no_bid, no_bid_size], [deeper, "2000000"]], "yes_dollars": []},
+    }
+
+
+def _civ_nor_markets():
+    return [
+        _mkt_no_side("Norway", "0.5300", "0.5400", "1000000"),       # yes_ask = 1-0.53 = 0.47
+        _mkt_no_side("Tie", "0.7100", "0.7200", "500000"),           # yes_ask = 1-0.71 = 0.29
+        _mkt_no_side("Ivory Coast", "0.7300", "0.7400", "300000"),   # yes_ask = 1-0.73 = 0.27
+    ]
+
+
+def test_yes_ask_price_derives_from_no_side_when_yes_is_null():
+    """THE live bug: the YES fields are None, so the legacy reader returned None for every leg. The
+    reader must DERIVE the yes ask from the deep NO side (yes_ask = 1 - no_bid_dollars)."""
+    nor, tie, civ = _civ_nor_markets()
+    assert abs(kalshi.yes_ask_price(nor) - 0.47) < 1e-9     # Norway
+    assert abs(kalshi.yes_ask_price(tie) - 0.29) < 1e-9     # Tie
+    assert abs(kalshi.yes_ask_price(civ) - 0.27) < 1e-9     # Ivory Coast
+    # And the decimal is 1 / that effective yes ask (point 4), never None now.
+    assert abs(kalshi.decimal_from_dollars(kalshi.yes_ask_price(nor)) - 1 / 0.47) < 1e-9
+    # Legacy fallback still works for any market still on the old integer-cent schema.
+    assert abs(kalshi.yes_ask_price({"yes_ask": 32}) - 0.32) < 1e-9
+    assert abs(kalshi.yes_ask_price({"no_bid": 53}) - 0.47) < 1e-9   # legacy NO-derived
+
+
+def test_ask_ladder_reads_orderbook_fp_buy_yes_from_no_dollars():
+    """Buying YES walks the orderbook_fp.no_dollars ladder, complemented (1 - no_price). Non-empty,
+    real depth — not the empty result the legacy orderbook.yes/.no reader gave on the new schema."""
+    nor = _civ_nor_markets()[0]
+    ladder = kalshi.ask_ladder({"orderbook_fp": nor["orderbook_fp"]}, "YES")
+    assert ladder                                            # NON-EMPTY depth (was empty before)
+    assert abs(ladder[0][0] - 0.47) < 1e-9 and ladder[0][1] == 1000000.0   # best yes ask = 1-0.53
+    assert abs(ladder[1][0] - 0.48) < 1e-9                  # next level = 1-0.52, ascending
+    assert sum(p * s for p, s in ladder) > 1_000_000        # real dollar depth
+    # LEGACY integer-cent orderbook still parses (back-compat).
+    legacy = kalshi.ask_ladder({"orderbook": {"yes": [[40, 100]], "no": [[55, 30], [50, 70]]}}, "YES")
+    assert legacy == [(0.45, 30.0), (0.50, 70.0)]           # NO bids 55,50 -> YES asks 0.45,0.50
+
+
+def test_merge_maps_civ_nor_one_sided_new_schema():
+    """End-to-end on the real CIV-NOR shape: every leg prices (none read None) and maps to the
+    canonical 1x2 with a real, non-zero limit derived from the NO-bid size."""
+    raw: dict = {}
+    cov, kbooks = kalshi.merge_into(raw, BY_FIXTURE_CN, INDEX, _civ_nor_markets(), now=NOW_CN, log=LOG)
+    assert cov.matched == 1 and cov.recovered == 1 and kbooks == {"idCN": {"kalshi"}}
+    outs = raw["idCN"]["bookmakerOdds"]["kalshi"]["markets"]["101"]["outcomes"]
+    home, draw, away = (outs["101"]["players"]["0"], outs["102"]["players"]["0"],
+                        outs["103"]["players"]["0"])
+    assert round(home["price"], 3) == 2.128                 # Norway 1/0.47 (p1 -> home)
+    assert round(draw["price"], 3) == 3.448                 # Tie 1/0.29 -> draw
+    assert round(away["price"], 3) == 3.704                 # Ivory Coast 1/0.27 (p2 -> away)
+    assert abs(home["limit"] - 470000.0) < 0.1             # 1,000,000 NO-bid contracts × 0.47
+    assert abs(draw["limit"] - 145000.0) < 0.1 and abs(away["limit"] - 81000.0) < 0.1
+    assert all(p["limit"] for p in (home, draw, away))      # non-zero depth, not low_confidence
+
+
+# --------------------------------------------------------------------------- #
+# DISCOVERY: build the event ticker from teams+date, pull by event_ticker        #
+# --------------------------------------------------------------------------- #
+class _FakeKalshiClient:
+    """Stand-in for KalshiClient: canned markets keyed by event_ticker (targeted) and by series
+    (sweep fallback), recording every call so the targeted-vs-sweep path can be asserted."""
+    def __init__(self, by_event=None, by_series=None):
+        self.by_event = by_event or {}
+        self.by_series = by_series or {}
+        self.event_calls: list = []
+        self.series_calls: list = []
+
+    def markets(self, *, series_ticker=None, event_ticker=None, status="open", limit=100, cursor=None):
+        if event_ticker is not None:
+            self.event_calls.append(event_ticker)
+            return {"markets": list(self.by_event.get(event_ticker, []))}
+        self.series_calls.append(series_ticker)
+        return {"markets": list(self.by_series.get(series_ticker, []))}
+
+    def iter_markets(self, *, series_ticker=None, status="open", limit=100, max_pages=50):
+        self.series_calls.append(series_ticker)
+        return list(self.by_series.get(series_ticker, []))
+
+
+def test_event_ticker_suffixes_both_orderings_and_prior_day():
+    sufs = kalshi._event_ticker_suffixes(BY_FIXTURE_CN["idCN"])
+    assert "26JUN30CIVNOR" in sufs and "26JUN30NORCIV" in sufs   # both team orderings (date 26JUN30)
+    assert "26JUN29CIVNOR" in sufs                               # prior US-local day, too
+    # A non-coded team yields no addressable ticker.
+    assert kalshi._event_ticker_suffixes({"p1": "Atlantis", "p2": "Narnia",
+                                          "start_time": "2026-06-30T18:00:00.000Z"}) == []
+
+
+def test_discover_markets_addresses_event_by_ticker_no_sweep():
+    """Discovery builds KXWCGAME-26JUN30CIVNOR from teams+date and pulls it (plus the same game
+    suffix for KXWCTOTAL) directly by event_ticker — no series sweep needed."""
+    total = _total_mkt("2.5", "0.5000", "400", "0.5200", "300")
+    total = dict(total, event_ticker="KXWCTOTAL-26JUN30CIVNOR", ticker="KXWCTOTAL-26JUN30CIVNOR-2.5")
+    client = _FakeKalshiClient(by_event={CN_EVENT: _civ_nor_markets(),
+                                         "KXWCTOTAL-26JUN30CIVNOR": [total]})
+    markets = kalshi.discover_markets(client, BY_FIXTURE_CN, result_series="KXWCGAME",
+                                      extra_series=("KXWCTOTAL", "KXWCBTTS"), log=LOG)
+    assert CN_EVENT in client.event_calls                       # the right ticker was built + tried
+    assert "KXWCTOTAL-26JUN30CIVNOR" in client.event_calls      # sibling series, same game suffix
+    assert client.series_calls == []                            # resolved by ticker -> no fallback sweep
+    assert len(markets) == 4                                    # 3 result legs + 1 total line
+
+    # And the discovered markets merge through cleanly (one-sided legs price + map).
+    raw: dict = {}
+    cov, kbooks = kalshi.merge_into(raw, BY_FIXTURE_CN, INDEX_FULL, markets, now=NOW_CN, log=LOG)
+    assert cov.recovered == 1 and cov.totals_lines == 1 and kbooks == {"idCN": {"kalshi"}}
+
+
+def test_discover_markets_sweeps_when_fixture_not_addressable():
+    """A non-coded fixture can't be addressed by ticker -> discovery falls back to the series sweep
+    (so nothing regresses vs the old sweep-only path)."""
+    fixtures = {"idX": {"p1": "Atlantis", "p2": "Narnia", "start_time": "2026-06-30T18:00:00.000Z"}}
+    client = _FakeKalshiClient(by_series={"KXWCGAME": _civ_nor_markets()})
+    markets = kalshi.discover_markets(client, fixtures, result_series="KXWCGAME", extra_series=(), log=LOG)
+    assert client.event_calls == []                             # nothing addressable
+    assert client.series_calls == ["KXWCGAME"]                  # swept as fallback
+    assert len(markets) == 3
+
+
+# --------------------------------------------------------------------------- #
 # SAFE TIER: total goals O/U (KXWCTOTAL) + BTTS (KXWCBTTS) injection             #
 # --------------------------------------------------------------------------- #
 # Canonical index extended with totals 2.5 (1010/1011) and BTTS (104/105).

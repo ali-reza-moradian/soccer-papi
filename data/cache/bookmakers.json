@@ -546,6 +546,12 @@
     "slug": "betus"
   },
   {
+    "bookmakerName": "BetWar",
+    "cloneOf": null,
+    "liveOdds": null,
+    "slug": "betwar"
+  },
+  {
     "bookmakerName": "Betway",
     "cloneOf": null,
     "liveOdds": true,
@@ -1392,6 +1398,12 @@
     "slug": "netbet"
   },
   {
+    "bookmakerName": "NetBet UK",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "netbet.co.uk"
+  },
+  {
     "bookmakerName": "NetBet FR",
     "cloneOf": null,
     "liveOdds": true,
@@ -1534,6 +1546,18 @@
     "cloneOf": null,
     "liveOdds": true,
     "slug": "pinnacle"
+  },
+  {
+    "bookmakerName": "Pinnacle Demo",
+    "cloneOf": null,
+    "liveOdds": null,
+    "slug": "pinnacle2"
+  },
+  {
+    "bookmakerName": "Pinnacle +5 sec",
+    "cloneOf": null,
+    "liveOdds": true,
+    "slug": "pinnacle+5"
   },
   {
     "bookmakerName": "PinnBet RS",
@@ -1804,6 +1828,12 @@
     "cloneOf": null,
     "liveOdds": true,
     "slug": "singbet"
+  },
+  {
+    "bookmakerName": "SingBet Demo",
+    "cloneOf": null,
+    "liveOdds": null,
+    "slug": "singbet2"
   },
   {
     "bookmakerName": "Sisal IT",

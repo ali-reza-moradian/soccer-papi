@@ -13,10 +13,21 @@ Kalshi facts this module is built on:
   * Base https://external-api.kalshi.com/trade-api/v2 ; market data needs NO auth.
   * Per match there are 3 Yes markets — home win / regulation tie / away win — grouped under ONE
     event (event_ticker). They map to the canonical Full Time Result marketId's home/draw/away
-    outcomeIds.
-  * Prices are cents (1–99). To BACK an outcome you buy Yes at `yes_ask`, so the decimal odds are
-    1 / (yes_ask / 100)  (see decimal_from_cents).
-  * The order-book depth at the best yes-ask level is the real stake limit for that leg.
+    outcomeIds. The per-type series each carry one market kind (KXWCGAME = regulation moneyline
+    Home/Tie/Away; KXWCTOTAL = total goals; KXWCBTTS = both-teams-to-score; …), and the event
+    ticker is <SERIES>-<YYMMMDD><AWAY3><HOME3> (e.g. KXWCGAME-26JUN30CIVNOR), so a fixture's event
+    can be addressed DIRECTLY from teams+date instead of sweeping the whole series (see
+    discover_markets).
+  * PRICES ARE NOW DOLLARS, not cents: read yes_ask_dollars / yes_bid_dollars / no_ask_dollars /
+    no_bid_dollars / last_price_dollars — floats in (0,1). WC legs are commonly ONE-SIDED (Kalshi
+    quotes the deep NO side only, so the YES fields are null); derive the YES ask from the best NO
+    bid (yes_ask = 1 − no_bid_dollars) and the YES bid from the best NO ask (see yes_ask_price). A
+    legacy integer-cent fallback (yes_ask/100) is kept for any market still on the old schema. To
+    BACK an outcome you buy Yes at the (effective) yes ask, so the decimal odds are
+    1 / yes_ask_dollars (see decimal_from_dollars).
+  * The order book is now under `orderbook_fp` with `yes_dollars` / `no_dollars` ladders
+    ([price_dollars, size] as strings); the depth to BUY YES is the complement of the `no_dollars`
+    ladder (ask_ladder). A legacy `orderbook.yes`/`.no` integer-cent fallback is kept.
 
 Reuse, don't duplicate: team normalization, fixture matching, and the canonical market reverse-index
 are imported from src.theoddsapi — Kalshi events match canonical fixtures by the SAME team-identity +
@@ -32,7 +43,7 @@ from __future__ import annotations
 import re
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 import requests
@@ -49,6 +60,10 @@ from .theoddsapi import (  # noqa: F401  (re-exported for B2 + tests)
     match_event_to_fixture,
     normalize_team,
 )
+# Targeted per-fixture discovery (point 3) builds the event ticker <SERIES>-<YYMMMDD><A3><H3> from
+# teams + date; reuse the SAME FIFA 3-letter code map the Polymarket source already curates (every
+# provider spelling + the cross-provider equivalences collapse to one code) instead of duplicating it.
+from .polymarket import _team_code as _poly_team_code
 
 DEFAULT_BASE_URL = "https://external-api.kalshi.com/trade-api/v2"
 
@@ -158,30 +173,133 @@ class KalshiClient:
 # --------------------------------------------------------------------------- #
 # Price + liquidity helpers                                                     #
 # --------------------------------------------------------------------------- #
-# UNITS — get this exactly right or it mints phantom arbs. Kalshi's list endpoint reports
-# `yes_ask_dollars` ALREADY IN DOLLARS (e.g. "0.3200" = $0.32). To BACK an outcome you buy Yes at
-# that price, so the decimal odds are simply 1 / yes_ask_dollars  ($0.32 -> 3.125). Do NOT divide
-# by 100 and do NOT read any integer-cent field.
-def decimal_from_dollars(yes_ask_dollars: Any) -> Optional[float]:
-    """Decimal odds to back an outcome = 1 / float(yes_ask_dollars). $0.32 -> 3.125.
-
-    Returns None unless the price is a real two-sided ask in (0, 1) dollars."""
+# UNITS — get this exactly right or it mints phantom arbs. Kalshi reports prices ALREADY IN DOLLARS
+# (e.g. "0.3200" = $0.32) in the *_dollars fields. To BACK an outcome you buy Yes at the (effective)
+# yes ask, so the decimal odds are simply 1 / yes_ask_dollars  ($0.32 -> 3.125). Do NOT divide by 100
+# and do NOT read any integer-cent field except as the legacy fallback below.
+def _f(v: Any) -> Optional[float]:
+    """float(v) or None — never raises."""
     try:
-        price = float(yes_ask_dollars)
+        return float(v)
     except (TypeError, ValueError):
         return None
-    if not (0.0 < price < 1.0):
+
+
+def yes_ask_price(market: dict[str, Any]) -> Optional[float]:
+    """The effective price (DOLLARS, 0-1) to BUY this market's YES outcome — the number the engine
+    inverts to a decimal (1/price). Resolution order:
+      1. yes_ask_dollars (direct, new schema);
+      2. DERIVE from the deep NO side when YES is one-sided/empty: a best NO bid at b implies a YES
+         offer at 1-b  (yes_ask = 1 - no_bid_dollars) — this is what makes Kalshi WC legs price at all
+         now that they're quoted only on the NO side;
+      3. legacy integer-cent yes_ask / 100 (old schema), then its NO-derived complement.
+    None if no usable price is recoverable."""
+    d = _f(market.get("yes_ask_dollars"))
+    if d is not None and 0.0 < d < 1.0:
+        return d
+    nb = _f(market.get("no_bid_dollars"))
+    if nb is not None and 0.0 < nb < 1.0:
+        return 1.0 - nb
+    c = _f(market.get("yes_ask"))                       # legacy integer cents (1–99)
+    if c is not None and 0.0 < c < 100.0:
+        return c / 100.0
+    cnb = _f(market.get("no_bid"))
+    if cnb is not None and 0.0 < cnb < 100.0:
+        return 1.0 - cnb / 100.0
+    return None
+
+
+def no_ask_price(market: dict[str, Any]) -> Optional[float]:
+    """The effective price (DOLLARS, 0-1) to BUY this market's NO outcome (Under / BTTS-No). Mirror of
+    yes_ask_price: no_ask_dollars; else derive from the best YES bid (1 - yes_bid_dollars); else the
+    legacy integer-cent no_ask / 100 and its YES-derived complement. None if unrecoverable."""
+    d = _f(market.get("no_ask_dollars"))
+    if d is not None and 0.0 < d < 1.0:
+        return d
+    yb = _f(market.get("yes_bid_dollars"))
+    if yb is not None and 0.0 < yb < 1.0:
+        return 1.0 - yb
+    c = _f(market.get("no_ask"))                        # legacy integer cents
+    if c is not None and 0.0 < c < 100.0:
+        return c / 100.0
+    cyb = _f(market.get("yes_bid"))
+    if cyb is not None and 0.0 < cyb < 100.0:
+        return 1.0 - cyb / 100.0
+    return None
+
+
+def decimal_from_dollars(price_dollars: Any) -> Optional[float]:
+    """Decimal odds to back an outcome = 1 / float(price_dollars). $0.32 -> 3.125. The caller passes
+    the EFFECTIVE ask from yes_ask_price / no_ask_price (already derived from the NO side when needed).
+    Returns None unless the price is a real ask in (0, 1) dollars."""
+    price = _f(price_dollars)
+    if price is None or not (0.0 < price < 1.0):
         return None
     return 1.0 / price
 
 
-def leg_limit(yes_ask_size_fp: Any, yes_ask_dollars: Any) -> float:
-    """Real max stake at the best ask = contracts available × price = size_fp × yes_ask_dollars
-    (dollars). A genuine limit — these legs are NOT low_confidence (unlike the-odds-api)."""
-    try:
-        return float(yes_ask_size_fp) * float(yes_ask_dollars)
-    except (TypeError, ValueError):
-        return 0.0
+def leg_limit(size_fp: Any, price_dollars: Any) -> float:
+    """Real max stake at the best ask = contracts available × price = size_fp × price (dollars). A
+    genuine limit — these legs are NOT low_confidence (unlike the-odds-api). 0.0 on bad input."""
+    s, p = _f(size_fp), _f(price_dollars)
+    return s * p if (s is not None and p is not None) else 0.0
+
+
+def _yes_ask_size(market: dict[str, Any]) -> float:
+    """Contracts available at the effective YES ask: yes_ask_size_fp, else the size of the best NO bid
+    we'd lift to buy YES (no_bid_size_fp). 0.0 if neither — the engine then treats the leg's limit as
+    UNVERIFIED via the assumed cap, never a fantasy size."""
+    s = _f(market.get("yes_ask_size_fp"))
+    if s is not None and s > 0:
+        return s
+    s = _f(market.get("no_bid_size_fp"))
+    return s if (s is not None and s > 0) else 0.0
+
+
+def _no_ask_size(market: dict[str, Any]) -> float:
+    """Contracts available at the effective NO ask: no_ask_size_fp, else the best YES bid size
+    (yes_bid_size_fp) we'd lift to buy NO. 0.0 if neither."""
+    s = _f(market.get("no_ask_size_fp"))
+    if s is not None and s > 0:
+        return s
+    s = _f(market.get("yes_bid_size_fp"))
+    return s if (s is not None and s > 0) else 0.0
+
+
+def ask_ladder(book: Any, side: str = "YES") -> list[tuple[float, float]]:
+    """Ascending (price_dollars, size) ask ladder to BUY ``side`` from a Kalshi orderbook response.
+
+    NEW schema: book['orderbook_fp'] = {'yes_dollars': [[price_str, size], …], 'no_dollars': […]},
+    each a list of resting BIDS in dollars. To BUY YES you lift resting NO bids — a NO bid at n is a
+    YES offer at (1-n) — so buying YES walks the `no_dollars` ladder (symmetric for NO). LEGACY
+    fallback: book['orderbook'] = {'yes': [[cents,size],…], 'no': […]} in integer cents (also handles
+    the already-unwrapped orderbook dict). Returns [] when there is no usable depth."""
+    book = book if isinstance(book, dict) else {}
+    opp = "no" if str(side).upper() == "YES" else "yes"
+    out: list[tuple[float, float]] = []
+    ofp = book.get("orderbook_fp")
+    if isinstance(ofp, dict):
+        for lvl in ofp.get(f"{opp}_dollars") or []:
+            try:
+                p, s = float(lvl[0]), float(lvl[1])
+            except (TypeError, ValueError, IndexError):
+                continue
+            price = 1.0 - p                            # complement: lifting the opposite side's bid
+            if 0.0 < price < 1.0 and s > 0:
+                out.append((price, s))
+    if not out:                                        # legacy integer-cent fallback
+        ob = book.get("orderbook")
+        ob = ob if isinstance(ob, dict) else book
+        for lvl in ob.get(opp) or []:
+            try:
+                c, s = float(lvl[0]), float(lvl[1])
+            except (TypeError, ValueError, IndexError):
+                continue
+            price = (100.0 - c) / 100.0
+            if 0.0 < price < 1.0 and s > 0:
+                out.append((price, s))
+    out.sort(key=lambda x: x[0])
+    return out
 
 
 # The event-ticker date is US-LOCAL, so for a fixture kicking off in UTC small-hours it can be one
@@ -210,15 +328,16 @@ def _event_commence_iso(event_ticker: str) -> Optional[str]:
 
 
 def _leg_price_limit(market: dict[str, Any]) -> Optional[tuple[float, float]]:
-    """(decimal_odds, limit) for one Kalshi market, or None if it is not an active, priced ask.
-
-    Skips any market whose status != active — a non-active market has no live resting ask."""
+    """(decimal_odds, limit) to BACK the YES side of one Kalshi market, or None if it is not an
+    active, priced ask. Uses the effective yes ask (derived from the NO side when one-sided) and the
+    contracts at that ask. Skips any market whose status != active (no live resting ask)."""
     if str(market.get("status") or "").lower() != "active":
         return None
-    dec = decimal_from_dollars(market.get("yes_ask_dollars"))
+    price = yes_ask_price(market)
+    dec = decimal_from_dollars(price)
     if dec is None:
         return None
-    return dec, leg_limit(market.get("yes_ask_size_fp"), market.get("yes_ask_dollars"))
+    return dec, leg_limit(_yes_ask_size(market), price)
 
 
 def _venue(ticker: Any, side: str) -> dict[str, Any]:
@@ -261,13 +380,15 @@ _TOTAL_LINE_RE = re.compile(r"over\s+(\d+(?:\.\d+)?)", re.IGNORECASE)
 
 
 def _no_leg_price_limit(market: dict[str, Any]) -> Optional[tuple[float, float]]:
-    """(decimal_odds, limit) to BACK the NO side (buy No at no_ask), or None if not active/priced."""
+    """(decimal_odds, limit) to BACK the NO side (buy No at the effective no ask, derived from the YES
+    side when one-sided), or None if not active/priced."""
     if str(market.get("status") or "").lower() != "active":
         return None
-    dec = decimal_from_dollars(market.get("no_ask_dollars"))
+    price = no_ask_price(market)
+    dec = decimal_from_dollars(price)
     if dec is None:
         return None
-    return dec, leg_limit(market.get("no_ask_size_fp"), market.get("no_ask_dollars"))
+    return dec, leg_limit(_no_ask_size(market), price)
 
 
 def _total_line(market: dict[str, Any]) -> Optional[float]:
@@ -330,6 +451,121 @@ def _inject_btts(entry: dict[str, Any], btts_markets: list[dict[str, Any]],
         _add_leg(entry, b["marketId"], b["no_oid"], no[0], no[1], changed_at, _venue(tk, "NO"))
         return 1
     return 0
+
+
+# --------------------------------------------------------------------------- #
+# Discovery — address each fixture's event DIRECTLY by its deterministic ticker  #
+# --------------------------------------------------------------------------- #
+# Kalshi WC event tickers are <SERIES>-<YYMMMDD><AWAY3><HOME3> (e.g. KXWCGAME-26JUN30CIVNOR), so a
+# fixture's markets can be pulled by event_ticker from teams + date instead of sweeping the whole
+# series. Codes are the UPPERCASE FIFA 3-letter codes (the Polymarket source's curated map); fixture
+# matching is still by team IDENTITY (match_event_to_fixture), so the AWAY/HOME order in the ticker is
+# only a guess — we try BOTH orderings (and the prior US-local day) and stop at the first that returns
+# markets.
+def _team_code(name: Any) -> Optional[str]:
+    """UPPERCASE Kalshi/FIFA 3-letter code for a team (any provider spelling), or None if it is not a
+    coded WC nation (so we never build a ticker for a non-WC fixture)."""
+    c = _poly_team_code(name)
+    return c.upper() if c else None
+
+
+def _yymmmdd(start_time: Any, *, day_delta: int = 0) -> Optional[str]:
+    """The Kalshi ticker date code (e.g. '26JUN30') for a fixture's UTC start (optionally shifted by
+    ``day_delta`` days), or None if no YYYY-MM-DD is recoverable."""
+    m = re.match(r"(\d{4})-(\d{2})-(\d{2})", str(start_time or ""))
+    if not m:
+        return None
+    try:
+        dt = datetime(int(m.group(1)), int(m.group(2)), int(m.group(3)), tzinfo=timezone.utc)
+    except ValueError:
+        return None
+    return (dt + timedelta(days=day_delta)).strftime("%y%b%d").upper()
+
+
+def _event_ticker_suffixes(info: dict[str, Any]) -> list[str]:
+    """Deterministic <YYMMMDD><X3><Y3> game suffixes for one by_fixture entry, or [] if either team
+    is non-coded or the date is unrecoverable. Both team orderings × {kickoff UTC day, prior day}
+    (a small-hours UTC kickoff can be listed under the previous US-local calendar date)."""
+    c1, c2 = _team_code(info.get("p1")), _team_code(info.get("p2"))
+    if not c1 or not c2:
+        return []
+    out: list[str] = []
+    for delta in (0, -1):
+        dd = _yymmmdd(info.get("start_time"), day_delta=delta)
+        if not dd:
+            continue
+        for a, b in ((c1, c2), (c2, c1)):
+            suf = f"{dd}{a}{b}"
+            if suf not in out:
+                out.append(suf)
+    return out
+
+
+def _add_market(found: dict[str, dict[str, Any]], m: Any) -> None:
+    """De-dup markets by their unique market ticker (the same market can surface via several calls)."""
+    if isinstance(m, dict):
+        tk = str(m.get("ticker") or "")
+        if tk:
+            found.setdefault(tk, m)
+
+
+def discover_markets(client: "KalshiClient", by_fixture: dict[str, dict[str, Any]], *,
+                     result_series: str = "KXWCGAME", extra_series: tuple[str, ...] = (),
+                     log=None) -> list[dict[str, Any]]:
+    """Find each fixture's Kalshi markets and return the flat list merge_into consumes.
+
+    PRIMARY: for each fixture build the <result_series>-<suffix> event ticker from teams + date and
+    pull it by event_ticker (both orderings + the prior day). The first ticker that returns markets
+    wins; for that same game suffix we then pull each ``extra_series`` (totals/BTTS) directly. FALLBACK:
+    fixtures left unresolved (non-coded nations / a ticker Kalshi spells differently) trigger ONE
+    per-series sweep so nothing regresses. Every failure is logged and skipped — the feed must never
+    break the run."""
+    found: dict[str, dict[str, Any]] = {}
+    resolved: set[str] = set()
+    series_all = tuple(s for s in (result_series, *extra_series) if s)
+
+    for fid, info in by_fixture.items():
+        for suf in _event_ticker_suffixes(info):
+            et = f"{result_series}-{suf}"
+            try:
+                page = client.markets(event_ticker=et, status="open")
+            except KalshiError as exc:
+                if log:
+                    log.warning("[KALSHI] event %s fetch failed (%s) — trying next.", et, exc)
+                continue
+            ms = [m for m in (page or {}).get("markets") or [] if isinstance(m, dict)]
+            if not ms:
+                continue
+            for m in ms:
+                _add_market(found, m)
+            resolved.add(fid)
+            for series in extra_series:                # same game suffix, sibling series
+                if not series:
+                    continue
+                et2 = f"{series}-{suf}"
+                try:
+                    page2 = client.markets(event_ticker=et2, status="open")
+                except KalshiError as exc:
+                    if log:
+                        log.warning("[KALSHI] event %s fetch failed (%s) — skipping that series.", et2, exc)
+                    continue
+                for m in (page2 or {}).get("markets") or []:
+                    _add_market(found, m)
+            break                                      # first ordering/date that hits wins
+
+    unresolved = [fid for fid in by_fixture if fid not in resolved]
+    if unresolved:
+        if log:
+            log.info("[KALSHI] %d fixture(s) not addressable by ticker — sweeping %s as fallback.",
+                     len(unresolved), ", ".join(series_all))
+        for series in series_all:
+            try:
+                for m in client.iter_markets(series_ticker=series, status="open"):
+                    _add_market(found, m)
+            except KalshiError as exc:
+                if log:
+                    log.warning("[KALSHI] series %s sweep failed (%s) — skipping.", series, exc)
+    return list(found.values())
 
 
 # --------------------------------------------------------------------------- #

@@ -372,3 +372,27 @@ executor:
   # ---- venue endpoints (trading; market-data reuses the scanner's bases) ----
   kalshi_api_base: https://api.elections.kalshi.com/trade-api/v2
   poly_signature_type: 3            # default 3 = deposit/proxy wallet (overridable via env)
+
+# ===========================================================================
+# GENZ ENGINE (src/genz/) — STANDALONE Kalshi<->Polymarket soccer arbitrage.
+# Fully separate from the OG scanner (run.py): its own data path (data/genz/), its own static match
+# tree, its own fast price loop. Two jobs: (1) build-tree hourly enumerates every market on both
+# venues per game and pairs outcomes deterministically into data/genz/match_tree.json; (2) run --loop
+# reads live prices ONLY for tree tokens and checks 2-outcome best-of-both arbs. Execution is
+# delegated to the executor above, so the THREE master switches there (enabled/dry_run/
+# require_human_confirm) govern GenZ too — with their defaults GenZ measures only (writes
+# data/genz/genz_arbs.csv, places nothing). See src/genz/README.md for the Task Scheduler setup.
+# ===========================================================================
+genz:
+  lookahead_hours: 48               # discover WC games kicking off within this window
+  interval_seconds: 20              # price-loop cycle target (run --loop)
+  max_workers: 12                   # concurrent REST price fetches per cycle
+  walk_stake_usd: 200               # stake each book is walked to for the realized (walk-to-stake) fill
+  min_edge_pct: 1.0                 # implied-cost edge floor (after costs) to flag/attempt an arb
+  max_plausible_roi_pct: 8          # arbs above this ROI (or implied_cost<0.5) are pairing/staleness
+                                    # bugs -> rejected (never auto-traded). A real 2-outcome soccer arb is
+                                    # low single digits (corners top out ~5%); >8% is far more likely a bug.
+  min_total_implied: 0.95           # a same-line/period Over+Under MUST sum ~1.0 (like corners). A totals
+                                    # O/U node summing below this is a period/line mispairing -> rejected.
+  http_timeout_seconds: 15          # per-call HTTP timeout — fail fast so one hung call can't stall a cycle
+  poly_series_slug: soccer-fifwc    # Polymarket WC series; siblings discovered by game-slug prefix

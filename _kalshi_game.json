@@ -1,0 +1,662 @@
+[
+ {
+  "type": "KXWCGAME",
+  "ticker": "KXWCGAME-26JUN30CIVNOR-TIE",
+  "title": "Reg Time: Tie",
+  "yes_ask": "0.2900"
+ },
+ {
+  "type": "KXWCGAME",
+  "ticker": "KXWCGAME-26JUN30CIVNOR-NOR",
+  "title": "Reg Time: Norway",
+  "yes_ask": "0.4700"
+ },
+ {
+  "type": "KXWCGAME",
+  "ticker": "KXWCGAME-26JUN30CIVNOR-CIV",
+  "title": "Reg Time: Ivory Coast",
+  "yes_ask": "0.2600"
+ },
+ {
+  "type": "KXWCTOTAL",
+  "ticker": "KXWCTOTAL-26JUN30CIVNOR-6",
+  "title": "Reg Time: Over 5.5 goals scored",
+  "yes_ask": "0.0700"
+ },
+ {
+  "type": "KXWCTOTAL",
+  "ticker": "KXWCTOTAL-26JUN30CIVNOR-5",
+  "title": "Reg Time: Over 4.5 goals scored",
+  "yes_ask": "0.1500"
+ },
+ {
+  "type": "KXWCTOTAL",
+  "ticker": "KXWCTOTAL-26JUN30CIVNOR-4",
+  "title": "Reg Time: Over 3.5 goals scored",
+  "yes_ask": "0.3000"
+ },
+ {
+  "type": "KXWCTOTAL",
+  "ticker": "KXWCTOTAL-26JUN30CIVNOR-3",
+  "title": "Reg Time: Over 2.5 goals scored",
+  "yes_ask": "0.5200"
+ },
+ {
+  "type": "KXWCTOTAL",
+  "ticker": "KXWCTOTAL-26JUN30CIVNOR-2",
+  "title": "Reg Time: Over 1.5 goals scored",
+  "yes_ask": "0.7800"
+ },
+ {
+  "type": "KXWCTOTAL",
+  "ticker": "KXWCTOTAL-26JUN30CIVNOR-1",
+  "title": "Reg Time: Over 0.5 goals scored",
+  "yes_ask": "0.9300"
+ },
+ {
+  "type": "KXWCTEAMTOTAL",
+  "ticker": "KXWCTEAMTOTAL-26JUN30CIVNOR-NOR4",
+  "title": "Reg Time: Norway over 3.5 goals",
+  "yes_ask": "0.0900"
+ },
+ {
+  "type": "KXWCTEAMTOTAL",
+  "ticker": "KXWCTEAMTOTAL-26JUN30CIVNOR-NOR3",
+  "title": "Reg Time: Norway over 2.5 goals",
+  "yes_ask": "0.2200"
+ },
+ {
+  "type": "KXWCTEAMTOTAL",
+  "ticker": "KXWCTEAMTOTAL-26JUN30CIVNOR-NOR2",
+  "title": "Reg Time: Norway over 1.5 goals",
+  "yes_ask": "0.4900"
+ },
+ {
+  "type": "KXWCTEAMTOTAL",
+  "ticker": "KXWCTEAMTOTAL-26JUN30CIVNOR-NOR1",
+  "title": "Reg Time: Norway over 0.5 goals",
+  "yes_ask": "0.8300"
+ },
+ {
+  "type": "KXWCTEAMTOTAL",
+  "ticker": "KXWCTEAMTOTAL-26JUN30CIVNOR-CIV3",
+  "title": "Reg Time: Ivory Coast over 2.5 goals",
+  "yes_ask": "0.1100"
+ },
+ {
+  "type": "KXWCTEAMTOTAL",
+  "ticker": "KXWCTEAMTOTAL-26JUN30CIVNOR-CIV2",
+  "title": "Reg Time: Ivory Coast over 1.5 goals",
+  "yes_ask": "0.3400"
+ },
+ {
+  "type": "KXWCTEAMTOTAL",
+  "ticker": "KXWCTEAMTOTAL-26JUN30CIVNOR-CIV1",
+  "title": "Reg Time: Ivory Coast over 0.5 goals",
+  "yes_ask": "0.7200"
+ },
+ {
+  "type": "KXWCSPREAD",
+  "ticker": "KXWCSPREAD-26JUN30CIVNOR-NOR3",
+  "title": "Goal Diff Reg Time: Norway wins by more than 2.5 goals",
+  "yes_ask": "0.1000"
+ },
+ {
+  "type": "KXWCSPREAD",
+  "ticker": "KXWCSPREAD-26JUN30CIVNOR-NOR2",
+  "title": "Goal Diff Reg Time: Norway wins by more than 1.5 goals",
+  "yes_ask": "0.2500"
+ },
+ {
+  "type": "KXWCSPREAD",
+  "ticker": "KXWCSPREAD-26JUN30CIVNOR-CIV3",
+  "title": "Goal Diff Reg Time: Ivory Coast wins by more than 2.5 goals",
+  "yes_ask": "0.0300"
+ },
+ {
+  "type": "KXWCSPREAD",
+  "ticker": "KXWCSPREAD-26JUN30CIVNOR-CIV2",
+  "title": "Goal Diff Reg Time: Ivory Coast wins by more than 1.5 goals",
+  "yes_ask": "0.0900"
+ },
+ {
+  "type": "KXWC1HSPREAD",
+  "ticker": "KXWC1HSPREAD-26JUN30CIVNOR-NOR2",
+  "title": "Goal Difference: Norway wins the 1H by more than 1.5 goals",
+  "yes_ask": "0.1100"
+ },
+ {
+  "type": "KXWC1HSPREAD",
+  "ticker": "KXWC1HSPREAD-26JUN30CIVNOR-CIV2",
+  "title": "Goal Difference: Ivory Coast wins the 1H by more than 1.5 goals",
+  "yes_ask": "0.0500"
+ },
+ {
+  "type": "KXWC2HSPREAD",
+  "ticker": "KXWC2HSPREAD-26JUN30CIVNOR-NOR2",
+  "title": "Goal Difference: Norway wins the 2H by more than 1.5 goals",
+  "yes_ask": "0.1500"
+ },
+ {
+  "type": "KXWC2HSPREAD",
+  "ticker": "KXWC2HSPREAD-26JUN30CIVNOR-CIV2",
+  "title": "Goal Difference: Ivory Coast wins the 2H by more than 1.5 goals",
+  "yes_ask": "0.0500"
+ },
+ {
+  "type": "KXWCBTTS",
+  "ticker": "KXWCBTTS-26JUN30CIVNOR-BTTS",
+  "title": "Reg Time: Both Teams To Score",
+  "yes_ask": "0.6000"
+ },
+ {
+  "type": "KXWC1HBTTS",
+  "ticker": "KXWC1HBTTS-26JUN30CIVNOR-BTTS",
+  "title": "1st Half: Both Teams To Score",
+  "yes_ask": "0.2100"
+ },
+ {
+  "type": "KXWC2HBTTS",
+  "ticker": "KXWC2HBTTS-26JUN30CIVNOR-BTTS",
+  "title": "2nd Half: Both Teams To Score",
+  "yes_ask": "0.3200"
+ },
+ {
+  "type": "KXWCCORNERS",
+  "ticker": "KXWCCORNERS-26JUN30CIVNOR-9",
+  "title": "9+ corners",
+  "yes_ask": "0.6600"
+ },
+ {
+  "type": "KXWCCORNERS",
+  "ticker": "KXWCCORNERS-26JUN30CIVNOR-8",
+  "title": "8+ corners",
+  "yes_ask": "0.7600"
+ },
+ {
+  "type": "KXWCCORNERS",
+  "ticker": "KXWCCORNERS-26JUN30CIVNOR-7",
+  "title": "7+ corners",
+  "yes_ask": "0.8500"
+ },
+ {
+  "type": "KXWCCORNERS",
+  "ticker": "KXWCCORNERS-26JUN30CIVNOR-11",
+  "title": "11+ corners",
+  "yes_ask": "0.4200"
+ },
+ {
+  "type": "KXWCCORNERS",
+  "ticker": "KXWCCORNERS-26JUN30CIVNOR-10",
+  "title": "10+ corners",
+  "yes_ask": "0.5200"
+ },
+ {
+  "type": "KXWCTCORNERS",
+  "ticker": "KXWCTCORNERS-26JUN30CIVNOR-NOR9",
+  "title": "Norway: 9+",
+  "yes_ask": "0.1700"
+ },
+ {
+  "type": "KXWCTCORNERS",
+  "ticker": "KXWCTCORNERS-26JUN30CIVNOR-NOR7",
+  "title": "Norway: 7+",
+  "yes_ask": "0.3700"
+ },
+ {
+  "type": "KXWCTCORNERS",
+  "ticker": "KXWCTCORNERS-26JUN30CIVNOR-NOR5",
+  "title": "Norway: 5+",
+  "yes_ask": "0.6600"
+ },
+ {
+  "type": "KXWCTCORNERS",
+  "ticker": "KXWCTCORNERS-26JUN30CIVNOR-CIV8",
+  "title": "Ivory Coast: 8+",
+  "yes_ask": "0.1100"
+ },
+ {
+  "type": "KXWCTCORNERS",
+  "ticker": "KXWCTCORNERS-26JUN30CIVNOR-CIV6",
+  "title": "Ivory Coast: 6+",
+  "yes_ask": "0.2700"
+ },
+ {
+  "type": "KXWCTCORNERS",
+  "ticker": "KXWCTCORNERS-26JUN30CIVNOR-CIV4",
+  "title": "Ivory Coast: 4+",
+  "yes_ask": "0.6000"
+ },
+ {
+  "type": "KXWCSCORE",
+  "ticker": "KXWCSCORE-26JUN30CIVNOR-CIV4NOR3",
+  "title": "Reg Time: Ivory Coast wins 4-3",
+  "yes_ask": "0.0100"
+ },
+ {
+  "type": "KXWCSCORE",
+  "ticker": "KXWCSCORE-26JUN30CIVNOR-CIV4NOR2",
+  "title": "Reg Time: Ivory Coast wins 4-2",
+  "yes_ask": "0.0100"
+ },
+ {
+  "type": "KXWCSCORE",
+  "ticker": "KXWCSCORE-26JUN30CIVNOR-CIV4NOR1",
+  "title": "Reg Time: Ivory Coast wins 4-1",
+  "yes_ask": "0.0100"
+ },
+ {
+  "type": "KXWCSCORE",
+  "ticker": "KXWCSCORE-26JUN30CIVNOR-CIV4NOR0",
+  "title": "Reg Time: Ivory Coast wins 4-0",
+  "yes_ask": "0.0100"
+ },
+ {
+  "type": "KXWCSCORE",
+  "ticker": "KXWCSCORE-26JUN30CIVNOR-CIV3NOR4",
+  "title": "Reg Time: Norway wins 4-3",
+  "yes_ask": "0.0100"
+ },
+ {
+  "type": "KXWCSCORE",
+  "ticker": "KXWCSCORE-26JUN30CIVNOR-CIV3NOR3",
+  "title": "Reg Time: Draw 3-3",
+  "yes_ask": "0.0200"
+ },
+ {
+  "type": "KXWCSCORE",
+  "ticker": "KXWCSCORE-26JUN30CIVNOR-CIV3NOR2",
+  "title": "Reg Time: Ivory Coast wins 3-2",
+  "yes_ask": "0.0200"
+ },
+ {
+  "type": "KXWCSCORE",
+  "ticker": "KXWCSCORE-26JUN30CIVNOR-CIV3NOR1",
+  "title": "Reg Time: Ivory Coast wins 3-1",
+  "yes_ask": "0.0300"
+ },
+ {
+  "type": "KXWCSCORE",
+  "ticker": "KXWCSCORE-26JUN30CIVNOR-CIV3NOR0",
+  "title": "Reg Time: Ivory Coast wins 3-0",
+  "yes_ask": "0.0200"
+ },
+ {
+  "type": "KXWCSCORE",
+  "ticker": "KXWCSCORE-26JUN30CIVNOR-CIV2NOR5",
+  "title": "Reg Time: Norway wins 5-2",
+  "yes_ask": "0.0100"
+ },
+ {
+  "type": "KXWCSCORE",
+  "ticker": "KXWCSCORE-26JUN30CIVNOR-CIV2NOR4",
+  "title": "Reg Time: Norway wins 4-2",
+  "yes_ask": "0.0200"
+ },
+ {
+  "type": "KXWCSCORE",
+  "ticker": "KXWCSCORE-26JUN30CIVNOR-CIV2NOR3",
+  "title": "Reg Time: Norway wins 3-2",
+  "yes_ask": "0.0300"
+ },
+ {
+  "type": "KXWCSCORE",
+  "ticker": "KXWCSCORE-26JUN30CIVNOR-CIV2NOR2",
+  "title": "Reg Time: Draw 2-2",
+  "yes_ask": "0.0600"
+ },
+ {
+  "type": "KXWCSCORE",
+  "ticker": "KXWCSCORE-26JUN30CIVNOR-CIV2NOR1",
+  "title": "Reg Time: Ivory Coast wins 2-1",
+  "yes_ask": "0.0700"
+ },
+ {
+  "type": "KXWCSCORE",
+  "ticker": "KXWCSCORE-26JUN30CIVNOR-CIV2NOR0",
+  "title": "Reg Time: Ivory Coast wins 2-0",
+  "yes_ask": "0.0400"
+ },
+ {
+  "type": "KXWCSCORE",
+  "ticker": "KXWCSCORE-26JUN30CIVNOR-CIV1NOR5",
+  "title": "Reg Time: Norway wins 5-1",
+  "yes_ask": "0.0100"
+ },
+ {
+  "type": "KXWCSCORE",
+  "ticker": "KXWCSCORE-26JUN30CIVNOR-CIV1NOR4",
+  "title": "Reg Time: Norway wins 4-1",
+  "yes_ask": "0.0300"
+ },
+ {
+  "type": "KXWCSCORE",
+  "ticker": "KXWCSCORE-26JUN30CIVNOR-CIV1NOR3",
+  "title": "Reg Time: Norway wins 3-1",
+  "yes_ask": "0.0600"
+ },
+ {
+  "type": "KXWCSCORE",
+  "ticker": "KXWCSCORE-26JUN30CIVNOR-CIV1NOR2",
+  "title": "Reg Time: Norway wins 2-1",
+  "yes_ask": "0.1100"
+ },
+ {
+  "type": "KXWCSCORE",
+  "ticker": "KXWCSCORE-26JUN30CIVNOR-CIV1NOR1",
+  "title": "Reg Time: Draw 1-1",
+  "yes_ask": "0.1400"
+ },
+ {
+  "type": "KXWCSCORE",
+  "ticker": "KXWCSCORE-26JUN30CIVNOR-CIV1NOR0",
+  "title": "Reg Time: Ivory Coast wins 1-0",
+  "yes_ask": "0.0700"
+ },
+ {
+  "type": "KXWCSCORE",
+  "ticker": "KXWCSCORE-26JUN30CIVNOR-CIV0NOR5",
+  "title": "Reg Time: Norway wins 5-0",
+  "yes_ask": "0.0100"
+ },
+ {
+  "type": "KXWCSCORE",
+  "ticker": "KXWCSCORE-26JUN30CIVNOR-CIV0NOR4",
+  "title": "Reg Time: Norway wins 4-0",
+  "yes_ask": "0.0200"
+ },
+ {
+  "type": "KXWCSCORE",
+  "ticker": "KXWCSCORE-26JUN30CIVNOR-CIV0NOR3",
+  "title": "Reg Time: Norway wins 3-0",
+  "yes_ask": "0.0500"
+ },
+ {
+  "type": "KXWCSCORE",
+  "ticker": "KXWCSCORE-26JUN30CIVNOR-CIV0NOR2",
+  "title": "Reg Time: Norway wins 2-0",
+  "yes_ask": "0.0900"
+ },
+ {
+  "type": "KXWCSCORE",
+  "ticker": "KXWCSCORE-26JUN30CIVNOR-CIV0NOR1",
+  "title": "Reg Time: Norway wins 1-0",
+  "yes_ask": "0.1100"
+ },
+ {
+  "type": "KXWCSCORE",
+  "ticker": "KXWCSCORE-26JUN30CIVNOR-CIV0NOR0",
+  "title": "Reg Time: Draw 0-0",
+  "yes_ask": "0.0800"
+ },
+ {
+  "type": "KXWCGOAL",
+  "ticker": "KXWCGOAL-26JUN30CIVNOR-NORSBERGE16-1",
+  "title": "Sander Berge: 1+",
+  "yes_ask": "0.0700"
+ },
+ {
+  "type": "KXWCGOAL",
+  "ticker": "KXWCGOAL-26JUN30CIVNOR-NORFAURSN8-1",
+  "title": "Fredrik Aursnes: 1+",
+  "yes_ask": "0.0800"
+ },
+ {
+  "type": "KXWCGOAL",
+  "ticker": "KXWCGOAL-26JUN30CIVNOR-CIVYDIOMA49-2",
+  "title": "Yan Diomande: 2+",
+  "yes_ask": "0.0300"
+ },
+ {
+  "type": "KXWCGOAL",
+  "ticker": "KXWCGOAL-26JUN30CIVNOR-CIVYDIOMA49-1",
+  "title": "Yan Diomande: 1+",
+  "yes_ask": "0.1600"
+ },
+ {
+  "type": "KXWCGOAL",
+  "ticker": "KXWCGOAL-26JUN30CIVNOR-CIVNPEPE19-2",
+  "title": "Nicolas Pepe: 2+",
+  "yes_ask": "0.0300"
+ },
+ {
+  "type": "KXWCGOAL",
+  "ticker": "KXWCGOAL-26JUN30CIVNOR-CIVNPEPE19-1",
+  "title": "Nicolas Pepe: 1+",
+  "yes_ask": "0.1500"
+ },
+ {
+  "type": "KXWCGOAL",
+  "ticker": "KXWCGOAL-26JUN30CIVNOR-CIVFKESSI79-2",
+  "title": "Franck Kessie: 2+",
+  "yes_ask": "0.0200"
+ },
+ {
+  "type": "KXWCGOAL",
+  "ticker": "KXWCGOAL-26JUN30CIVNOR-CIVFKESSI79-1",
+  "title": "Franck Kessie: 1+",
+  "yes_ask": "0.0800"
+ },
+ {
+  "type": "KXWCGOAL",
+  "ticker": "KXWCGOAL-26JUN30CIVNOR-NORMODEGA8-2",
+  "title": "Martin Odegaard: 2+",
+  "yes_ask": "0.0200"
+ },
+ {
+  "type": "KXWCGOAL",
+  "ticker": "KXWCGOAL-26JUN30CIVNOR-NORMODEGA8-1",
+  "title": "Martin Odegaard: 1+",
+  "yes_ask": "0.1100"
+ },
+ {
+  "type": "KXWCGOAL",
+  "ticker": "KXWCGOAL-26JUN30CIVNOR-NOREHAALA9-3",
+  "title": "Erling Haaland: 3+",
+  "yes_ask": "0.0500"
+ },
+ {
+  "type": "KXWCGOAL",
+  "ticker": "KXWCGOAL-26JUN30CIVNOR-NOREHAALA9-2",
+  "title": "Erling Haaland: 2+",
+  "yes_ask": "0.2000"
+ },
+ {
+  "type": "KXWCGOAL",
+  "ticker": "KXWCGOAL-26JUN30CIVNOR-NOREHAALA9-1",
+  "title": "Erling Haaland: 1+",
+  "yes_ask": "0.5300"
+ },
+ {
+  "type": "KXWCGOAL",
+  "ticker": "KXWCGOAL-26JUN30CIVNOR-NORANUSA7-2",
+  "title": "Antonio Nusa: 2+",
+  "yes_ask": "0.0200"
+ },
+ {
+  "type": "KXWCGOAL",
+  "ticker": "KXWCGOAL-26JUN30CIVNOR-NORANUSA7-1",
+  "title": "Antonio Nusa: 1+",
+  "yes_ask": "0.1300"
+ },
+ {
+  "type": "KXWCGOAL",
+  "ticker": "KXWCGOAL-26JUN30CIVNOR-CIVADIALL16-2",
+  "title": "Amad Diallo: 2+",
+  "yes_ask": "0.0200"
+ },
+ {
+  "type": "KXWCGOAL",
+  "ticker": "KXWCGOAL-26JUN30CIVNOR-CIVADIALL16-1",
+  "title": "Amad Diallo: 1+",
+  "yes_ask": "0.1400"
+ },
+ {
+  "type": "KXWCSOA",
+  "ticker": "KXWCSOA-26JUN30CIVNOR-NORSBERGE16",
+  "title": "Sander Berge",
+  "yes_ask": "0.1400"
+ },
+ {
+  "type": "KXWCSOA",
+  "ticker": "KXWCSOA-26JUN30CIVNOR-NORFAURSN8",
+  "title": "Fredrik Aursnes",
+  "yes_ask": "0.1600"
+ },
+ {
+  "type": "KXWCSOA",
+  "ticker": "KXWCSOA-26JUN30CIVNOR-CIVYDIOMA49",
+  "title": "Yan Diomande",
+  "yes_ask": "0.3000"
+ },
+ {
+  "type": "KXWCSOA",
+  "ticker": "KXWCSOA-26JUN30CIVNOR-CIVNPEPE19",
+  "title": "Nicolas Pepe",
+  "yes_ask": "0.2100"
+ },
+ {
+  "type": "KXWCSOA",
+  "ticker": "KXWCSOA-26JUN30CIVNOR-CIVFKESSI79",
+  "title": "Franck Kessie",
+  "yes_ask": "0.1800"
+ },
+ {
+  "type": "KXWCSOA",
+  "ticker": "KXWCSOA-26JUN30CIVNOR-NORMODEGA8",
+  "title": "Martin Odegaard",
+  "yes_ask": "0.6300"
+ },
+ {
+  "type": "KXWCSOA",
+  "ticker": "KXWCSOA-26JUN30CIVNOR-NOREHAALA9",
+  "title": "Erling Haaland",
+  "yes_ask": "0.6100"
+ },
+ {
+  "type": "KXWCSOA",
+  "ticker": "KXWCSOA-26JUN30CIVNOR-NORANUSA7",
+  "title": "Antonio Nusa",
+  "yes_ask": "0.2800"
+ },
+ {
+  "type": "KXWCSOA",
+  "ticker": "KXWCSOA-26JUN30CIVNOR-CIVADIALL16",
+  "title": "Amad Diallo",
+  "yes_ask": "0.2200"
+ },
+ {
+  "type": "KXWC1H",
+  "ticker": "KXWC1H-26JUN30CIVNOR-TIE",
+  "title": "Tie 1st Half",
+  "yes_ask": "0.4400"
+ },
+ {
+  "type": "KXWC1H",
+  "ticker": "KXWC1H-26JUN30CIVNOR-NOR",
+  "title": "Norway wins 1st Half",
+  "yes_ask": "0.3600"
+ },
+ {
+  "type": "KXWC1H",
+  "ticker": "KXWC1H-26JUN30CIVNOR-CIV",
+  "title": "Ivory Coast wins 1st Half",
+  "yes_ask": "0.2200"
+ },
+ {
+  "type": "KXWC2H",
+  "ticker": "KXWC2H-26JUN30CIVNOR-TIE",
+  "title": "Tie 2nd Half",
+  "yes_ask": "0.3500"
+ },
+ {
+  "type": "KXWC2H",
+  "ticker": "KXWC2H-26JUN30CIVNOR-NOR",
+  "title": "Norway wins 2nd Half",
+  "yes_ask": "0.4000"
+ },
+ {
+  "type": "KXWC2H",
+  "ticker": "KXWC2H-26JUN30CIVNOR-CIV",
+  "title": "Ivory Coast wins 2nd Half",
+  "yes_ask": "0.2500"
+ },
+ {
+  "type": "KXWCFTTS",
+  "ticker": "KXWCFTTS-26JUN30CIVNOR-NOR",
+  "title": "Norway",
+  "yes_ask": "0.5600"
+ },
+ {
+  "type": "KXWCFTTS",
+  "ticker": "KXWCFTTS-26JUN30CIVNOR-NONE",
+  "title": "No Goal",
+  "yes_ask": "0.0700"
+ },
+ {
+  "type": "KXWCFTTS",
+  "ticker": "KXWCFTTS-26JUN30CIVNOR-CIV",
+  "title": "Ivory Coast",
+  "yes_ask": "0.4000"
+ },
+ {
+  "type": "KXWC1HTOTAL",
+  "ticker": "KXWC1HTOTAL-26JUN30CIVNOR-4",
+  "title": "Over 3.5 1H goals scored",
+  "yes_ask": "0.0400"
+ },
+ {
+  "type": "KXWC1HTOTAL",
+  "ticker": "KXWC1HTOTAL-26JUN30CIVNOR-3",
+  "title": "Over 2.5 1H goals scored",
+  "yes_ask": "0.1200"
+ },
+ {
+  "type": "KXWC1HTOTAL",
+  "ticker": "KXWC1HTOTAL-26JUN30CIVNOR-2",
+  "title": "Over 1.5 1H goals scored",
+  "yes_ask": "0.3300"
+ },
+ {
+  "type": "KXWC1HTOTAL",
+  "ticker": "KXWC1HTOTAL-26JUN30CIVNOR-1",
+  "title": "Over 0.5 1H goals scored",
+  "yes_ask": "0.6900"
+ },
+ {
+  "type": "KXWC2HTOTAL",
+  "ticker": "KXWC2HTOTAL-26JUN30CIVNOR-4",
+  "title": "Over 3.5 2H goals scored",
+  "yes_ask": "0.0600"
+ },
+ {
+  "type": "KXWC2HTOTAL",
+  "ticker": "KXWC2HTOTAL-26JUN30CIVNOR-3",
+  "title": "Over 2.5 2H goals scored",
+  "yes_ask": "0.2200"
+ },
+ {
+  "type": "KXWC2HTOTAL",
+  "ticker": "KXWC2HTOTAL-26JUN30CIVNOR-2",
+  "title": "Over 1.5 2H goals scored",
+  "yes_ask": "0.4700"
+ },
+ {
+  "type": "KXWC2HTOTAL",
+  "ticker": "KXWC2HTOTAL-26JUN30CIVNOR-1",
+  "title": "Over 0.5 2H goals scored",
+  "yes_ask": "0.7900"
+ },
+ {
+  "type": "KXWCADVANCE",
+  "ticker": "KXWCADVANCE-26JUN30CIVNOR-NOR",
+  "title": "Norway advances",
+  "yes_ask": "0.6500"
+ },
+ {
+  "type": "KXWCADVANCE",
+  "ticker": "KXWCADVANCE-26JUN30CIVNOR-CIV",
+  "title": "Ivory Coast advances",
+  "yes_ask": "0.3600"
+ }
+]

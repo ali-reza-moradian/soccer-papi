@@ -187,22 +187,11 @@ class MarketData:
     def kalshi_ask_ladder(self, ticker: str, side: str = "YES") -> list[tuple[float, float]]:
         """Ascending (price_dollars, size) ladder to BUY ``side`` on the LIVE Kalshi book.
 
-        Buying YES lifts the complements of resting NO bids: a NO bid at c cents implies a YES
-        offer at (100-c) cents. Symmetric for buying NO."""
-        raw = self._kalshi().orderbook(ticker)
-        ob = (raw or {}).get("orderbook", raw) or {}
-        opp = "no" if str(side).upper() == "YES" else "yes"
-        out: list[tuple[float, float]] = []
-        for lvl in ob.get(opp) or []:
-            try:
-                c, size = float(lvl[0]), float(lvl[1])
-            except (TypeError, ValueError, IndexError):
-                continue
-            price = (100.0 - c) / 100.0
-            if 0.0 < price < 1.0 and size > 0:
-                out.append((price, size))
-        out.sort(key=lambda x: x[0])
-        return out
+        Buying YES lifts the complements of resting NO bids: a NO bid at n implies a YES offer at
+        (1-n). The schema-aware reader in src.kalshi handles BOTH the new orderbook_fp (yes_dollars/
+        no_dollars) and the legacy integer-cent orderbook, so the two paths can't drift."""
+        from src.kalshi import ask_ladder
+        return ask_ladder(self._kalshi().orderbook(ticker), side)
 
     def poly_ask_ladder(self, token_id: str) -> list[tuple[float, float]]:
         """Ascending (price, size) ladder to BUY the LIVE Polymarket token (CLOB best-ask side)."""

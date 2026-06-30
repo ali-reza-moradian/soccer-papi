@@ -164,6 +164,28 @@ class PolymarketClient:
         1x2 negRisk event and NOT surfaced by /public-search."""
         return self._get(self.gamma_base + "/events", {"slug": slug})
 
+    def events_by_series(self, series_slug: str, *, closed: Optional[bool] = False,
+                         page_limit: int = 100, max_pages: int = 50) -> list[dict]:
+        """GET /events?series_slug=<...> PAGINATED (offset) -> the flat list of every event in a series
+        (each with nested markets). This is how to enumerate ALL of a game's sibling events: a WC game
+        is one 1x2 event PLUS many siblings ('<slug>-more-markets', '-total-corners', '-exact-score',
+        '-halftime-result', '-player-props', …) that /public-search does NOT surface by slug. Filter
+        the returned events by ``slug.startswith(<game-slug>)`` to get one game's full market set."""
+        out: list[dict] = []
+        for page in range(max_pages):
+            params: dict[str, Any] = {"series_slug": series_slug, "limit": page_limit,
+                                      "offset": page * page_limit}
+            if closed is not None:
+                params["closed"] = "true" if closed else "false"
+            data = self._get(self.gamma_base + "/events", params)
+            batch = data if isinstance(data, list) else (
+                data.get("events") if isinstance(data, dict) else None)
+            batch = [e for e in (batch or []) if isinstance(e, dict)]
+            out.extend(batch)
+            if len(batch) < page_limit:
+                break
+        return out
+
     # -- CLOB (prices + depth) ----------------------------------------------
     def book(self, token_id: str) -> Any:
         """GET /book?token_id= — full resting order book (bids/asks each {price,size}). Best ask =

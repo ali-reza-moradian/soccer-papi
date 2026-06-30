@@ -672,14 +672,15 @@ def _merge_kalshi(cfg, cats, by_fixture, raw_by_fixture, now, log) -> dict[str, 
             return {}
         index = theoddsapi.build_market_index(cats.get("markets") or [], cfg.sport_id)
         client = kalshi.KalshiClient(base_url=base_url)
-        markets = client.iter_markets(series_ticker=series, status="open")
-        # SAFE-TIER extras: also pull total-goals O/U (KXWCTOTAL) and BTTS (KXWCBTTS) — same
-        # regulation settlement as the 1x2 result, so they are settlement-compatible (see audit).
-        # Empty/blank config disables a tier. merge_into groups all three series by game key.
-        for extra in (str(cfg.kalshi_opt("totals_series", "") or ""),
-                      str(cfg.kalshi_opt("btts_series", "") or "")):
-            if extra:
-                markets += client.iter_markets(series_ticker=extra, status="open")
+        # Targeted discovery: address each fixture's event DIRECTLY by its <SERIES>-<YYMMMDD><A3><H3>
+        # ticker (teams + date), pulling the regulation moneyline (KXWCGAME) plus the SAFE-TIER extras
+        # — total-goals O/U (KXWCTOTAL) and BTTS (KXWCBTTS), same regulation settlement as the 1x2 so
+        # they are settlement-compatible (see audit). A per-series sweep is the fallback for any fixture
+        # not addressable by ticker. Empty/blank config disables a tier. merge_into groups by game key.
+        extra_series = tuple(s for s in (str(cfg.kalshi_opt("totals_series", "") or ""),
+                                         str(cfg.kalshi_opt("btts_series", "") or "")) if s)
+        markets = kalshi.discover_markets(client, by_fixture, result_series=series,
+                                          extra_series=extra_series, log=log)
         cov, kalshi_books = kalshi.merge_into(raw_by_fixture, by_fixture, index, markets, now=now, log=log)
         for line in cov.lines():
             log.info("%s", line)

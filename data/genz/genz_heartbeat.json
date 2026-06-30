@@ -1,0 +1,9 @@
+{
+  "last_cycle_utc": "2026-06-30T21:03:46Z",
+  "games": 8,
+  "nodes_priced": 502,
+  "nodes_unpriced": 2,
+  "markets_skipped": 34,
+  "arbs_found": 13,
+  "would_trade": 4
+}
