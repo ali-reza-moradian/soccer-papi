@@ -492,6 +492,12 @@
     "slug": "betparx"
   },
   {
+    "bookmakerName": "betPawa CM",
+    "cloneOf": null,
+    "liveOdds": null,
+    "slug": "betpawa.cm"
+  },
+  {
     "bookmakerName": "BetPlay",
     "cloneOf": null,
     "liveOdds": true,
@@ -838,6 +844,12 @@
     "cloneOf": null,
     "liveOdds": true,
     "slug": "duelbits"
+  },
+  {
+    "bookmakerName": "Fortuna PL",
+    "cloneOf": null,
+    "liveOdds": null,
+    "slug": "efortuna.pl"
   },
   {
     "bookmakerName": "Fortuna RO",
