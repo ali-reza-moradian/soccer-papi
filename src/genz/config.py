@@ -7,9 +7,11 @@ defaults (enabled:false / dry_run:true) GenZ measures only.
 """
 from __future__ import annotations
 
+import glob
 import os
 from dataclasses import dataclass, field
-from typing import Any
+from datetime import datetime, timezone
+from typing import Any, Optional
 
 import yaml
 
@@ -20,8 +22,20 @@ DEFAULT_CONFIG_PATH = os.path.join(REPO_ROOT, "config.yaml")
 GENZ_DIR = os.path.join(REPO_ROOT, "data", "genz")
 MATCH_TREE_PATH = os.path.join(GENZ_DIR, "match_tree.json")
 TREE_META_PATH = os.path.join(GENZ_DIR, "tree_meta.json")
-ARBS_CSV_PATH = os.path.join(GENZ_DIR, "genz_arbs.csv")
+ARBS_CSV_PATH = os.path.join(GENZ_DIR, "genz_arbs.csv")           # legacy single file (still read)
 HEARTBEAT_PATH = os.path.join(GENZ_DIR, "genz_heartbeat.json")
+
+
+def arbs_path_for(now: Optional[datetime] = None) -> str:
+    """The DATED genz_arbs file for the day (rotation) — data/genz/genz_arbs_YYYYMMDD.csv — so a
+    multi-day run doesn't grow one giant file. The report/dashboard read across all of them."""
+    now = now or datetime.now(timezone.utc)
+    return os.path.join(GENZ_DIR, f"genz_arbs_{now.strftime('%Y%m%d')}.csv")
+
+
+def arbs_csv_paths() -> list[str]:
+    """Every genz_arbs csv (the legacy base + all dated files), sorted — the full evidence base."""
+    return sorted(glob.glob(os.path.join(GENZ_DIR, "genz_arbs*.csv")))
 
 # Every per-type Kalshi WC series we enumerate per game (KXWCGAME first = the 1x2 spine). Any other
 # KXWC* series discovered for a game's event suffix is pulled too (tree_builder is not limited to

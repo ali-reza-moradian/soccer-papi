@@ -22,4 +22,4 @@ Two jobs (mirrors a proven 10s cross-market bot):
 """
 from __future__ import annotations
 
-__all__ = ["match_rules", "tree_builder", "engine", "config"]
+__all__ = ["match_rules", "tree_builder", "engine", "config", "report"]

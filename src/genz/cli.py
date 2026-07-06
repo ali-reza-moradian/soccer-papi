@@ -102,6 +102,20 @@ def cmd_run(args) -> int:
 # --------------------------------------------------------------------------- #
 # status                                                                        #
 # --------------------------------------------------------------------------- #
+def cmd_report(args) -> int:
+    """Read the genz_arbs feed and print UNIQUE arbs ranked by persistence (seen_count) — so the
+    dry-run evidence is readable without drowning in duplicate per-cycle rows."""
+    from . import report
+    rows = report.read_rows()
+    if not rows:
+        print("No genz_arbs rows yet (data/genz/genz_arbs*.csv). Let the loop run first.")
+        return 0
+    uniques = report.aggregate(rows)
+    print(f"{len(rows)} raw row(s) -> {len(uniques)} unique arb(s).")
+    print(report.format_report(uniques, limit=args.limit))
+    return 0
+
+
 def cmd_status(args) -> int:
     gz_config.ensure_dirs()
     exec_cfg = exec_config.load_exec_config()
@@ -136,6 +150,10 @@ def build_parser() -> argparse.ArgumentParser:
     rn.add_argument("--debug-gate", dest="debug_gate", action="store_true",
                     help="print per-game kickoff/now/started + each totals node's exact legs; then exit.")
     rn.set_defaults(func=cmd_run)
+
+    rp = sub.add_parser("report", help="print UNIQUE arbs from the feed, ranked by persistence.")
+    rp.add_argument("--limit", type=int, default=50, help="max unique arbs to show (default 50).")
+    rp.set_defaults(func=cmd_report)
 
     st = sub.add_parser("status", help="print config + last heartbeat.")
     st.set_defaults(func=cmd_status)

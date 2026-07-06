@@ -412,7 +412,8 @@ def run_cycle(tree: dict[str, Any], md: Any, gz_cfg: gz_config.GenzConfig,
                       markets_skipped=markets_skipped, rows=rows)
     if write:
         if rows:
-            append_arbs(rows, arbs_path)
+            # Rotate daily: append to genz_arbs_YYYYMMDD.csv (unless a path is given explicitly).
+            append_arbs(rows, arbs_path or gz_config.arbs_path_for(now))
         write_heartbeat(res, now=now, path=heartbeat_path)
     if log:
         log.info("[GENZ] cycle: %d game(s), %d node(s) priced (%d unpriced), %d market(s) skipped, "

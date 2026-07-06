@@ -18,6 +18,7 @@ import streamlit as st
 from ..executor.resolve import MarketData
 from . import config as gz_config
 from . import engine as gz_engine
+from . import report as gz_report
 from . import tree_builder
 
 
@@ -106,12 +107,24 @@ def main() -> None:
                 st.dataframe(pd.DataFrame(unmatched), use_container_width=True, hide_index=True)
 
     st.divider()
-    st.subheader("genz_arbs feed")
-    if os.path.exists(gz_config.ARBS_CSV_PATH):
-        arbs = pd.read_csv(gz_config.ARBS_CSV_PATH).tail(200).iloc[::-1]
-        st.dataframe(arbs, use_container_width=True, hide_index=True)
+    st.subheader("genz_arbs — unique arbs by persistence")
+    st.caption("The feed appends a row every cycle, so this DEDUPES on (game, market_type, line, "
+               "side_a, side_b): seen_count = how many cycles the arb recurred (persistence = real; "
+               "flash-once = noise), with latest price + first/last-seen.")
+    rows = gz_report.read_rows()
+    if rows:
+        uniques = gz_report.rank(gz_report.aggregate(rows))
+        cols = ["seen_count", "first_seen", "last_seen", "game", "market_type", "line",
+                "side_a", "venue_a", "price_a", "side_b", "venue_b", "price_b",
+                "latest_implied_cost", "median_implied_cost", "latest_roi_pct",
+                "would_trade", "latest_status", "confidence"]
+        df = pd.DataFrame(uniques)
+        st.dataframe(df[[c for c in cols if c in df.columns]], use_container_width=True, hide_index=True)
+        st.caption(f"{len(rows)} raw row(s) collapsed to {len(uniques)} unique arb(s).")
+        with st.expander("raw feed (latest 200 rows)"):
+            st.dataframe(pd.DataFrame(rows).tail(200).iloc[::-1], use_container_width=True, hide_index=True)
     else:
-        st.write("No detected arbs logged yet (data/genz/genz_arbs.csv).")
+        st.write("No detected arbs logged yet (data/genz/genz_arbs*.csv).")
 
 
 if __name__ == "__main__":

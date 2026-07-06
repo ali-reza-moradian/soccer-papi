@@ -353,3 +353,72 @@ def test_one_trade_attempt_per_cycle(monkeypatch):
     eng.run_cycle(_tree(), md, GZ, live_cfg, now=NOW, kalshi=_NoTrade(), poly=_NoTrade(), write=False)
     assert len(calls) == 2                                      # two arbs evaluated
     assert sum(1 for c in calls if c) == 1                     # exactly ONE live attempt (the rail)
+
+
+def test_trade_attempts_key_on_opportunity_not_csv_rows(tmp_path, monkeypatch):
+    """A single arb logged on EVERY cycle (duplicate CSV rows) must NEVER count as multiple trade
+    attempts: the executor rail dedups on the live OPPORTUNITY (fingerprint), not CSV rows. Four live
+    cycles with a SHARED guard place the arb exactly ONCE (cooldown/fingerprint-dedupe block cycles
+    2-4), even though 4 rows are appended."""
+    from src.executor import config as ex_cfg
+    from src.executor.guardrails import Guardrails
+    from src.executor.ledger import Ledger
+    from src.genz import report
+    monkeypatch.setattr(ex_cfg, "stop_file_present", lambda *a, **k: False)     # no STOP in the test env
+
+    placed = {"kalshi": [], "poly": []}
+
+    class _KalshiExec:
+        def place_order(self, ticker, side, size, limit, **kw):
+            placed["kalshi"].append(ticker)
+            return {"fill_count": size, "avg_price": limit}
+
+        def get_positions(self):
+            return []
+
+    class _PolyExec:
+        def place_order(self, token, limit, size, side, **kw):
+            placed["poly"].append(token)
+            return {"shares": size, "avg_price": limit}
+
+    # CANMAR corners 8.5 arb (corners are NOT totals-gated): best over 0.45 + best under 0.50 = 0.95.
+    tree = {"games": {"CANMAR": {"away": "Canada", "home": "Morocco", "nodes": [
+        _node("corners", "corners|8.5", "over", 8.5, "2way", "high", "K_O", "YES", "P_O"),
+        _node("corners", "corners|8.5", "under", 8.5, "2way", "high", "K_U", "NO", "P_U"),
+    ]}}}
+    md = _MD({("kalshi", "K_O"): [(0.45, 100000)], ("poly", "P_O"): [(0.48, 100000)],
+              ("kalshi", "K_U"): [(0.55, 100000)], ("poly", "P_U"): [(0.50, 100000)]})
+    cfg = ExecConfig(enabled=True, dry_run=False, require_human_confirm=False)
+    ledger = Ledger(path=str(tmp_path / "ledger.csv"))
+    guard = Guardrails(cfg, ledger=ledger, stop_path=str(tmp_path / "NO_STOP"))
+    arbs_path = str(tmp_path / "genz_arbs.csv")
+    for _ in range(4):
+        eng.run_cycle(tree, md, GZ, cfg, now=NOW, kalshi=_KalshiExec(), poly=_PolyExec(),
+                      ledger=ledger, guard=guard, write=True, arbs_path=arbs_path,
+                      heartbeat_path=str(tmp_path / "hb.json"))
+
+    import csv as _csv
+    with open(arbs_path, encoding="utf-8") as fh:
+        rows = list(_csv.DictReader(fh))
+    assert len(rows) == 4                                       # duplicate per-cycle rows (the readability problem)
+    assert len(placed["kalshi"]) == 1 and len(placed["poly"]) == 1   # PLACED once — deduped on the opportunity
+    uniq = report.aggregate(rows)
+    assert len(uniq) == 1 and uniq[0]["seen_count"] == 4        # 4 rows collapse to ONE unique arb
+
+
+def test_run_cycle_rotates_arbs_csv_daily(tmp_path, monkeypatch):
+    """With no explicit path, a cycle appends to the DATED file genz_arbs_YYYYMMDD.csv (daily
+    rotation) so a multi-day run never grows one giant file."""
+    import os
+    monkeypatch.setattr(eng.gz_config, "GENZ_DIR", str(tmp_path))
+    tree = {"games": {"G1": {"away": "A", "home": "H", "nodes": [
+        _node("corners", "corners|8.5", "over", 8.5, "2way", "high", "K_O", "YES", "P_O"),
+        _node("corners", "corners|8.5", "under", 8.5, "2way", "high", "K_U", "NO", "P_U"),
+    ]}}}
+    md = _MD({("kalshi", "K_O"): [(0.45, 100000)], ("poly", "P_O"): [(0.48, 100000)],
+              ("kalshi", "K_U"): [(0.55, 100000)], ("poly", "P_U"): [(0.50, 100000)]})
+    day = datetime(2026, 7, 3, 12, 0, 0, tzinfo=timezone.utc)
+    eng.run_cycle(tree, md, GZ, ExecConfig(), now=day, kalshi=_NoTrade(), poly=_NoTrade(),
+                  write=True, heartbeat_path=str(tmp_path / "hb.json"))
+    assert os.path.exists(tmp_path / "genz_arbs_20260703.csv")  # dated (rotated) file
+    assert not os.path.exists(tmp_path / "genz_arbs.csv")       # NOT the legacy single file
