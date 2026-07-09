@@ -33,6 +33,41 @@ from . import match_rules as mr
 # code (lowercase FIFA) -> canonical team name, inverted from the Polymarket source's curated map.
 _CODE_TO_NAME: dict[str, str] = {code: name for name, code in pm._FIFA_CODES_RAW.items()}
 
+# Kalshi uses FIFA-style 3-letter codes; Polymarket uses ISO 3166-1 alpha-3. Where they DIFFER, the
+# constructed fifwc-<away>-<home>-<date> slug is wrong and finds NO Poly event, silently dropping the
+# game (confirmed live: Portugal is POR on Kalshi / PRT on Poly; Switzerland SUI / CHE). This maps the
+# Kalshi (FIFA) code -> the Poly (ISO alpha-3) code for the mismatches; the primary slug uses it and
+# the series-scan fallback (resolve_poly_slug) catches anything not listed here.
+_KALSHI_TO_POLY_CODE: dict[str, str] = {
+    "por": "prt", "sui": "che", "cro": "hrv", "ned": "nld", "ger": "deu", "den": "dnk", "uru": "ury",
+    "rsa": "zaf", "par": "pry", "chi": "chl", "uae": "are", "alg": "dza", "bul": "bgr", "gre": "grc",
+    "crc": "cri", "hai": "hti", "hon": "hnd", "gui": "gin", "mtn": "mrt", "tog": "tgo", "zam": "zmb",
+    "vie": "vnm", "oma": "omn", "kuw": "kwt", "sud": "sdn", "mad": "mdg", "gam": "gmb", "tri": "tto",
+    "sin": "sgp", "tan": "tza", "nig": "ner", "nca": "nic", "gua": "gtm", "phi": "phl", "mas": "mys",
+    "sri": "lka", "lib": "lbn", "bur": "bfa", "ang": "ago", "mri": "mus", "esa": "slv",
+}
+_POLY_TO_KALSHI_CODE: dict[str, str] = {v: k for k, v in _KALSHI_TO_POLY_CODE.items()}
+
+
+def _poly_code(kalshi_code: str) -> str:
+    """Kalshi/FIFA 3-letter code -> the Polymarket (ISO alpha-3) code, translated where they differ."""
+    k = str(kalshi_code or "").lower()
+    return _KALSHI_TO_POLY_CODE.get(k, k)
+
+
+def _poly_codes_for(kalshi_code: str) -> set:
+    """The Poly codes a Kalshi code may appear as: its ISO translation AND the raw code itself."""
+    k = str(kalshi_code or "").lower()
+    return {k, _poly_code(k)}
+
+
+def _poly_code_name(code: str) -> str:
+    """Normalized team NAME for a Polymarket code (ISO alpha-3, else raw), via the reverse table + the
+    FIFA code->name map. '' if the code isn't a known WC nation."""
+    c = str(code or "").lower()
+    name = _CODE_TO_NAME.get(_POLY_TO_KALSHI_CODE.get(c, c))
+    return mr._team(name) if name else ""
+
 # Recognized Polymarket sibling-slug suffixes -> the market KIND we parse them as. The builder
 # discovers siblings dynamically by game-slug PREFIX; this only classifies what it finds.
 _POLY_SIBLINGS: list[tuple[str, str]] = [
@@ -113,10 +148,16 @@ def discover_games(kalshi_client: Any, *, now: datetime, lookahead_hours: float,
             continue
         home = _CODE_TO_NAME.get(home_c, home_c.upper())
         away = _CODE_TO_NAME.get(away_c, away_c.upper())
-        base = f"fifwc-{away_c}-{home_c}-{date}"
-        alt = f"fifwc-{home_c}-{away_c}-{date}"
+        # Build the Poly slug from the TRANSLATED (ISO) codes; keep the raw codes + both orderings as
+        # alternates. A leftover code mismatch is caught by resolve_poly_slug's series scan.
+        pa, ph = _poly_code(away_c), _poly_code(home_c)
+        slugs: list[str] = []
+        for a, b in ((pa, ph), (ph, pa), (away_c, home_c), (home_c, away_c)):
+            s = f"fifwc-{a}-{b}-{date}"
+            if s not in slugs:
+                slugs.append(s)
         games[suffix] = Game(game_id=suffix, kalshi_suffix=suffix, date=date, home=home, away=away,
-                             kickoff_iso=kickoff, poly_base_slug=base, poly_slug_alts=[base, alt])
+                             kickoff_iso=kickoff, poly_base_slug=slugs[0], poly_slug_alts=slugs)
     return list(games.values())
 
 
@@ -174,6 +215,39 @@ def _parse_iso(v: Any) -> Optional[float]:
 
 
 # --------------------------------------------------------------------------- #
+# Settlement PERIOD — parse each market's resolution text (regulation vs full game)#
+# --------------------------------------------------------------------------- #
+# Kalshi and Polymarket settle full-match COUNT markets on DIFFERENT periods (Kalshi = full game incl.
+# extra time; Poly = 90'+stoppage only). We read each venue's resolution description so a period
+# mismatch is never paired (see join_game) or traded (see the engine guard).
+_KALSHI_DESC_KEYS = ("rules_primary", "rules_secondary", "settlement_sources", "subtitle", "description")
+_POLY_DESC_KEYS = ("description", "resolutionSource", "rules", "resolution")
+
+
+def _kalshi_desc(m: dict) -> str:
+    return " ".join(str(m.get(k) or "") for k in _KALSHI_DESC_KEYS)
+
+
+def _poly_desc(m: dict) -> str:
+    return " ".join(str(m.get(k) or "") for k in _POLY_DESC_KEYS)
+
+
+def _poly_token_periods(events: list[dict]) -> dict[str, Optional[str]]:
+    """clob_token_id -> settlement period (parsed from each market's description). Both tokens of a
+    binary market share the market's period."""
+    out: dict[str, Optional[str]] = {}
+    for ev in events:
+        for m in ev.get("markets") or []:
+            if not isinstance(m, dict):
+                continue
+            period = mr.parse_settlement_period(_poly_desc(m))
+            for tok in pm._as_list(m.get("clobTokenIds")):
+                if tok:
+                    out[str(tok)] = period
+    return out
+
+
+# --------------------------------------------------------------------------- #
 # Kalshi side: enumerate all per-type series for the game                        #
 # --------------------------------------------------------------------------- #
 def kalshi_options(kalshi_client: Any, game: Game, series_list: list[str],
@@ -199,12 +273,13 @@ def kalshi_options(kalshi_client: Any, game: Game, series_list: list[str],
         for m in (page or {}).get("markets") or []:
             if not isinstance(m, dict):
                 continue
+            period = mr.parse_settlement_period(_kalshi_desc(m))   # regulation vs full game (incl. ET)
             for outcome, side in mr.kalshi_outcomes(m, game.ctx):
                 options.setdefault(outcome.twin_key(), {
                     "market_type": outcome.market_type, "market_key": outcome.group,
                     "side": outcome.side, "line": outcome.line, "kind": outcome.kind,
                     "confidence": outcome.confidence, "outcome_label": outcome.label or outcome.side,
-                    "kalshi_ticker": m.get("ticker"), "kalshi_side": side,
+                    "kalshi_ticker": m.get("ticker"), "kalshi_side": side, "settle_period": period,
                 })
     return options, {"ok": ok, "failed": failed}
 
@@ -241,6 +316,74 @@ def game_sibling_events(series_events: list[dict], game: Game) -> list[dict]:
     return list(out.values())
 
 
+_GAME_SLUG_RE = re.compile(r"^(fifwc-([a-z]{3})-([a-z]{3})-(\d{4}-\d{2}-\d{2}))")
+
+
+def _parse_game_slug(slug: str) -> Optional[tuple[str, str, str, str]]:
+    """(game_key, code_a, code_b, date) from a fifwc event slug (base OR sibling), or None. game_key is
+    the 'fifwc-<a>-<b>-<date>' prefix shared by a game's 1x2 event and all its siblings."""
+    m = _GAME_SLUG_RE.match(str(slug or "").lower())
+    return (m.group(1), m.group(2), m.group(3), m.group(4)) if m else None
+
+
+def _event_team_names(events: list[dict]) -> Optional[set]:
+    """The normalized team-name pair from a group's base 1x2 event (parse_event_legs), or None. This
+    is TABLE-INDEPENDENT — it reads Polymarket's own team names, so it resolves even a code mismatch
+    we haven't listed."""
+    for ev in events:
+        parsed = pm.parse_event_legs(ev)                   # only the base 1x2 event parses to legs
+        if parsed:
+            names = {mr._team(l.team) for l in parsed.legs if l.role == "team" and l.team}
+            if len(names) == 2:
+                return names
+    return None
+
+
+def resolve_poly_slug(game: Game, series_events: list[dict], log: Any = None) -> bool:
+    """Guarantee the game's Poly slug resolves to real events. If the primary slug already matches
+    (via the translation table), keep it. OTHERWISE fall back to SCANNING the soccer-fifwc series for
+    an event whose DATE and both TEAMS match this game — matched by the code table OR by Polymarket's
+    OWN team names — so a 3-letter-code mismatch can NEVER silently drop a game. Updates
+    game.poly_base_slug/alts and logs a WARNING when the fallback fires. Returns True if resolved."""
+    if game_sibling_events(series_events, game):
+        return True                                        # primary slug already works
+    decoded = _decode_suffix(game.kalshi_suffix)
+    if not decoded:
+        return False
+    _, away_c, home_c = decoded
+    acc_away, acc_home = _poly_codes_for(away_c), _poly_codes_for(home_c)
+    game_teams = {mr._team(game.home), mr._team(game.away)}
+
+    groups: dict[str, list[dict]] = {}                     # date-matching series events grouped by game_key
+    for ev in series_events:
+        if not isinstance(ev, dict) or ev.get("closed"):
+            continue
+        parsed = _parse_game_slug(ev.get("slug") or "")
+        if parsed and parsed[3] == game.date:
+            groups.setdefault(parsed[0], []).append(ev)
+
+    for game_key, evs in groups.items():
+        _, ca, cb, _d = _parse_game_slug(game_key)
+        code_ok = (ca in acc_away and cb in acc_home) or (ca in acc_home and cb in acc_away)
+        table_names = {_poly_code_name(ca), _poly_code_name(cb)}
+        name_ok = "" not in table_names and table_names == game_teams
+        event_names = _event_team_names(evs)               # table-independent (Poly's own names)
+        own_ok = event_names is not None and event_names == game_teams
+        if code_ok or name_ok or own_ok:
+            how = "code table" if code_ok else ("code->name" if name_ok else "poly event names")
+            game.poly_base_slug = game_key
+            game.poly_slug_alts = [game_key]
+            if log:
+                log.warning("[GENZ] %s %s vs %s: primary Poly slug missed (code mismatch) — resolved "
+                            "via %s to %s.", game.game_id, game.away, game.home, how, game_key)
+            return True
+
+    if log:
+        log.warning("[GENZ] %s %s vs %s: NO Poly event matched (tried slug %s) — one-sided this build.",
+                    game.game_id, game.away, game.home, game.poly_base_slug)
+    return False
+
+
 def _poly_kind(slug: str, game: Game) -> str:
     """Classify a Polymarket event by its slug suffix relative to the game base slug(s)."""
     bases = (game.poly_base_slug, *game.poly_slug_alts)
@@ -265,7 +408,9 @@ def poly_options(series_events: list[dict], game: Game, log: Any = None) -> tupl
     options: dict[str, dict] = {}
     ok = 0
     failed: list[str] = []
-    for ev in game_sibling_events(series_events, game):
+    sibs = game_sibling_events(series_events, game)
+    token_periods = _poly_token_periods(sibs)              # clob token -> settlement period (reg / full game)
+    for ev in sibs:
         slug = str(ev.get("slug") or "")
         try:
             outs = _poly_event_outcomes(ev, _poly_kind(slug, game), game)
@@ -284,6 +429,7 @@ def poly_options(series_events: list[dict], game: Game, log: Any = None) -> tupl
                 "side": outcome.side, "line": outcome.line, "kind": outcome.kind,
                 "confidence": outcome.confidence, "outcome_label": outcome.label or outcome.side,
                 "poly_token_id": str(token), "poly_side": poly_side,
+                "settle_period": token_periods.get(str(token)),
             })
     return options, {"ok": ok, "failed": failed}
 
@@ -510,30 +656,53 @@ def _poly_spread_outcomes(sp: dict, game: Game) -> list[tuple[mr.Outcome, str, s
 # --------------------------------------------------------------------------- #
 # Join + persist                                                               #
 # --------------------------------------------------------------------------- #
-def join_game(k_opts: dict[str, dict], p_opts: dict[str, dict]) -> tuple[list[dict], list[dict]]:
+def join_game(k_opts: dict[str, dict], p_opts: dict[str, dict],
+              log: Any = None, game_id: str = "") -> tuple[list[dict], list[dict]]:
     """Join Kalshi and Polymarket options by twin_key. A key in BOTH -> a matched node carrying both
-    identifiers; a key in only one -> an unmatched entry (for visibility)."""
+    identifiers; a key in only one -> an unmatched entry (for visibility).
+
+    SETTLEMENT-PERIOD SAFETY: for full-match COUNT markets (corners/goals/team totals) the two venues
+    can settle on DIFFERENT periods (Kalshi full game incl. extra time; Poly 90'+stoppage only). If
+    their parsed periods are BOTH KNOWN and DISAGREE, the two legs are NOT the same bet (in a knockout
+    they can both lose) — so they are NOT paired: both go to `unmatched` with reason
+    'settlement_period_mismatch' and a WARNING is logged. Every count node carries kalshi_period /
+    poly_period so the engine can re-check (belt-and-suspenders)."""
     nodes: list[dict] = []
+    period_mismatch: list[str] = []                        # twin_keys dropped for a period disagreement
     for key in sorted(set(k_opts) | set(p_opts)):
         k, p = k_opts.get(key), p_opts.get(key)
-        if k and p:
-            nodes.append({
-                "twin_key": key,
-                "market_type": k["market_type"], "market_key": k["market_key"], "side": k["side"],
-                "outcome_label": k.get("outcome_label") or p.get("outcome_label"),
-                "line": k["line"], "kind": k["kind"], "confidence": k["confidence"],
-                "kalshi_ticker": k["kalshi_ticker"], "kalshi_side": k["kalshi_side"],
-                "poly_token_id": p["poly_token_id"], "poly_side": p["poly_side"],
-            })
+        if not (k and p):
+            continue
+        kp, pp = k.get("settle_period"), p.get("settle_period")
+        if k["market_type"] in mr.COUNT_MARKETS and kp and pp and kp != pp:
+            period_mismatch.append(key)                    # known disagreement on extra-time inclusion
+            if log:
+                log.warning("[GENZ] %s %s: settlement_period_mismatch — kalshi=%s vs poly=%s; NOT "
+                            "paired (both legs can lose in extra time).", game_id, key, kp, pp)
+            continue
+        nodes.append({
+            "twin_key": key,
+            "market_type": k["market_type"], "market_key": k["market_key"], "side": k["side"],
+            "outcome_label": k.get("outcome_label") or p.get("outcome_label"),
+            "line": k["line"], "kind": k["kind"], "confidence": k["confidence"],
+            "kalshi_ticker": k["kalshi_ticker"], "kalshi_side": k["kalshi_side"],
+            "poly_token_id": p["poly_token_id"], "poly_side": p["poly_side"],
+            "kalshi_period": kp, "poly_period": pp,
+        })
     unmatched: list[dict] = []
-    for key in sorted(set(k_opts) - set(p_opts)):
-        o = k_opts[key]
-        unmatched.append({"venue": "kalshi", "market_type": o["market_type"],
-                          "outcome_label": o.get("outcome_label"), "identifier": o.get("kalshi_ticker")})
-    for key in sorted(set(p_opts) - set(k_opts)):
-        o = p_opts[key]
-        unmatched.append({"venue": "polymarket", "market_type": o["market_type"],
-                          "outcome_label": o.get("outcome_label"), "identifier": o.get("poly_token_id")})
+    mismatch_set = set(period_mismatch)
+    for key in sorted((set(k_opts) - set(p_opts)) | mismatch_set):
+        o = k_opts.get(key)
+        if o:
+            unmatched.append({"venue": "kalshi", "market_type": o["market_type"],
+                              "outcome_label": o.get("outcome_label"), "identifier": o.get("kalshi_ticker"),
+                              "reason": "settlement_period_mismatch" if key in mismatch_set else "one_venue_only"})
+    for key in sorted((set(p_opts) - set(k_opts)) | mismatch_set):
+        o = p_opts.get(key)
+        if o:
+            unmatched.append({"venue": "polymarket", "market_type": o["market_type"],
+                              "outcome_label": o.get("outcome_label"), "identifier": o.get("poly_token_id"),
+                              "reason": "settlement_period_mismatch" if key in mismatch_set else "one_venue_only"})
     return nodes, unmatched
 
 
@@ -549,21 +718,27 @@ def build_tree(kalshi_client: Any, poly_client: Any, cfg: gz_config.GenzConfig, 
     for game in games:
         # A PARTIAL tree is fine: an unexpected error on one game must not kill the rest of the build.
         try:
+            # Correct the Poly slug for Kalshi<->Poly 3-letter-code mismatches (POR/PRT, SUI/CHE, …)
+            # BEFORE reading the Poly side, so a code mismatch can never silently drop a game.
+            resolve_poly_slug(game, series_events, log)
             kickoff = _game_kickoff(game, series_events)   # PRECISE Poly kickoff, else provisional noon
             k_opts, k_cov = kalshi_options(kalshi_client, game, cfg.kalshi_series, log)
             p_opts, p_cov = poly_options(series_events, game, log)
-            nodes, unmatched = join_game(k_opts, p_opts)
+            nodes, unmatched = join_game(k_opts, p_opts, log=log, game_id=game.game_id)
         except Exception as exc:  # noqa: BLE001 - never abort the whole build for one game
             if log:
                 log.warning("[GENZ] %s build failed: %s — skipping this game.", game.game_id, exc)
             continue
+        period_dropped = sum(1 for u in unmatched if u.get("reason") == "settlement_period_mismatch") // 2
         tree["games"][game.game_id] = {
             "kalshi_suffix": game.kalshi_suffix, "poly_base_slug": game.poly_base_slug,
             "home": game.home, "away": game.away, "date": game.date, "kickoff_utc": kickoff,
             "nodes": nodes, "unmatched": unmatched,
-            # coverage: how many series/siblings succeeded vs failed this build (dashboard shows gaps).
+            # coverage: how many series/siblings succeeded vs failed this build (dashboard shows gaps),
+            # plus how many count-market pairs were dropped for a settlement-period mismatch (the trap).
             "coverage": {"kalshi_ok": k_cov["ok"], "kalshi_failed": k_cov["failed"],
-                         "poly_ok": p_cov["ok"], "poly_failed": p_cov["failed"]},
+                         "poly_ok": p_cov["ok"], "poly_failed": p_cov["failed"],
+                         "period_mismatch_dropped": period_dropped},
         }
         if log:
             two_way = sum(1 for n in nodes if n["kind"] == "2way")
@@ -581,9 +756,14 @@ def build_meta(tree: dict[str, Any], *, now: datetime) -> dict[str, Any]:
     coverage = {gid: g.get("coverage", {}) for gid, g in games.items()}
     any_failed = sorted({s for g in games.values()
                          for s in (g.get("coverage", {}).get("kalshi_failed", []))})
+    # Per-game count-market pairs dropped for a settlement-period mismatch (the extra-time trap).
+    period_dropped = {gid: g.get("coverage", {}).get("period_mismatch_dropped", 0)
+                      for gid, g in games.items() if g.get("coverage", {}).get("period_mismatch_dropped")}
     return {"built_utc": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
             "games": sorted(games.keys()), "next_kickoffs": kickoffs[:10],
-            "coverage": coverage, "kalshi_series_failed_any_game": any_failed}
+            "coverage": coverage, "kalshi_series_failed_any_game": any_failed,
+            "period_mismatch_dropped_by_game": period_dropped,
+            "period_mismatch_dropped_total": sum(period_dropped.values())}
 
 
 def write_tree(tree: dict[str, Any], *, now: Optional[datetime] = None,

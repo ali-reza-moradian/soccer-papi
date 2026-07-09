@@ -422,3 +422,126 @@ def test_run_cycle_rotates_arbs_csv_daily(tmp_path, monkeypatch):
                   write=True, heartbeat_path=str(tmp_path / "hb.json"))
     assert os.path.exists(tmp_path / "genz_arbs_20260703.csv")  # dated (rotated) file
     assert not os.path.exists(tmp_path / "genz_arbs.csv")       # NOT the legacy single file
+
+
+# --------------------------------------------------------------------------- #
+# SETTLEMENT-PERIOD GUARD (engine backstop): a count market whose venues settle    #
+# DIFFERENT periods (Kalshi full-game incl. ET vs Poly 90'+stoppage) never trades. #
+# --------------------------------------------------------------------------- #
+def _count_node(mt, mk, side, line, kt, ks, pt, kperiod, pperiod):
+    n = _node(mt, mk, side, line, "2way", "high", kt, ks, pt)
+    n["kalshi_period"], n["poly_period"] = kperiod, pperiod
+    return n
+
+
+_PERIOD_LADDERS = {("kalshi", "K_O"): [(0.45, 100000)], ("poly", "P_O"): [(0.48, 100000)],
+                   ("kalshi", "K_U"): [(0.50, 100000)], ("poly", "P_U"): [(0.52, 100000)]}   # implied 0.95
+
+
+def test_count_market_period_mismatch_rejected_by_engine_guard():
+    """A corners node whose venues carry DIFFERENT settlement periods is rejected (would_trade=False,
+    rejected_period_mismatch) regardless of the ~8% implied sum — both legs can lose in extra time."""
+    tree = {"games": {"PORESP": {"away": "Portugal", "home": "Spain", "nodes": [
+        _count_node("corners", "corners|8.5", "over", 8.5, "K_O", "YES", "P_O", "full_game", "regulation"),
+        _count_node("corners", "corners|8.5", "under", 8.5, "K_U", "NO", "P_U", "full_game", "regulation"),
+    ]}}}
+    res = eng.run_cycle(tree, _MD(_PERIOD_LADDERS), GZ, ExecConfig(), now=NOW,
+                        kalshi=_NoTrade(), poly=_NoTrade(), write=False)
+    assert res.arbs_found == 1 and res.would_trade == 0
+    assert res.rows[0]["exec_status"] == "rejected_period_mismatch"
+    assert res.rows[0]["would_trade"] is False
+
+
+def test_count_market_same_period_is_eligible():
+    """A corners node whose venues settle the SAME period passes the guard and is measured normally."""
+    tree = {"games": {"CANMAR": {"away": "Canada", "home": "Morocco", "nodes": [
+        _count_node("corners", "corners|8.5", "over", 8.5, "K_O", "YES", "P_O", "full_game", "full_game"),
+        _count_node("corners", "corners|8.5", "under", 8.5, "K_U", "NO", "P_U", "full_game", "full_game"),
+    ]}}}
+    res = eng.run_cycle(tree, _MD(_PERIOD_LADDERS), GZ, ExecConfig(), now=NOW,
+                        kalshi=_NoTrade(), poly=_NoTrade(), write=False)
+    assert res.would_trade == 1 and res.rows[0]["exec_status"] == "dryrun"
+
+
+# --------------------------------------------------------------------------- #
+# FULL-MARKET SNAPSHOT: EVERY priced market each cycle (arbs AND non-arbs).       #
+# --------------------------------------------------------------------------- #
+def test_run_cycle_writes_full_market_snapshot(tmp_path):
+    """run_cycle writes genz_snapshot.json with EVERY priced market for a game — arbs AND non-arbs
+    (implied > 1.0) — plus the period fields, written ATOMICALLY (no leftover .tmp)."""
+    import json
+    tree = {"games": {"PORESP": {"away": "Portugal", "home": "Spain",
+                                 "kickoff_utc": "2026-07-06T19:00:00Z", "nodes": [
+        # an ARB (best-of-both implied 0.95)
+        _node("total_goals", "total_goals|2.5", "over", 2.5, "2way", "high", "K_O", "YES", "P_O"),
+        _node("total_goals", "total_goals|2.5", "under", 2.5, "2way", "high", "K_U", "NO", "P_U"),
+        # a NON-ARB (best-of-both implied 1.01, ROI ~ -1%) — must still appear in the snapshot
+        _node("btts", "btts", "yes", None, "2way", "high", "K_BY", "YES", "P_BY"),
+        _node("btts", "btts", "no", None, "2way", "high", "K_BN", "NO", "P_BN"),
+    ]}}}
+    md = _MD({("kalshi", "K_O"): [(0.45, 100000)], ("poly", "P_O"): [(0.48, 100000)],
+              ("kalshi", "K_U"): [(0.55, 100000)], ("poly", "P_U"): [(0.50, 100000)],
+              ("kalshi", "K_BY"): [(0.55, 100000)], ("poly", "P_BY"): [(0.56, 100000)],
+              ("kalshi", "K_BN"): [(0.47, 100000)], ("poly", "P_BN"): [(0.46, 100000)]})
+    snap_path = tmp_path / "genz_snapshot.json"
+    eng.run_cycle(tree, md, GZ, ExecConfig(), now=NOW, kalshi=_NoTrade(), poly=_NoTrade(), write=True,
+                  arbs_path=str(tmp_path / "a.csv"), heartbeat_path=str(tmp_path / "hb.json"),
+                  snapshot_path=str(snap_path))
+
+    assert snap_path.exists() and not (tmp_path / "genz_snapshot.json.tmp").exists()   # atomic
+    snap = json.loads(snap_path.read_text(encoding="utf-8"))
+    assert snap["cycle_utc"] == NOW.strftime("%Y-%m-%dT%H:%M:%SZ")
+    g = snap["games"]["PORESP"]
+    assert g["teams"] == "Portugal vs Spain" and g["started"] is False
+    mkts = {m["market_type"]: m for m in g["markets"]}
+    assert set(mkts) == {"total_goals", "btts"}                       # BOTH priced markets (arb + non-arb)
+    assert mkts["total_goals"]["implied_cost"] < 1.0 and mkts["total_goals"]["would_trade"] is True
+    assert mkts["btts"]["implied_cost"] > 1.0                         # the NON-ARB is present...
+    assert mkts["btts"]["would_trade"] is False and mkts["btts"]["exec_status"] == "no_arb"
+    for m in g["markets"]:                                            # required fields incl. periods + flag
+        for f in ("side_a", "venue_a", "price_a", "side_b", "venue_b", "price_b", "roi_pct",
+                  "kalshi_period", "poly_period", "period_mismatch"):
+            assert f in m
+    assert (tmp_path / "a.csv").exists()                             # genz_arbs.csv still written
+
+
+# --------------------------------------------------------------------------- #
+# DEPTH-AWARE STAKE SIZING: how big is the arb? (max stake before the edge dies)  #
+# --------------------------------------------------------------------------- #
+def test_snapshot_depth_sizing_bounded_by_thinner_leg():
+    """A real arb with a known 2-level book per side: max_stake is bounded by the THINNER leg (the over
+    book's cheap size runs out first), per-leg depth is the dollars fillable within the arb, and the
+    $100 reference profit_usd = total/implied_cost - total. A non-arb leaves every sizing field null."""
+    from src.genz.engine import Market, PricedVenue
+    na = _node("corners", "corners|8.5", "over", 8.5, "2way", "high", "K_O", "YES", "P_O")
+    nb = _node("corners", "corners|8.5", "under", 8.5, "2way", "high", "K_U", "NO", "P_U")
+    market = Market(game="PORESP", away="Portugal", home="Spain", market_type="corners",
+                    market_key="corners|8.5", line=8.5, kind="2way", confidence="high",
+                    kickoff="2026-07-06T19:00:00Z", sides={"over": na, "under": nb})
+    # over: 100 @ 0.45 then 900 @ 0.50  (cheap size ends at 100 shares)
+    # under: 200 @ 0.50 then 800 @ 0.55 (cheap size ends at 200 shares) -> OVER is the thinner leg
+    priced = {
+        ("kalshi", "K_O", "YES"): PricedVenue("kalshi", "K_O", 0.45, 0.45, 4500.0,
+                                              ladder=[(0.45, 100), (0.50, 900)]),
+        ("poly", "P_U", "BUY"): PricedVenue("poly", "P_U", 0.50, 0.50, 5500.0,
+                                            ladder=[(0.50, 200), (0.55, 800)]),
+    }
+    snap = eng._market_snapshot(market, priced)
+    assert snap["implied_cost"] == 0.95                                 # best-of-both top-of-book arb
+    # The marginal walk stops when the over leg steps to 0.50 (its cheap 100 exhausted) and 0.50+0.50=1.0
+    # -> 100 equal shares: 100@0.45 (=$45) on over + 100@0.50 (=$50) on under.
+    assert snap["max_stake_usd"] == 95.0                               # bounded by the thinner (over) leg
+    assert (snap["depth_a_usd"], snap["depth_b_usd"]) == (45.0, 50.0)  # $ fillable per leg within the arb
+    assert snap["profit_at_max_usd"] == 5.0                            # 100 shares payout - $95 cost
+    # $100 reference: split sums to the total, guaranteed profit = total/implied - total.
+    assert snap["profit_usd"] == round(100.0 / 0.95 - 100.0, 2)       # 5.26
+    assert round(snap["split_a_usd"] + snap["split_b_usd"], 2) == 100.0
+
+    # A NON-ARB (implied >= 1) carries NO sizing — every field is null.
+    flat = {
+        ("kalshi", "K_O", "YES"): PricedVenue("kalshi", "K_O", 0.55, 0.55, 5500.0, ladder=[(0.55, 100)]),
+        ("poly", "P_U", "BUY"): PricedVenue("poly", "P_U", 0.50, 0.50, 5000.0, ladder=[(0.50, 200)]),
+    }
+    non_arb = eng._market_snapshot(market, flat)
+    assert non_arb["implied_cost"] >= 1.0
+    assert all(non_arb[k] is None for k in eng._SIZING_FIELDS)

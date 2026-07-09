@@ -321,3 +321,195 @@ def test_meta_and_round_trip(tmp_path):
     tb.write_tree(tree, now=NOW, tree_path=str(tp), meta_path=str(mp))
     assert set(tb.load_tree(str(tp))["games"]) == {SUF}
     assert tb.build_meta(tree, now=NOW)["games"] == [SUF]
+
+
+# --------------------------------------------------------------------------- #
+# Kalshi<->Polymarket 3-letter CODE MISMATCH: Kalshi uses FIFA codes (POR, SUI), #
+# Polymarket uses ISO 3166-1 alpha-3 (PRT, CHE). The Poly slug must still resolve #
+# the game's event (via the table OR the series scan), never silently drop it.    #
+# --------------------------------------------------------------------------- #
+_POR_NOW = datetime(2026, 7, 5, 12, 0, 0, tzinfo=timezone.utc)   # POR-ESP kicks off 2026-07-06
+_POR_SUF = "26JUL06PORESP"                                       # Kalshi: POR (FIFA)
+_PRT_BASE = "fifwc-prt-esp-2026-07-06"                           # Polymarket: PRT (ISO)
+
+
+class _RecLog:
+    """Records WARNING lines so a test can assert the fallback logged (not silent)."""
+    def __init__(self):
+        self.warnings = []
+
+    def warning(self, fmt, *a):
+        self.warnings.append(fmt % a if a else fmt)
+
+    def info(self, *a, **k):
+        pass
+
+
+def _kgame(sub):
+    et = f"KXWCGAME-{_POR_SUF}"
+    return {"event_ticker": et, "ticker": f"{et}-{abs(hash(sub)) % 999}", "yes_sub_title": sub,
+            "title": sub, "status": "active"}
+
+
+_POR_GAME = [_kgame("Portugal"), _kgame("Tie"), _kgame("Spain")]
+_POR_KALSHI = {
+    f"KXWCGAME-{_POR_SUF}": _POR_GAME,
+    f"KXWCTCORNERS-{_POR_SUF}": [{"event_ticker": f"KXWCTCORNERS-{_POR_SUF}",
+                                  "ticker": f"KXWCTCORNERS-{_POR_SUF}-c", "yes_sub_title": "9+ corners",
+                                  "title": "9+ corners", "status": "active"}],
+}
+
+
+class _PorKalshi:
+    def iter_markets(self, *, series_ticker=None, status="open", limit=100, max_pages=50):
+        return list(_POR_GAME) if series_ticker == "KXWCGAME" else []
+
+    def markets(self, *, series_ticker=None, event_ticker=None, status="open", limit=100, cursor=None):
+        return {"markets": list(_POR_KALSHI.get(event_ticker, []))}
+
+
+def _prt_series():
+    """Polymarket events for the game under the ISO slug (PRT), base 1x2 (names Portugal/Spain) +
+    the total-corners sibling."""
+    base = _ev(_PRT_BASE, [_single("Portugal", "p"), _single("Spain", "s"),
+                           {"groupItemTitle": "Draw (Portugal vs. Spain)", "question": "draw?",
+                            "outcomes": ["Yes", "No"], "clobTokenIds": ["d", "dn"]}])
+    corners = _ev(f"{_PRT_BASE}-total-corners", [_ou("O/U 8.5", "co", "cu")])
+    return [base, corners]
+
+
+class _PrtPoly:
+    def events_by_series(self, *a, **k):
+        return _prt_series()
+
+
+def test_poly_slug_built_from_translated_iso_code():
+    """The primary Poly slug uses the ISO code (Kalshi POR -> Poly PRT), keeping the raw code as an
+    alternate — so a known code mismatch resolves on the primary path."""
+    games = tb.discover_games(_PorKalshi(), now=_POR_NOW, lookahead_hours=48)
+    g = next(x for x in games if x.game_id == _POR_SUF)
+    assert g.poly_base_slug == _PRT_BASE                        # fifwc-prt-esp-... (translated), not -por-
+    assert any("-por-" in s for s in g.poly_slug_alts)         # raw FIFA code kept as a fallback alt
+
+
+def test_code_mismatch_game_builds_corners_not_empty():
+    """POR/PRT (and SUI/CHE, same class) builds real nodes (moneyline + corners) — NOT silently dropped."""
+    tree = tb.build_tree(_PorKalshi(), _PrtPoly(), GenzConfig(), now=_POR_NOW)
+    g = tree["games"][_POR_SUF]
+    types = {n["market_type"] for n in g["nodes"]}
+    assert "corners" in types and "moneyline" in types
+    assert len(g["nodes"]) >= 4
+
+
+def test_resolve_poly_slug_fallback_via_event_names_when_code_unlisted(monkeypatch):
+    """Robustness (point 2): even a code mismatch NOT in the translation table resolves via
+    Polymarket's OWN team names (series scan), with a WARNING logged so it is never silent."""
+    monkeypatch.delitem(tb._KALSHI_TO_POLY_CODE, "por", raising=False)   # simulate an UNLISTED mismatch
+    monkeypatch.setattr(tb, "_POLY_TO_KALSHI_CODE", {v: k for k, v in tb._KALSHI_TO_POLY_CODE.items()})
+    game = tb.Game(game_id=_POR_SUF, kalshi_suffix=_POR_SUF, date="2026-07-06", home="Spain",
+                   away="Portugal", kickoff_iso="", poly_base_slug="fifwc-por-esp-2026-07-06",
+                   poly_slug_alts=["fifwc-por-esp-2026-07-06", "fifwc-esp-por-2026-07-06"])
+    series = _prt_series()
+    assert tb.game_sibling_events(series, game) == []          # primary slug misses (POR not translated)
+    rec = _RecLog()
+    assert tb.resolve_poly_slug(game, series, rec) is True      # fallback resolves it...
+    assert game.poly_base_slug == _PRT_BASE                     # ...to the correct ISO slug
+    assert tb.game_sibling_events(series, game)                 # which now finds the events
+    assert any("resolved via" in w for w in rec.warnings)      # and logged a WARNING (not silent)
+
+
+def test_no_poly_event_logs_warning_not_silent():
+    """A game with genuinely no Poly event stays one-sided AND logs a WARNING (visible, not silent)."""
+    game = tb.Game(game_id="26JUL06XXXYYY", kalshi_suffix="26JUL06XXXYYY", date="2026-07-06",
+                   home="Y", away="X", kickoff_iso="", poly_base_slug="fifwc-xxx-yyy-2026-07-06",
+                   poly_slug_alts=["fifwc-xxx-yyy-2026-07-06"])
+    rec = _RecLog()
+    assert tb.resolve_poly_slug(game, _prt_series(), rec) is False
+    assert any("NO Poly event matched" in w for w in rec.warnings)
+
+
+# --------------------------------------------------------------------------- #
+# SETTLEMENT-PERIOD MISMATCH: Kalshi settles count markets on the FULL game       #
+# (incl. extra time); Poly on 90'+stoppage only. In a knockout both legs can lose #
+# — such a pair must NOT be emitted as an arb (settlement_period_mismatch).        #
+# --------------------------------------------------------------------------- #
+def _corners_opts(kalshi_period, poly_period, line=8.5):
+    key_o, key_u = f"corners|{line}##over", f"corners|{line}##under"
+    k = {key_o: {"market_type": "corners", "market_key": f"corners|{line}", "side": "over", "line": line,
+                 "kind": "2way", "confidence": "high", "outcome_label": "over", "kalshi_ticker": "KT",
+                 "kalshi_side": "YES", "settle_period": kalshi_period},
+         key_u: {"market_type": "corners", "market_key": f"corners|{line}", "side": "under", "line": line,
+                 "kind": "2way", "confidence": "high", "outcome_label": "under", "kalshi_ticker": "KT",
+                 "kalshi_side": "NO", "settle_period": kalshi_period}}
+    p = {key_o: {"market_type": "corners", "market_key": f"corners|{line}", "side": "over", "line": line,
+                 "kind": "2way", "confidence": "high", "outcome_label": "over", "poly_token_id": "po",
+                 "poly_side": "Over", "settle_period": poly_period},
+         key_u: {"market_type": "corners", "market_key": f"corners|{line}", "side": "under", "line": line,
+                 "kind": "2way", "confidence": "high", "outcome_label": "under", "poly_token_id": "pu",
+                 "poly_side": "Under", "settle_period": poly_period}}
+    return k, p
+
+
+def test_corners_period_mismatch_not_paired():
+    """Kalshi 'incl. extra time' (full_game) vs Poly '90 min only' (regulation) is NOT the same bet:
+    it is NOT paired; both sides go to unmatched with reason settlement_period_mismatch + a WARNING."""
+    k, p = _corners_opts("full_game", "regulation")
+    rec = _RecLog()
+    nodes, unmatched = tb.join_game(k, p, log=rec, game_id="PORESP")
+    assert nodes == []                                       # NOT paired — the trap is stopped
+    assert unmatched and {u["reason"] for u in unmatched} == {"settlement_period_mismatch"}
+    assert any("settlement_period_mismatch" in w for w in rec.warnings)
+
+
+def test_corners_same_period_is_paired():
+    """When both venues settle the SAME period, the corners pair IS eligible (nodes carry the period)."""
+    k, p = _corners_opts("full_game", "full_game")
+    nodes, unmatched = tb.join_game(k, p)
+    assert {n["side"] for n in nodes} == {"over", "under"}
+    assert all(n["kalshi_period"] == n["poly_period"] == "full_game" for n in nodes)
+    assert not any(u.get("reason") == "settlement_period_mismatch" for u in unmatched)
+
+
+def test_unknown_period_still_pairs_backward_compatible():
+    """If a description is missing (period unknown on one side) we can't PROVE a mismatch, so we still
+    pair — the guard only fires on a KNOWN disagreement (keeps period-less fixtures working)."""
+    k, p = _corners_opts(None, "regulation")
+    nodes, _ = tb.join_game(k, p)
+    assert len(nodes) == 2
+
+
+def test_settle_period_parsed_and_attached_end_to_end():
+    """kalshi_options / poly_options attach the parsed period; a full-vs-90min corners pair drops out
+    of build_tree (period_mismatch_dropped recorded)."""
+    kfull = "Corners over the entire game including any extra time periods."
+    preg = "Only corners in the first 90 minutes plus stoppage; extra time does not count."
+
+    def _kc():
+        et = f"KXWCTCORNERS-{_POR_SUF}"
+        return {"event_ticker": et, "ticker": f"{et}-c", "yes_sub_title": "9+ corners", "title": "9+ corners",
+                "status": "active", "rules_primary": kfull}
+    kalshi_by_event = {f"KXWCGAME-{_POR_SUF}": _POR_GAME, f"KXWCTCORNERS-{_POR_SUF}": [_kc()]}
+
+    class _K:
+        def iter_markets(self, *, series_ticker=None, **k):
+            return list(_POR_GAME) if series_ticker == "KXWCGAME" else []
+
+        def markets(self, *, event_ticker=None, **k):
+            return {"markets": list(kalshi_by_event.get(event_ticker, []))}
+
+    base = _ev(_PRT_BASE, [_single("Portugal", "p"), _single("Spain", "s"),
+                           {"groupItemTitle": "Draw (Portugal vs. Spain)", "question": "draw?",
+                            "outcomes": ["Yes", "No"], "clobTokenIds": ["d", "dn"]}])
+    corners = {"id": f"{_PRT_BASE}-total-corners", "slug": f"{_PRT_BASE}-total-corners", "closed": False,
+               "markets": [{"groupItemTitle": "O/U 8.5", "outcomes": ["Over", "Under"],
+                            "clobTokenIds": ["co", "cu"], "description": preg}]}
+
+    class _P:
+        def events_by_series(self, *a, **k):
+            return [base, corners]
+
+    tree = tb.build_tree(_K(), _P(), GenzConfig(), now=_POR_NOW)
+    g = tree["games"][_POR_SUF]
+    assert not any(n["market_type"] == "corners" for n in g["nodes"])        # period mismatch -> not paired
+    assert g["coverage"]["period_mismatch_dropped"] >= 1
+    assert tb.build_meta(tree, now=_POR_NOW)["period_mismatch_dropped_total"] >= 1

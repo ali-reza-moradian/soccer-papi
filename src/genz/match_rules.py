@@ -51,6 +51,43 @@ MULTI = frozenset({"exact_score", "player_goals", "player_shots", "soa"})
 # Player-prop families are always alert-only (low confidence) regardless of how clean the match is.
 ALERT_ONLY = frozenset({"player_goals", "player_shots", "soa"})
 
+# FULL-MATCH COUNT markets: they tally goals/corners over the whole match, so the SETTLEMENT PERIOD
+# matters. Kalshi settles these on the FULL game (incl. extra time); Polymarket on 90'+stoppage ONLY.
+# In a knockout game (extra time possible) a Kalshi full-game count and a Poly 90-min count are NOT the
+# same bet and can BOTH lose — so a period mismatch must never be paired/traded. (Half markets already
+# carry the period in their type; result/spread/btts are handled by the moneyline-style regulation
+# rules and are out of scope here.)
+COUNT_MARKETS = frozenset({"corners", "team_corners", "total_goals", "team_total"})
+
+# Resolution-text fragments that pin a market's settlement period. EXCLUDE => 90'+stoppage only
+# ('regulation'); INCLUDE => extra time counts ('full_game'). ET EXCLUSION takes PRIORITY (a phrase
+# like 'does not include extra time' contains the substring 'include extra time', so exclusion must win).
+_ET_EXCLUDE = ("do not count", "does not count", "does not include extra", "not include extra time",
+               "excludes extra time", "excluding extra time", "first 90 minutes", "90 minutes of regular",
+               "within the first 90", "regulation time only", "not include overtime",
+               "does not include overtime", "90 minutes plus stoppage", "90 minutes of regular play")
+_ET_INCLUDE = ("any extra time", "including extra time", "includes extra time", "and extra time",
+               "plus extra time", "entire game", "extra time periods", "including overtime",
+               "extra time counts", "regulation, stoppage and")
+
+
+def parse_settlement_period(text: str) -> Optional[str]:
+    """Classify a market's resolution description into 'regulation' (90'+stoppage, EXCLUDES extra time)
+    or 'full_game' (INCLUDES extra time), else None when undeterminable. Both Kalshi's rules and
+    Polymarket's description state this explicitly for count markets. An explicit ET EXCLUSION wins."""
+    t = str(text or "").lower()
+    if not t:
+        return None
+    if any(p in t for p in _ET_EXCLUDE):         # explicit exclusion wins ('does not include extra time')
+        return "regulation"
+    if any(p in t for p in _ET_INCLUDE):
+        return "full_game"
+    if "extra time" in t or "overtime" in t:     # ET mentioned, no explicit exclusion -> counts
+        return "full_game"
+    if "90 minutes" in t or "regular time" in t or "regulation" in t:
+        return "regulation"
+    return None
+
 
 def kind_for(market_type: str) -> str:
     """The arity flag stored on the tree node: '2way' (engine-tradeable), '3way', or 'multi'."""

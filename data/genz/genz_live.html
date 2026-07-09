@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>soccer·papi — GenZ live</title>
+<style>
+:root{
+  --bg:#08090c;--panel:#0d0e12;--panel2:#131419;--elev:#1a1c24;--border:#23252e;--line:#181a21;
+  --text:#e9e7e2;--dim:#8b8c93;--faint:#55565e;
+  --green:#46d07f;--greenBg:rgba(70,208,127,.12);--red:#f06d6d;--redBg:rgba(240,109,109,.11);
+  --amber:#f5a623;--amberBg:rgba(245,166,35,.14);--accent:#f5a623;
+  --mono:'IBM Plex Mono',ui-monospace,Menlo,Consolas,monospace;
+  --sans:'IBM Plex Sans',-apple-system,system-ui,sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--text);font-family:var(--sans);-webkit-font-smoothing:antialiased;padding:16px;max-width:1500px;margin:0 auto;font-size:14px}
+.top{display:flex;align-items:center;gap:16px;background:var(--panel);border:1px solid var(--border);padding:12px 18px;margin-bottom:14px}
+.mark{width:11px;height:11px;background:var(--accent);transform:rotate(45deg);flex:none}
+.brand{font-family:var(--mono);font-size:15px;font-weight:600}
+.brand span{color:var(--faint);font-size:11px}
+.health{margin-left:auto;display:flex;align-items:center;gap:8px;font-family:var(--mono);font-size:12px}
+.dot{width:9px;height:9px;border-radius:50%;background:var(--green)}
+.dot.warn{background:var(--amber)}.dot.alarm{background:var(--red)}
+.clock{font-family:var(--mono);font-size:12px;color:var(--dim);min-width:66px;text-align:right}
+.stale{display:none;background:var(--redBg);border:1px solid var(--red);border-left:3px solid var(--red);padding:11px 16px;margin-bottom:14px;font-family:var(--mono);font-size:13px;color:var(--red)}
+.stale.show{display:block}
+.gtabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px}
+.gtab{font-family:var(--mono);font-size:12px;padding:9px 15px;background:var(--panel);border:1px solid var(--border);cursor:pointer;color:var(--dim);display:flex;flex-direction:column;gap:2px;min-width:140px}
+.gtab.active{background:var(--elev);color:var(--text);border-color:var(--accent)}
+.gtab .t{font-weight:600}
+.gtab .s{font-size:10px;color:var(--faint)}
+.gtab.active .s{color:var(--dim)}
+.gtab .lv{color:var(--red)}
+.ctrl{display:flex;align-items:center;gap:14px;margin-bottom:12px;flex-wrap:wrap}
+.seg{display:flex;border:1px solid var(--border)}
+.seg button{font-family:var(--mono);font-size:11px;padding:6px 14px;background:var(--panel);color:var(--dim);border:none;cursor:pointer}
+.seg button.on{background:var(--accent);color:#08090d}
+.count{font-family:var(--mono);font-size:12px;color:var(--dim)}
+.mfilter{font-family:var(--mono);font-size:11px;padding:6px 10px;background:var(--panel);border:1px solid var(--border);color:var(--text)}
+.wrap{background:var(--panel);border:1px solid var(--border);overflow:auto}
+table{width:100%;border-collapse:collapse}
+th{font-family:var(--mono);font-size:10px;color:var(--faint);letter-spacing:.5px;text-transform:uppercase;text-align:left;padding:9px 12px;border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--panel)}
+th.num,td.num{text-align:right;font-variant-numeric:tabular-nums}
+td{padding:9px 12px;font-size:13px;border-bottom:1px solid var(--line)}
+tr:hover td{background:var(--panel2)}
+.mtype{font-weight:600}
+.mtype .ln{color:var(--dim);font-weight:400;font-family:var(--mono);font-size:12px}
+.leg{font-family:var(--mono);font-size:12px;color:var(--dim)}
+.leg b{color:var(--text)}
+.leg .k{color:var(--green)}.leg .p{color:var(--accent)}
+.sum{font-family:var(--mono);font-weight:600;padding:2px 8px;display:inline-block}
+.sum.arb{background:var(--greenBg);color:var(--green)}
+.sum.no{color:var(--faint)}
+.roi{font-family:var(--mono);font-weight:600}
+.roi.pos{color:var(--green)}.roi.neg{color:var(--faint)}
+.tag{font-family:var(--mono);font-size:9px;padding:2px 6px;letter-spacing:.4px;text-transform:uppercase}
+.tag.would{background:var(--greenBg);color:var(--green)}
+.tag.rej{background:var(--amberBg);color:var(--amber)}
+.tag.noarb{background:var(--elev);color:var(--faint)}
+.trap{background:var(--redBg)!important}
+.trap-tag{font-family:var(--mono);font-size:9px;color:var(--red);padding:2px 6px;background:var(--redBg)}
+.empty{padding:36px;text-align:center;color:var(--faint);font-family:var(--mono)}
+.drop{border:1.5px dashed var(--border);padding:20px;text-align:center;color:var(--dim);margin-bottom:14px;background:var(--panel);font-size:13px}
+.drop label{color:var(--accent);cursor:pointer;text-decoration:underline}
+.drop input{display:none}
+.foot{margin-top:12px;font-family:var(--mono);font-size:11px;color:var(--faint)}
+.foot .dry{color:var(--amber)}
+</style>
+</head>
+<body>
+<div class="top">
+  <div class="mark"></div>
+  <div class="brand">soccer·papi <span>GENZ LIVE</span></div>
+  <div class="health"><span class="dot" id="dot"></span><span id="hstate">—</span><span id="hage" style="color:var(--faint)"></span></div>
+  <div class="clock" id="clock"></div>
+</div>
+<div class="stale" id="stale">▲ FEED STALE — no cycle in over 5 min. Bot may be stopped or its tree starved.</div>
+<div class="drop" id="drop">Serve from <b>data/genz/</b> to auto-load, or drop <b>genz_snapshot.json</b> here, or <label for="fi">browse</label>.<input type="file" id="fi" multiple accept=".json"></div>
+<div class="gtabs" id="gtabs"></div>
+<div class="ctrl">
+  <div class="seg" id="viewSeg"><button data-v="all" class="on">All markets</button><button data-v="arbs">Arbs only</button></div>
+  <select class="mfilter" id="mfilter"><option value="">All market types</option></select>
+  <span class="count" id="count"></span>
+</div>
+<div class="wrap"><div id="body"><div class="empty">Loading…</div></div></div>
+<div class="foot">Execution: <span class="dry">DRY-RUN</span> — places nothing. Red row = extra-time rule mismatch (not a real arb). <span id="loaded"></span></div>
+
+<script>
+var SNAP=null, HB=null, curGame=null, view='all', mFilter='';
+function num(x){var n=parseFloat(x);return isNaN(n)?null:n;}
+function pct(x){return x==null?'-':(x*100).toFixed(1)+'%';}
+function health(){
+  var dot=document.getElementById('dot'),st=document.getElementById('hstate'),age=document.getElementById('hage'),b=document.getElementById('stale');
+  var ts=(HB&&HB.last_cycle_utc)?Date.parse(HB.last_cycle_utc):(SNAP&&SNAP.cycle_utc?Date.parse(SNAP.cycle_utc):null);
+  if(!ts){dot.className='dot alarm';st.textContent='NO DATA';age.textContent='';return;}
+  var s=Math.max(0,Math.floor((Date.now()-ts)/1000));
+  age.textContent=s<60?s+'s ago':s<3600?Math.floor(s/60)+'m ago':Math.floor(s/3600)+'h ago';
+  if(s>300){dot.className='dot alarm';st.textContent='STALE';b.classList.add('show');}
+  else if(s>90){dot.className='dot warn';st.textContent='SLOW';b.classList.remove('show');}
+  else{dot.className='dot';st.textContent='LIVE';b.classList.remove('show');}
+}
+function tabs(){
+  var el=document.getElementById('gtabs');
+  if(!SNAP||!SNAP.games){el.innerHTML='';return;}
+  var ids=Object.keys(SNAP.games);
+  if(!curGame||!SNAP.games[curGame])curGame=ids[0];
+  var html='';
+  for(var i=0;i<ids.length;i++){
+    var id=ids[i],g=SNAP.games[id],mk=g.markets||[];
+    var nArb=mk.filter(function(m){return num(m.implied_cost)<1;}).length;
+    html+='<div class="gtab '+(id===curGame?'active':'')+'" data-g="'+id+'"><span class="t">'+(g.teams||id)+'</span><span class="s">'+mk.length+' mkts &middot; '+nArb+' arb'+(g.started?' <span class="lv">LIVE</span>':'')+'</span></div>';
+  }
+  el.innerHTML=html;
+  var t=el.querySelectorAll('.gtab');
+  for(var j=0;j<t.length;j++){t[j].onclick=function(){curGame=this.getAttribute('data-g');tabs();filter();table();};}
+}
+function filter(){
+  if(!SNAP||!curGame||!SNAP.games[curGame])return;
+  var g=SNAP.games[curGame],types=[];
+  (g.markets||[]).forEach(function(m){if(types.indexOf(m.market_type)<0)types.push(m.market_type);});
+  var sel=document.getElementById('mfilter'),cur=sel.value,h='<option value="">All market types</option>';
+  types.forEach(function(t){h+='<option value="'+t+'">'+t.replace(/_/g,' ')+'</option>';});
+  sel.innerHTML=h;sel.value=cur;
+}
+function table(){
+  var g=(SNAP&&curGame)?SNAP.games[curGame]:null,body=document.getElementById('body');
+  if(!g){body.innerHTML='<div class="empty">No data yet.</div>';document.getElementById('count').textContent='';return;}
+  if(g.started){body.innerHTML='<div class="empty">'+(g.teams||curGame)+' has kicked off - GenZ is pre-game only, so it stopped pricing this game.</div>';document.getElementById('count').textContent='live - not priced';return;}
+  var mk=(g.markets||[]).slice();
+  if(view==='arbs')mk=mk.filter(function(m){return num(m.implied_cost)<1;});
+  if(mFilter)mk=mk.filter(function(m){return m.market_type===mFilter;});
+  mk.sort(function(a,b){var wa=a.would_trade?1:0,wb=b.would_trade?1:0;if(wa!==wb)return wb-wa;return (num(a.implied_cost)||9)-(num(b.implied_cost)||9);});
+  document.getElementById('count').textContent=mk.length+' shown';
+  if(!mk.length){body.innerHTML='<div class="empty">'+(view==='arbs'?'No arbs - flip to All markets.':'No markets.')+'</div>';return;}
+  var h='<table><thead><tr><th>Market</th><th>Legs (best of both)</th><th class="num">Sum</th><th class="num">ROI</th><th>Status</th></tr></thead><tbody>';
+  for(var i=0;i<mk.length;i++){
+    var m=mk[i],sum=num(m.implied_cost),roi=num(m.roi_pct),arb=sum!=null&&sum<1;
+    var va=(String(m.venue_a||'')[0]||'').toLowerCase()==='k'?'k':'p';
+    var vb=(String(m.venue_b||'')[0]||'').toLowerCase()==='k'?'k':'p';
+    var pa=m.price_a!=null?(m.price_a*100).toFixed(0)+'c':'';
+    var pb=m.price_b!=null?(m.price_b*100).toFixed(0)+'c':'';
+    var VA=String(m.venue_a||' ')[0].toUpperCase(),VB=String(m.venue_b||' ')[0].toUpperCase();
+    var legs='<span class="'+va+'">'+m.side_a+' '+pa+' <b>'+VA+'</b></span> + <span class="'+vb+'">'+m.side_b+' '+pb+' <b>'+VB+'</b></span>';
+    var tag;
+    if(m.period_mismatch)tag='<span class="trap-tag">extra-time trap</span>';
+    else if(m.would_trade)tag='<span class="tag would">would trade</span>';
+    else if(/rejected/.test(m.exec_status||''))tag='<span class="tag rej">'+String(m.exec_status).replace('rejected_','rej: ')+'</span>';
+    else tag='<span class="tag noarb">no arb</span>';
+    h+='<tr class="'+(m.period_mismatch?'trap':'')+'"><td class="mtype">'+String(m.market_type||'').replace(/_/g,' ')+' <span class="ln">'+(m.line||'')+'</span></td><td class="leg">'+legs+'</td><td class="num"><span class="sum '+(arb?'arb':'no')+'">'+pct(sum)+'</span></td><td class="num"><span class="roi '+(roi>0?'pos':'neg')+'">'+(roi!=null?roi.toFixed(1)+'%':'-')+'</span></td><td>'+tag+'</td></tr>';
+  }
+  body.innerHTML=h+'</tbody></table>';
+}
+function renderAll(){health();tabs();filter();table();if(SNAP)document.getElementById('loaded').textContent='- updated '+new Date().toLocaleTimeString();}
+document.getElementById('viewSeg').querySelectorAll('button').forEach(function(b){b.onclick=function(){view=b.getAttribute('data-v');document.getElementById('viewSeg').querySelectorAll('button').forEach(function(x){x.classList.toggle('on',x===b);});table();};});
+document.getElementById('mfilter').onchange=function(e){mFilter=e.target.value;table();};
+setInterval(function(){document.getElementById('clock').textContent=new Date().toLocaleTimeString();health();},1000);
+function ingest(name,text){try{var j=JSON.parse(text);if(/snapshot/i.test(name)||j.games)SNAP=j;else if(/heartbeat/i.test(name)||j.last_cycle_utc)HB=j;}catch(e){}renderAll();}
+document.getElementById('fi').onchange=function(e){for(var i=0;i<e.target.files.length;i++){(function(f){var r=new FileReader();r.onload=function(){ingest(f.name,r.result);};r.readAsText(f);})(e.target.files[i]);}};
+var drop=document.getElementById('drop');
+drop.ondragover=function(e){e.preventDefault();};
+drop.ondrop=function(e){e.preventDefault();for(var i=0;i<e.dataTransfer.files.length;i++){(function(f){var r=new FileReader();r.onload=function(){ingest(f.name,r.result);};r.readAsText(f);})(e.dataTransfer.files[i]);}};
+function poll(){['genz_snapshot.json','genz_heartbeat.json'].forEach(function(f){fetch(f+'?t='+Date.now(),{cache:'no-store'}).then(function(r){return r.ok?r.text():null;}).then(function(t){if(t)ingest(f,t);}).catch(function(){});});}
+fetch('genz_snapshot.json?t='+Date.now(),{cache:'no-store'}).then(function(r){if(r.ok){document.getElementById('drop').style.display='none';poll();setInterval(poll,15000);}}).catch(function(){});
+renderAll();
+</script>
+</body>
+</html>

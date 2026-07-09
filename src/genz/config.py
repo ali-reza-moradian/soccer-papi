@@ -24,6 +24,7 @@ MATCH_TREE_PATH = os.path.join(GENZ_DIR, "match_tree.json")
 TREE_META_PATH = os.path.join(GENZ_DIR, "tree_meta.json")
 ARBS_CSV_PATH = os.path.join(GENZ_DIR, "genz_arbs.csv")           # legacy single file (still read)
 HEARTBEAT_PATH = os.path.join(GENZ_DIR, "genz_heartbeat.json")
+SNAPSHOT_PATH = os.path.join(GENZ_DIR, "genz_snapshot.json")      # EVERY priced market each cycle (dashboard)
 
 
 def arbs_path_for(now: Optional[datetime] = None) -> str:

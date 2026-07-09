@@ -35,6 +35,7 @@ from ..executor.guardrails import Guardrails
 from ..executor.ledger import Ledger
 from ..executor.resolve import MarketData
 from . import config as gz_config
+from . import match_rules as mr
 from . import tree_builder
 
 ARBS_COLUMNS = [
@@ -100,6 +101,7 @@ class PricedVenue:
     fill: Optional[float]            # walk-to-stake avg fill price (the REAL price, not top-of-book)
     depth_usd: float                 # fillable dollar depth (Σ price*size of the ladder)
     open: Optional[bool] = None      # venue market open/tradeable; None = unknown (couldn't tell)
+    ladder: list = field(default_factory=list)   # the ascending (price, size) ask ladder (for depth sizing)
 
     @property
     def priced(self) -> bool:
@@ -139,7 +141,7 @@ def _price_one(md: Any, venue: str, ident: str, side: str, stake: float) -> Pric
     walk = bookmath.walk_book(ladder, stake)
     fill = walk.avg_price if walk.avg_price > 0 else best
     depth = sum(p * s for p, s in ladder)
-    return PricedVenue(venue, ident, best, fill, depth, open=is_open)
+    return PricedVenue(venue, ident, best, fill, depth, open=is_open, ladder=ladder)
 
 
 def price_markets(md: Any, markets: list[Market], cfg: gz_config.GenzConfig) -> dict[tuple, PricedVenue]:
@@ -179,6 +181,7 @@ class SideQuote:
     node: dict
     price: float
     depth_usd: float
+    ladder: list = field(default_factory=list)   # the chosen venue's ask ladder (for depth sizing)
 
 
 def _best_side(node: dict, priced: dict[tuple, PricedVenue]) -> Optional[SideQuote]:
@@ -186,10 +189,10 @@ def _best_side(node: dict, priced: dict[tuple, PricedVenue]) -> Optional[SideQuo
     cands: list[SideQuote] = []
     kp = priced.get(("kalshi", node.get("kalshi_ticker"), node.get("kalshi_side")))
     if kp and kp.priced:
-        cands.append(SideQuote("kalshi", node, kp.fill, kp.depth_usd))
+        cands.append(SideQuote("kalshi", node, kp.fill, kp.depth_usd, ladder=kp.ladder))
     pp = priced.get(("poly", node.get("poly_token_id"), "BUY"))
     if pp and pp.priced:
-        cands.append(SideQuote("polymarket", node, pp.fill, pp.depth_usd))
+        cands.append(SideQuote("polymarket", node, pp.fill, pp.depth_usd, ladder=pp.ladder))
     return min(cands, key=lambda q: q.price) if cands else None
 
 
@@ -278,6 +281,20 @@ def _game_started(market: Market, now: datetime) -> bool:
 _TOTAL_FAMILIES = frozenset({"total_goals", "1h_total", "2h_total", "team_total"})
 
 
+def _period_disagrees(market: Market) -> bool:
+    """True if a full-match COUNT market's two venues settle on DIFFERENT periods (Kalshi full game
+    incl. extra time vs Poly 90'+stoppage only). In a knockout both legs can lose, so it must never
+    trade. build-time drops known mismatches; this is the engine's belt-and-suspenders backstop over
+    the periods carried on each node."""
+    if market.market_type not in mr.COUNT_MARKETS:
+        return False
+    for node in market.sides.values():
+        kp, pp = node.get("kalshi_period"), node.get("poly_period")
+        if kp and pp and kp != pp:
+            return True
+    return False
+
+
 def _venues_desynced(market: Market, priced: dict[tuple, "PricedVenue"]) -> bool:
     """True if, for any side, ONE venue's market is settled/closed (open=False) while the other is
     open — the two venues are pricing different states, so the node must be skipped, never traded."""
@@ -323,7 +340,7 @@ def run_cycle(tree: dict[str, Any], md: Any, gz_cfg: gz_config.GenzConfig,
               exec_cfg: exec_config.ExecConfig, *, now: Optional[datetime] = None,
               kalshi: Any = None, poly: Any = None, ledger: Any = None, guard: Any = None,
               write: bool = True, arbs_path: Optional[str] = None, heartbeat_path: Optional[str] = None,
-              log: Any = None) -> CycleResult:
+              snapshot_path: Optional[str] = None, log: Any = None) -> CycleResult:
     """One price cycle: price every tree token, find best-of-both 2-outcome arbs, and (for high-
     confidence ones) hand them to the executor — AT MOST ONE live attempt per cycle. Records every
     detected arb to genz_arbs.csv and writes the heartbeat. Pure w.r.t. injected md/kalshi/poly."""
@@ -378,6 +395,18 @@ def run_cycle(tree: dict[str, Any], md: Any, gz_cfg: gz_config.GenzConfig,
                        note="roi exceeds plausible bound — review pairing")
             rows.append(row)
             continue
+        # SETTLEMENT-PERIOD GUARD: a full-match COUNT market (corners/goals) whose venues settle on
+        # DIFFERENT periods (Kalshi full game incl. extra time vs Poly 90'+stoppage) is NOT the same
+        # bet — in a knockout both legs can lose. Never trade it, regardless of the sum.
+        if _period_disagrees(m):
+            if log:
+                log.warning("[GENZ] REJECTED settlement_period_mismatch %s %s — venues settle "
+                            "different periods (extra-time inclusion differs); not the same bet.",
+                            m.game, m.market_key)
+            row.update(would_trade=False, exec_status="rejected_period_mismatch",
+                       note="settlement period mismatch (extra-time inclusion differs) — not the same bet")
+            rows.append(row)
+            continue
         # TOTALS COMPLEMENTARITY GUARD: a same-line/period Over+Under must sum to ~1.0 (like corners).
         # A totals O/U node summing below min_total_implied is a period/line MISPAIRING (the two legs
         # are not the same outcome), NOT a real arb — reject it so the phantom can never auto-trade.
@@ -415,6 +444,9 @@ def run_cycle(tree: dict[str, Any], md: Any, gz_cfg: gz_config.GenzConfig,
             # Rotate daily: append to genz_arbs_YYYYMMDD.csv (unless a path is given explicitly).
             append_arbs(rows, arbs_path or gz_config.arbs_path_for(now))
         write_heartbeat(res, now=now, path=heartbeat_path)
+        # Full-market snapshot: EVERY priced market (arb + non-arb) for the dashboard.
+        rows_by_key = {(r.get("game"), r.get("market_key")): r for r in rows}
+        write_snapshot(build_snapshot(tree, markets, priced, rows_by_key, now), snapshot_path)
     if log:
         log.info("[GENZ] cycle: %d game(s), %d node(s) priced (%d unpriced), %d market(s) skipped, "
                  "%d arb(s), %d would-trade.", res.games, res.nodes_priced, res.nodes_unpriced,
@@ -484,6 +516,140 @@ def write_heartbeat(res: CycleResult, *, now: datetime, path: Optional[str] = No
                    "nodes_priced": res.nodes_priced, "nodes_unpriced": res.nodes_unpriced,
                    "markets_skipped": res.markets_skipped, "arbs_found": res.arbs_found,
                    "would_trade": res.would_trade}, fh, indent=2)
+
+
+# --------------------------------------------------------------------------- #
+# Full-market snapshot — EVERY priced market each cycle (arb AND non-arb)         #
+# --------------------------------------------------------------------------- #
+SNAPSHOT_REF_STAKE = 100.0            # reference TOTAL stake for the split/profit fields ($)
+
+_SIZING_FIELDS = ("depth_a_usd", "depth_b_usd", "max_stake_usd",
+                  "split_a_usd", "split_b_usd", "profit_usd", "profit_at_max_usd")
+
+
+def _arb_max_fill(ladder_a: list, ladder_b: list) -> tuple[float, float, float]:
+    """Walk two ascending ask ladders IN LOCKSTEP — buying equal shares on each side (so the payout is
+    equal whichever outcome wins) — up to the MARGINAL boundary where the next contract's combined price
+    (marginal_a + marginal_b) would reach 1.0. Beyond that a contract costs more than the $1 it can
+    return, so it is no longer part of the arb. Returns (shares, cost_a, cost_b): the max risk-free
+    equal-share fill and the dollars spent on each leg. Naturally bounded by the THINNER leg's depth."""
+    def _cum(ladder: list) -> list[tuple[float, float]]:
+        out, c = [], 0.0
+        for p, s in ladder:
+            if s and s > 0:
+                c += float(s)
+                out.append((float(p), c))          # (price, cumulative size through this level)
+        return out
+
+    ca, cb = _cum(ladder_a), _cum(ladder_b)
+    ia = ib = 0
+    n = cost_a = cost_b = 0.0
+    while ia < len(ca) and ib < len(cb):
+        pa, a_end = ca[ia]
+        pb, b_end = cb[ib]
+        if pa + pb >= 1.0:                          # marginal contract no longer profitable -> stop
+            break
+        nxt = min(a_end, b_end)                     # buy equal shares up to the next ladder step
+        take = nxt - n
+        if take > 0:
+            cost_a += take * pa
+            cost_b += take * pb
+            n = nxt
+        if a_end <= nxt + 1e-9:                     # advance the leg(s) whose level is exhausted
+            ia += 1
+        if b_end <= nxt + 1e-9:
+            ib += 1
+    return n, cost_a, cost_b
+
+
+def _sizing(qa: SideQuote, qb: SideQuote, implied: float) -> dict[str, Optional[float]]:
+    """Depth-aware stake sizing for a real arb: per-leg fillable dollars, the max total stake before the
+    edge disappears, a $100 reference split, and guaranteed profit at $100 and at max. All None for a
+    non-arb (implied >= 1). Money rounded to cents. Reuses the ladders already fetched this cycle."""
+    if implied >= 1.0 or implied <= 0 or not qa.ladder or not qb.ladder:
+        return {k: None for k in _SIZING_FIELDS}
+    shares, cost_a, cost_b = _arb_max_fill(qa.ladder, qb.ladder)
+    max_stake = cost_a + cost_b
+    profit_at_max = shares - max_stake             # equal payout = shares (each pays $1)
+    ref = SNAPSHOT_REF_STAKE                        # $100 split at the top prices: stake_i = ref*p_i/implied
+    return {
+        "depth_a_usd": round(cost_a, 2), "depth_b_usd": round(cost_b, 2),
+        "max_stake_usd": round(max_stake, 2),
+        "split_a_usd": round(ref * qa.price / implied, 2),
+        "split_b_usd": round(ref * qb.price / implied, 2),
+        "profit_usd": round(ref / implied - ref, 2),
+        "profit_at_max_usd": round(profit_at_max, 2),
+    }
+
+
+def _market_snapshot(market: Market, priced: dict[tuple, "PricedVenue"]) -> Optional[dict[str, Any]]:
+    """One market's best-of-both snapshot row (both sides), or None if it isn't fully priced. Includes
+    non-arbs (implied >= 1) — the dashboard shows all markets, not just edges. Real arbs also carry
+    depth-aware stake sizing (max_stake_usd, per-leg depth, $100 split + guaranteed profit)."""
+    sides = list(market.sides.items())
+    if len(sides) != 2:
+        return None
+    (sa, na), (sb, nb) = sides
+    qa, qb = _best_side(na, priced), _best_side(nb, priced)
+    if qa is None or qb is None:
+        return None                                        # not both sides priced this cycle
+    implied = qa.price + qb.price
+    roi = ((1.0 / implied) - 1.0) * 100.0 if implied > 0 else 0.0
+    snap = {
+        "market_type": market.market_type, "market_key": market.market_key,
+        "line": "" if market.line is None else str(market.line),
+        "side_a": sa, "venue_a": qa.venue, "price_a": round(qa.price, 4),
+        "side_b": sb, "venue_b": qb.venue, "price_b": round(qb.price, 4),
+        "implied_cost": round(implied, 4), "roi_pct": round(roi, 4),
+        "confidence": market.confidence,
+        "kalshi_period": na.get("kalshi_period"), "poly_period": na.get("poly_period"),
+        "period_mismatch": _period_disagrees(market),
+    }
+    snap.update(_sizing(qa, qb, implied))                  # depth/stake sizing (None for non-arbs)
+    return snap
+
+
+def build_snapshot(tree: dict[str, Any], markets: list[Market], priced: dict[tuple, "PricedVenue"],
+                   rows_by_key: dict[tuple, dict], now: datetime) -> dict[str, Any]:
+    """A full-market snapshot for the dashboard: EVERY priced 2-outcome market per game (arb AND
+    non-arb, incl. implied>1.0), with best-of-both prices, the arb-loop's would_trade/exec_status when
+    it produced a row (else 'no_arb'), and the settlement-period fields + a period_mismatch flag."""
+    by_game: dict[str, list[Market]] = {}
+    for m in markets:
+        by_game.setdefault(m.game, []).append(m)
+    games_out: dict[str, Any] = {}
+    for game_id, g in (tree.get("games") or {}).items():
+        mkts: list[dict[str, Any]] = []
+        for m in by_game.get(game_id, []):
+            snap = _market_snapshot(m, priced)
+            if snap is None:
+                continue
+            row = rows_by_key.get((game_id, m.market_key))
+            if row is not None:                            # the arb loop processed it (edge or rejected)
+                snap["would_trade"] = bool(row.get("would_trade"))
+                snap["exec_status"] = row.get("exec_status", "")
+            else:                                          # priced but not an arb / not eligible
+                snap["would_trade"] = False
+                snap["exec_status"] = "no_arb" if snap["implied_cost"] >= 1.0 else "not_eligible"
+            mkts.append(snap)
+        games_out[game_id] = {
+            "teams": f"{g.get('away', '?')} vs {g.get('home', '?')}",
+            "kickoff_utc": g.get("kickoff_utc", ""),
+            "started": _started(str(g.get("kickoff_utc", "")), now),
+            "markets": mkts,
+        }
+    return {"cycle_utc": now.strftime("%Y-%m-%dT%H:%M:%SZ"), "games": games_out}
+
+
+def write_snapshot(snapshot: dict[str, Any], path: Optional[str] = None) -> None:
+    """Overwrite the full-market snapshot ATOMICALLY (temp file + rename), so the dashboard never reads
+    a half-written file."""
+    path = path or gz_config.SNAPSHOT_PATH
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = f"{path}.tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(snapshot, fh, ensure_ascii=False, indent=2)
+    os.replace(tmp, path)                                  # atomic on the same filesystem
 
 
 # --------------------------------------------------------------------------- #

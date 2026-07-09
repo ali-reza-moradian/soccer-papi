@@ -222,3 +222,25 @@ def test_player_props_are_low_confidence_alert_only():
     p = mr.mk_player_goals(*p_parsed)
     assert k.twin_key() == p.twin_key()
     assert k.confidence == "low" and k.kind == "multi"   # player props never auto-trade
+
+
+# --------------------------------------------------------------------------- #
+# SETTLEMENT PERIOD parsing (regulation 90'+stoppage vs full game incl. ET).     #
+# The two venues settle full-match COUNT markets on different periods.           #
+# --------------------------------------------------------------------------- #
+def test_parse_settlement_period():
+    full = "Corners are counted over the entire game (regulation, stoppage AND any extra time periods)."
+    reg = ("Refers only to corners within the first 90 minutes of regular play plus stoppage time. "
+           "Corners awarded during extra time or penalty shootouts do not count.")
+    assert mr.parse_settlement_period(full) == "full_game"
+    assert mr.parse_settlement_period(reg) == "regulation"
+    # 'does not include extra time' must resolve regulation (exclusion wins over the substring match).
+    assert mr.parse_settlement_period("Settled at 90 minutes plus stoppage; does not include extra time.") == "regulation"
+    assert mr.parse_settlement_period("This market includes extra time.") == "full_game"
+    assert mr.parse_settlement_period("") is None
+    assert mr.parse_settlement_period("some unrelated resolution text") is None
+
+
+def test_count_markets_set():
+    assert {"corners", "team_corners", "total_goals", "team_total"} <= mr.COUNT_MARKETS
+    assert "moneyline" not in mr.COUNT_MARKETS and "1h_total" not in mr.COUNT_MARKETS
