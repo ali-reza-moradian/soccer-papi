@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>soccer·papi</title>
+<style>
+:root{
+  --bg:#08090c;--panel:#0d0e12;--panel2:#131419;--elev:#1a1c24;--border:#23252e;--line:#181a21;
+  --text:#e9e7e2;--dim:#8b8c93;--faint:#55565e;
+  --green:#46d07f;--greenBg:rgba(70,208,127,.12);--red:#f06d6d;--redBg:rgba(240,109,109,.11);
+  --amber:#f5a623;--amberBg:rgba(245,166,35,.14);--accent:#f5a623;
+  --mono:'IBM Plex Mono',ui-monospace,Menlo,Consolas,monospace;
+  --sans:'IBM Plex Sans',-apple-system,system-ui,sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--text);font-family:var(--sans);-webkit-font-smoothing:antialiased;padding:16px;max-width:1650px;margin:0 auto;font-size:14px}
+.top{display:flex;align-items:center;gap:14px;background:var(--panel);border:1px solid var(--border);padding:10px 18px;margin-bottom:12px}
+.mark{width:11px;height:11px;background:var(--accent);transform:rotate(45deg);flex:none}
+.brand{font-family:var(--mono);font-size:15px;font-weight:600}
+.bigtabs{display:flex;margin-left:14px}
+.bigtab{font-family:var(--mono);font-size:12px;padding:8px 20px;background:transparent;border:1px solid transparent;color:var(--faint);cursor:pointer;letter-spacing:1px}
+.bigtab.on{background:var(--elev);border-color:var(--border);color:var(--text)}
+.bank{margin-left:auto;display:flex;align-items:center;gap:7px;font-family:var(--mono);font-size:12px;color:var(--dim)}
+.bank input{width:70px;padding:4px 7px;background:var(--bg);border:1px solid var(--border);color:var(--text);font-family:var(--mono);font-size:12px}
+.health{display:flex;align-items:center;gap:7px;font-family:var(--mono);font-size:12px;margin-left:14px}
+.dot{width:9px;height:9px;border-radius:50%;background:var(--green)}
+.dot.warn{background:var(--amber)}.dot.alarm{background:var(--red)}
+.clock{font-family:var(--mono);font-size:12px;color:var(--dim);min-width:64px;text-align:right}
+.stale{display:none;background:var(--redBg);border:1px solid var(--red);border-left:3px solid var(--red);padding:10px 16px;margin-bottom:12px;font-family:var(--mono);font-size:13px;color:var(--red)}
+.stale.show{display:block}
+.gtabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px}
+.gtab{font-family:var(--mono);font-size:12px;padding:9px 15px;background:var(--panel);border:1px solid var(--border);cursor:pointer;color:var(--dim);display:flex;flex-direction:column;gap:2px;min-width:150px}
+.gtab.active{background:var(--elev);color:var(--text);border-color:var(--accent)}
+.gtab .t{font-weight:600}.gtab .s{font-size:10px;color:var(--faint)}
+.gtab.active .s{color:var(--dim)}.gtab .lv{color:var(--red)}
+.ctrl{display:flex;align-items:center;gap:12px;margin-bottom:10px;flex-wrap:wrap}
+.seg{display:flex;border:1px solid var(--border)}
+.seg button{font-family:var(--mono);font-size:11px;padding:6px 14px;background:var(--panel);color:var(--dim);border:none;cursor:pointer}
+.seg button.on{background:var(--accent);color:#08090d}
+.count{font-family:var(--mono);font-size:12px;color:var(--dim)}
+.mfilter{font-family:var(--mono);font-size:11px;padding:6px 10px;background:var(--panel);border:1px solid var(--border);color:var(--text)}
+.wrap{background:var(--panel);border:1px solid var(--border);overflow:auto}
+table{width:100%;border-collapse:collapse}
+th{font-family:var(--mono);font-size:10px;color:var(--faint);letter-spacing:.5px;text-transform:uppercase;text-align:left;padding:9px 12px;border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--panel)}
+th.num,td.num{text-align:right;font-variant-numeric:tabular-nums}
+td{padding:9px 12px;font-size:13px;border-bottom:1px solid var(--line)}
+tr:hover td{background:var(--panel2)}
+.mtype{font-weight:600}.mtype .ln{color:var(--dim);font-weight:400;font-family:var(--mono);font-size:12px}
+.leg{font-family:var(--mono);font-size:12px;color:var(--dim)}
+.leg b{color:var(--text)}.leg .k{color:var(--green)}.leg .p{color:var(--accent)}
+.sum{font-family:var(--mono);font-weight:600;padding:2px 8px;display:inline-block}
+.sum.arb{background:var(--greenBg);color:var(--green)}.sum.no{color:var(--faint)}
+.roi{font-family:var(--mono);font-weight:600}
+.roi.pos{color:var(--green)}.roi.neg{color:var(--faint)}
+.bet{font-family:var(--mono);font-size:12px;line-height:1.5}
+.bet .amt{color:var(--text);font-weight:600}
+.bet .v{color:var(--faint);font-size:10px}
+.bet .none{color:var(--faint)}
+.prof{font-family:var(--mono);font-weight:600;color:var(--green)}
+.prof .cap{display:block;font-size:10px;color:var(--faint);font-weight:400}
+.tag{font-family:var(--mono);font-size:9px;padding:2px 6px;letter-spacing:.4px;text-transform:uppercase}
+.tag.would{background:var(--greenBg);color:var(--green)}
+.tag.rej{background:var(--amberBg);color:var(--amber)}
+.tag.noarb{background:var(--elev);color:var(--faint)}
+.tag.flag{background:var(--amberBg);color:var(--amber)}
+.trap{background:var(--redBg)!important}
+.trap-tag{font-family:var(--mono);font-size:9px;color:var(--red);padding:2px 6px;background:var(--redBg)}
+.feetrap{background:var(--amberBg)!important}
+.net{font-family:var(--mono);font-weight:600}
+.net.pos{color:var(--green)}.net.neg{color:var(--amber)}
+.fee{font-family:var(--mono);color:var(--dim)}
+.empty{padding:36px;text-align:center;color:var(--faint);font-family:var(--mono);line-height:1.8}
+.foot{margin-top:12px;font-family:var(--mono);font-size:11px;color:var(--faint);line-height:1.7}
+.foot .dry{color:var(--amber)}
+.hide{display:none}
+.books{font-family:var(--mono);font-size:11px;color:var(--dim)}
+.books .bind{color:var(--amber)}
+</style>
+</head>
+<body>
+<div class="top">
+  <div class="mark"></div>
+  <div class="brand">soccer·papi</div>
+  <div class="bigtabs">
+    <button class="bigtab on" data-tab="genz">GENZ</button>
+    <button class="bigtab" data-tab="og">OG</button>
+  </div>
+  <div class="bank">bankroll/venue $<input id="bank" type="number" value="3000" min="1"></div>
+  <div class="health"><span class="dot" id="dot"></span><span id="hstate">—</span><span id="hage" style="color:var(--faint)"></span></div>
+  <div class="clock" id="clock"></div>
+</div>
+<div class="stale" id="stale">▲ FEED STALE — no cycle in over 5 min. The bot loop may be stopped.</div>
+
+<!-- ===== GENZ ===== -->
+<div id="tab-genz">
+  <div class="gtabs" id="gtabs"></div>
+  <div class="ctrl">
+    <div class="seg" id="viewSeg"><button data-v="all" class="on">All markets</button><button data-v="arbs">Arbs only</button></div>
+    <select class="mfilter" id="mfilter"><option value="">All market types</option></select>
+    <span class="count" id="count"></span>
+  </div>
+  <div class="wrap"><div id="body"><div class="empty">Loading…</div></div></div>
+  <div class="foot">
+    <div>GENZ · Kalshi ⇄ Polymarket · pre-game only · <span class="dry">DRY-RUN</span> — places nothing.</div>
+    <div>Sorted by <b>Net %</b> (after Kalshi's taker fee). Red row = extra-time rule mismatch (both legs can lose — never bet it). Amber row = gross sub-1 but the fee eats the edge (not a real arb). "Bet this" &amp; Profit are NET of fees, capped by your bankroll AND real book depth. Profit only if BOTH legs fill at these prices.</div>
+  </div>
+</div>
+
+<!-- ===== OG ===== -->
+<div id="tab-og" class="hide">
+  <div class="ctrl">
+    <div class="seg" id="ogSeg"><button data-o="all" class="on">All</button><button data-o="clean">Hide 1xbet-dependent</button></div>
+    <span class="count" id="ogcount"></span>
+  </div>
+  <div class="wrap"><div id="ogbody"><div class="empty">Loading…</div></div></div>
+  <div class="foot">
+    <div>OG · 4-book pre-game scanner (Kalshi, Polymarket, Pinnacle, 1xbet) · <span class="dry">ALERT-ONLY</span> — you place these by hand.</div>
+    <div>Most OG arbs depend on 1xbet, the unreliable book — those are flagged. Verify on the book before betting.</div>
+  </div>
+</div>
+
+<script>
+var SNAP=null,HB=null,OG=[],curGame=null,view='all',mFilter='',BANK=3000,tab='genz',ogView='all';
+function num(x){var n=parseFloat(x);return isNaN(n)?null:n;}
+function pct(x){return x==null?'-':(x*100).toFixed(1)+'%';}
+function money(x){return x==null?'-':'$'+Number(x).toLocaleString(undefined,{maximumFractionDigits:0});}
+function money2(x){return x==null?'-':'$'+Number(x).toFixed(2);}
+
+function health(){
+  var dot=document.getElementById('dot'),st=document.getElementById('hstate'),age=document.getElementById('hage'),b=document.getElementById('stale');
+  var ts=(HB&&HB.last_cycle_utc)?Date.parse(HB.last_cycle_utc):(SNAP&&SNAP.cycle_utc?Date.parse(SNAP.cycle_utc):null);
+  if(!ts){dot.className='dot alarm';st.textContent='NO DATA';age.textContent='';return;}
+  var s=Math.max(0,Math.floor((Date.now()-ts)/1000));
+  age.textContent=s<60?s+'s ago':s<3600?Math.floor(s/60)+'m ago':Math.floor(s/3600)+'h ago';
+  if(s>300){dot.className='dot alarm';st.textContent='STALE';b.classList.add('show');}
+  else if(s>90){dot.className='dot warn';st.textContent='SLOW';b.classList.remove('show');}
+  else{dot.className='dot';st.textContent='LIVE';b.classList.remove('show');}
+}
+function tabs(){
+  var el=document.getElementById('gtabs');
+  if(!SNAP||!SNAP.games||typeof SNAP.games!=='object'){el.innerHTML='';return;}
+  var ids=Object.keys(SNAP.games);
+  if(!ids.length){el.innerHTML='';return;}
+  if(!curGame||!SNAP.games[curGame])curGame=ids[0];
+  var h='';
+  for(var i=0;i<ids.length;i++){
+    var id=ids[i],g=SNAP.games[id],mk=g.markets||[];
+    var nArb=mk.filter(function(m){return num(m.implied_cost)<1;}).length;
+    h+='<div class="gtab '+(id===curGame?'active':'')+'" data-g="'+id+'"><span class="t">'+(g.teams||id)+'</span><span class="s">'+mk.length+' mkts &middot; '+nArb+' arb'+(g.started?' <span class="lv">LIVE</span>':'')+'</span></div>';
+  }
+  el.innerHTML=h;
+  var t=el.querySelectorAll('.gtab');
+  for(var j=0;j<t.length;j++)t[j].onclick=function(){curGame=this.getAttribute('data-g');tabs();filter();table();};
+}
+function filter(){
+  if(!SNAP||!curGame||!SNAP.games||!SNAP.games[curGame])return;
+  var g=SNAP.games[curGame],types=[];
+  (g.markets||[]).forEach(function(m){if(types.indexOf(m.market_type)<0)types.push(m.market_type);});
+  types.sort();
+  var sel=document.getElementById('mfilter'),cur=sel.value,h='<option value="">All market types</option>';
+  types.forEach(function(t){h+='<option value="'+t+'">'+t.replace(/_/g,' ')+'</option>';});
+  sel.innerHTML=h;sel.value=cur;
+}
+function sizing(m){
+  var sum=num(m.implied_cost),net=num(m.net_roi_pct);
+  if(sum==null||sum>=1)return null;
+  if(net==null||net<=0)return null;                 // no edge left net of the Kalshi fee -> not a real arb
+  var pa=num(m.price_a),pb=num(m.price_b);
+  if(pa==null||pb==null)return null;
+  var maxDepth=num(m.max_stake_usd),da=num(m.depth_a_usd),db=num(m.depth_b_usd);  // depth/max are fee-aware
+  var capA=Math.min(BANK,da!=null?da:Infinity), capB=Math.min(BANK,db!=null?db:Infinity);
+  var Ta=capA*sum/pa, Tb=capB*sum/pb, T=Math.min(Ta,Tb);
+  if(maxDepth!=null)T=Math.min(T,maxDepth);
+  if(!isFinite(T)||T<=0)return null;
+  var sa=T*pa/sum, sb=T*pb/sum;
+  var bound=(T===Ta&&capA===BANK)||(T===Tb&&capB===BANK)?'bankroll':'book depth';
+  return {total:T,sa:sa,sb:sb,profit:T*net/100,boundBy:bound};   // NET guaranteed profit (fee-honest)
+}
+function table(){
+  var g=(SNAP&&curGame&&SNAP.games)?SNAP.games[curGame]:null,body=document.getElementById('body');
+  if(!g){body.innerHTML='<div class="empty">No data yet.<br>Is the bot loop running? <b>python -m src.genz.cli run --loop --interval 20</b></div>';document.getElementById('count').textContent='';return;}
+  if(g.started){body.innerHTML='<div class="empty">'+(g.teams||curGame)+' has kicked off.<br>GenZ is pre-game only — it stopped pricing this game.</div>';document.getElementById('count').textContent='live - not priced';return;}
+  var mk=(g.markets||[]).slice();
+  if(view==='arbs')mk=mk.filter(function(m){return num(m.implied_cost)<1;});
+  if(mFilter)mk=mk.filter(function(m){return m.market_type===mFilter;});
+  mk.sort(function(a,b){var na=num(a.net_roi_pct),nb=num(b.net_roi_pct);na=na==null?-1e9:na;nb=nb==null?-1e9:nb;return nb-na;});  // default: Net % desc
+  document.getElementById('count').textContent=mk.length+' shown';
+  if(!mk.length){body.innerHTML='<div class="empty">'+(view==='arbs'?'No arbs right now - flip to All markets.':'No markets.')+'</div>';return;}
+  var h='<table><thead><tr><th>Market</th><th>Legs (best of both)</th><th class="num">Sum</th><th class="num">ROI</th><th class="num">Net %</th><th class="num">Fee %</th><th>Bet this</th><th class="num">Profit</th><th>Status</th></tr></thead><tbody>';
+  for(var i=0;i<mk.length;i++){
+    var m=mk[i],sum=num(m.implied_cost),roi=num(m.roi_pct),net=num(m.net_roi_pct),fee=num(m.fee_rate_pct);
+    var arb=sum!=null&&sum<1;
+    var netArb=arb&&net!=null&&net>0;               // a REAL arb (edge survives the Kalshi fee)
+    var feeTrap=arb&&net!=null&&net<=0;             // gross edge, but the fee eats it -> not an arb
+    var va=(String(m.venue_a||'')[0]||'').toLowerCase()==='k'?'k':'p';
+    var vb=(String(m.venue_b||'')[0]||'').toLowerCase()==='k'?'k':'p';
+    var pa=m.price_a!=null?(m.price_a*100).toFixed(0)+'c':'', pb=m.price_b!=null?(m.price_b*100).toFixed(0)+'c':'';
+    var VA=String(m.venue_a||' ')[0].toUpperCase(),VB=String(m.venue_b||' ')[0].toUpperCase();
+    var legs='<span class="'+va+'">'+m.side_a+' '+pa+' <b>'+VA+'</b></span> + <span class="'+vb+'">'+m.side_b+' '+pb+' <b>'+VB+'</b></span>';
+    var tag;
+    if(m.period_mismatch)tag='<span class="trap-tag">extra-time trap</span>';
+    else if(m.would_trade)tag='<span class="tag would">would trade</span>';
+    else if(feeTrap)tag='<span class="tag flag">fee &gt; edge</span>';
+    else if(/rejected/.test(m.exec_status||''))tag='<span class="tag rej">'+String(m.exec_status).replace('rejected_','rej: ')+'</span>';
+    else tag='<span class="tag noarb">no arb</span>';
+    var xnet=num(m.exec_net_edge_pct);
+    var xcap=(xnet!=null)?'<span class="cap">net@$10 '+xnet.toFixed(1)+'%</span>':'';
+    var betCell='<span class="bet none">-</span>',profCell='<span class="roi neg">-</span>';
+    if(arb&&m.period_mismatch)betCell='<span class="bet none">do not bet</span>';
+    else if(netArb){
+      var s=sizing(m);
+      if(s){
+        betCell='<span class="bet"><span class="amt">'+money2(s.sa)+'</span> <span class="v">'+(va==='k'?'KALSHI':'POLY')+' '+m.side_a+'</span><br><span class="amt">'+money2(s.sb)+'</span> <span class="v">'+(vb==='k'?'KALSHI':'POLY')+' '+m.side_b+'</span><br><span class="v">total '+money(s.total)+' &middot; capped by '+s.boundBy+'</span></span>';
+        profCell='<span class="prof">'+money2(s.profit)+'<span class="cap">net on '+money(s.total)+'</span>'+xcap+'</span>';
+      }
+    }
+    else if(feeTrap)betCell='<span class="bet none">gross only</span>';
+    var netCell=(net!=null)?'<span class="net '+(net>0?'pos':'neg')+'">'+net.toFixed(1)+'%</span>':'<span class="net neg">-</span>';
+    var feeCell=(fee!=null)?'<span class="fee">'+fee.toFixed(1)+'%</span>':'-';
+    var rowCls=m.period_mismatch?'trap':(feeTrap?'feetrap':'');
+    var rowTitle=feeTrap?' title="gross edge inside Kalshi fee — not an arb"':'';
+    h+='<tr class="'+rowCls+'"'+rowTitle+'><td class="mtype">'+String(m.market_type||'').replace(/_/g,' ')+' <span class="ln">'+(m.line||'')+'</span></td><td class="leg">'+legs+'</td><td class="num"><span class="sum '+(arb?'arb':'no')+'">'+pct(sum)+'</span></td><td class="num"><span class="roi '+(roi>0?'pos':'neg')+'">'+(roi!=null?roi.toFixed(1)+'%':'-')+'</span></td><td class="num">'+netCell+'</td><td class="num">'+feeCell+'</td><td>'+betCell+'</td><td class="num">'+profCell+'</td><td>'+tag+'</td></tr>';
+  }
+  body.innerHTML=h+'</tbody></table>';
+}
+
+/* ---------- OG ---------- */
+function parseCSV(t){
+  var lines=t.trim().split(/\r?\n/);if(lines.length<2)return[];
+  var H=lines[0].split(',');
+  var out=[];
+  for(var i=1;i<lines.length;i++){
+    // naive split; json columns may contain commas -> take first H.length-? Just guard.
+    var c=lines[i].split(',');
+    var o={};for(var k=0;k<H.length;k++)o[H[k].trim()]=(c[k]||'').trim();
+    out.push(o);
+  }
+  return out;
+}
+function ogTable(){
+  var body=document.getElementById('ogbody');
+  if(!OG.length){body.innerHTML='<div class="empty">No OG data.<br>OG writes <b>data/arbitrage_opportunities.csv</b> when its scanner runs.</div>';document.getElementById('ogcount').textContent='';return;}
+  var rows=OG.slice();
+  // latest first
+  rows.sort(function(a,b){return (num(b.roi_pct)||0)-(num(a.roi_pct)||0);});
+  var dep=function(r){return /1xbet/i.test(r.bookmakers||'')||/1xbet/i.test(r.binding_book||'');};
+  if(ogView==='clean')rows=rows.filter(function(r){return !dep(r);});
+  document.getElementById('ogcount').textContent=rows.length+' shown';
+  if(!rows.length){body.innerHTML='<div class="empty">Nothing left after hiding 1xbet-dependent arbs.<br>That is the honest picture: OG\'s edge leans on the flaky book.</div>';return;}
+  var h='<table><thead><tr><th>Match</th><th>Market</th><th>Books</th><th class="num">ROI</th><th class="num">Max profit</th><th class="num">Liquidity</th><th>Kickoff</th><th>Flags</th></tr></thead><tbody>';
+  for(var i=0;i<rows.length&&i<250;i++){
+    var r=rows[i],roi=num(r.roi_pct),isDep=dep(r);
+    var books=String(r.bookmakers||'').replace(/\|/g,' + ');
+    if(r.binding_book)books=books.replace(new RegExp(r.binding_book,'i'),'<span class="bind">'+r.binding_book+'</span>');
+    var flags='';
+    if(isDep)flags+='<span class="tag flag">1xbet-dependent</span> ';
+    if(String(r.low_confidence).toLowerCase()==='true')flags+='<span class="tag rej">low conf</span> ';
+    if(!flags)flags='<span class="tag noarb">-</span>';
+    h+='<tr class="'+(isDep?'trap':'')+'"><td class="mtype">'+(r.match||'')+'</td>'
+      +'<td class="leg">'+(r.market||r.market_type||'')+' '+(r.line||'')+'</td>'
+      +'<td class="books">'+books+'</td>'
+      +'<td class="num"><span class="roi '+(roi>0?'pos':'neg')+'">'+(roi!=null?roi.toFixed(2)+'%':'-')+'</span></td>'
+      +'<td class="num prof">'+money2(num(r.max_profit))+'</td>'
+      +'<td class="num" style="font-family:var(--mono);color:var(--dim)">'+money(num(r.max_liquidity))+'</td>'
+      +'<td class="leg">'+(r.kickoff_et||'')+'</td>'
+      +'<td>'+flags+'</td></tr>';
+  }
+  body.innerHTML=h+'</tbody></table>';
+}
+
+function renderAll(){health();if(tab==='genz'){tabs();filter();table();}else{ogTable();}}
+
+document.querySelectorAll('.bigtab').forEach(function(b){b.onclick=function(){
+  tab=b.getAttribute('data-tab');
+  document.querySelectorAll('.bigtab').forEach(function(x){x.classList.toggle('on',x===b);});
+  document.getElementById('tab-genz').classList.toggle('hide',tab!=='genz');
+  document.getElementById('tab-og').classList.toggle('hide',tab!=='og');
+  renderAll();
+};});
+document.getElementById('ogSeg').querySelectorAll('button').forEach(function(b){b.onclick=function(){
+  ogView=b.getAttribute('data-o');
+  document.getElementById('ogSeg').querySelectorAll('button').forEach(function(x){x.classList.toggle('on',x===b);});
+  ogTable();
+};});
+document.getElementById('bank').oninput=function(e){var v=parseFloat(e.target.value);if(v>0){BANK=v;table();}};
+document.getElementById('viewSeg').querySelectorAll('button').forEach(function(b){b.onclick=function(){view=b.getAttribute('data-v');document.getElementById('viewSeg').querySelectorAll('button').forEach(function(x){x.classList.toggle('on',x===b);});table();};});
+document.getElementById('mfilter').onchange=function(e){mFilter=e.target.value;table();};
+setInterval(function(){document.getElementById('clock').textContent=new Date().toLocaleTimeString();health();},1000);
+
+function poll(){
+  fetch('genz_snapshot.json?t='+Date.now(),{cache:'no-store'}).then(function(r){return r.ok?r.text():null;}).then(function(t){
+    if(!t)return;var j;try{j=JSON.parse(t);}catch(e){return;}
+    if(j&&j.games&&typeof j.games==='object'){SNAP=j;renderAll();}
+  }).catch(function(){});
+  fetch('genz_heartbeat.json?t='+Date.now(),{cache:'no-store'}).then(function(r){return r.ok?r.text():null;}).then(function(t){
+    if(!t)return;var j;try{j=JSON.parse(t);}catch(e){return;}
+    HB=j;health();
+  }).catch(function(){});
+  fetch('../arbitrage_opportunities.csv?t='+Date.now(),{cache:'no-store'}).then(function(r){return r.ok?r.text():null;}).then(function(t){
+    if(!t)return;OG=parseCSV(t);if(tab==='og')ogTable();
+  }).catch(function(){});
+}
+poll();setInterval(poll,15000);
+renderAll();
+</script>
+</body>
+</html>

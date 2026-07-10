@@ -511,15 +511,15 @@ def test_run_cycle_writes_full_market_snapshot(tmp_path):
 def test_snapshot_depth_sizing_bounded_by_thinner_leg():
     """A real arb with a known 2-level book per side: max_stake is bounded by the THINNER leg (the over
     book's cheap size runs out first), per-leg depth is the dollars fillable within the arb, and the
-    $100 reference profit_usd = total/implied_cost - total. A non-arb leaves every sizing field null."""
-    from src.genz.engine import Market, PricedVenue
+    profit figures are NET of the Kalshi taker fee on the over leg. A non-arb leaves the depth/stake
+    fields null but STILL carries the price-only net fields."""
+    from src.genz.engine import Market, PricedVenue, _kalshi_fee_rate
     na = _node("corners", "corners|8.5", "over", 8.5, "2way", "high", "K_O", "YES", "P_O")
     nb = _node("corners", "corners|8.5", "under", 8.5, "2way", "high", "K_U", "NO", "P_U")
     market = Market(game="PORESP", away="Portugal", home="Spain", market_type="corners",
                     market_key="corners|8.5", line=8.5, kind="2way", confidence="high",
                     kickoff="2026-07-06T19:00:00Z", sides={"over": na, "under": nb})
-    # over: 100 @ 0.45 then 900 @ 0.50  (cheap size ends at 100 shares)
-    # under: 200 @ 0.50 then 800 @ 0.55 (cheap size ends at 200 shares) -> OVER is the thinner leg
+    # over (KALSHI): 100 @ 0.45 then 900 @ 0.50 ; under (POLY): 200 @ 0.50 then 800 @ 0.55
     priced = {
         ("kalshi", "K_O", "YES"): PricedVenue("kalshi", "K_O", 0.45, 0.45, 4500.0,
                                               ladder=[(0.45, 100), (0.50, 900)]),
@@ -528,20 +528,96 @@ def test_snapshot_depth_sizing_bounded_by_thinner_leg():
     }
     snap = eng._market_snapshot(market, priced)
     assert snap["implied_cost"] == 0.95                                 # best-of-both top-of-book arb
-    # The marginal walk stops when the over leg steps to 0.50 (its cheap 100 exhausted) and 0.50+0.50=1.0
-    # -> 100 equal shares: 100@0.45 (=$45) on over + 100@0.50 (=$50) on under.
+    # The fee-aware marginal walk stops when the over leg steps to 0.50: 0.50 + 0.50 + fee(0.50) > 1.0
+    # -> 100 equal shares: 100@0.45 (=$45, KALSHI) + 100@0.50 (=$50, POLY), fee = 100·fee(0.45).
     assert snap["max_stake_usd"] == 95.0                               # bounded by the thinner (over) leg
-    assert (snap["depth_a_usd"], snap["depth_b_usd"]) == (45.0, 50.0)  # $ fillable per leg within the arb
-    assert snap["profit_at_max_usd"] == 5.0                            # 100 shares payout - $95 cost
-    # $100 reference: split sums to the total, guaranteed profit = total/implied - total.
-    assert snap["profit_usd"] == round(100.0 / 0.95 - 100.0, 2)       # 5.26
+    assert (snap["depth_a_usd"], snap["depth_b_usd"]) == (45.0, 50.0)  # $ fillable per leg (pre-fee)
+    fee_total = 100 * _kalshi_fee_rate(0.45)                           # only the over (kalshi) leg pays
+    assert snap["profit_at_max_usd"] == round(100 - 95 - fee_total, 2)  # 3.27 NET (was 5.00 pre-fee)
+    # $100 reference: guaranteed profit = total/implied - total - fee on those contracts (net, not gross).
+    n = 100.0 / 0.95
+    assert snap["profit_usd"] == round(100.0 / 0.95 - 100.0 - n * _kalshi_fee_rate(0.45), 2)  # 3.44
     assert round(snap["split_a_usd"] + snap["split_b_usd"], 2) == 100.0
+    # net_roi_pct < gross roi_pct because the kalshi leg pays a fee; fee_rate_pct is that fee as % implied.
+    assert snap["net_roi_pct"] < snap["roi_pct"] and snap["fee_rate_pct"] > 0.0
 
-    # A NON-ARB (implied >= 1) carries NO sizing — every field is null.
+    # A NON-ARB (implied >= 1): depth/stake fields are null, but the price-only net fields are present.
     flat = {
         ("kalshi", "K_O", "YES"): PricedVenue("kalshi", "K_O", 0.55, 0.55, 5500.0, ladder=[(0.55, 100)]),
         ("poly", "P_U", "BUY"): PricedVenue("poly", "P_U", 0.50, 0.50, 5000.0, ladder=[(0.50, 200)]),
     }
     non_arb = eng._market_snapshot(market, flat)
     assert non_arb["implied_cost"] >= 1.0
-    assert all(non_arb[k] is None for k in eng._SIZING_FIELDS)
+    assert all(non_arb[k] is None for k in eng._DEPTH_FIELDS)          # depth/stake null for a non-arb...
+    assert non_arb["net_roi_pct"] is not None                         # ...but net_roi_pct is still computed
+    assert non_arb["fee_rate_pct"] is not None
+
+
+# --------------------------------------------------------------------------- #
+# FEE-HONEST SIZING: the Kalshi taker fee turns gross "arbs" into net losses.     #
+# --------------------------------------------------------------------------- #
+def _q(venue, price, ladder):
+    from src.genz.engine import SideQuote
+    return SideQuote(venue, {}, price, sum(p * s for p, s in ladder), ladder=ladder)
+
+
+def test_kalshi_fee_rate_spot_values():
+    """The smooth per-contract fee rate = 0.07·P·(1−P) (no ceil)."""
+    assert eng._kalshi_fee_rate(0.5) == 0.0175
+    assert round(eng._kalshi_fee_rate(0.96), 6) == 0.002688
+
+
+def _net_roi_034():
+    """net_roi_pct for the kalshi-0.34 / poly-0.6475 case (shared by two tests)."""
+    return eng._sizing(_q("kalshi", 0.34, [(0.34, 10000)]),
+                       _q("polymarket", 0.6475, [(0.6475, 10000)]), 0.9875)["net_roi_pct"]
+
+
+def test_fee_aware_walk_stops_earlier_and_goes_net_negative():
+    """kalshi 0.34 + poly 0.6475 (gross implied 0.9875 < 1 -> looks like an arb): fee-aware, the FIRST
+    contract already costs > $1 net, so the walk fills NOTHING (stops earlier than the pre-fee walk),
+    net_roi_pct ≈ -0.32%, and the $100 reference is a guaranteed LOSS."""
+    la, lb = [(0.34, 10000)], [(0.6475, 10000)]
+    shares, _, _, _ = eng._arb_max_fill(la, lb, "kalshi", "polymarket")
+    pre_fee_shares, _, _, _ = eng._arb_max_fill(la, lb, "polymarket", "polymarket")  # no-fee baseline
+    assert shares < pre_fee_shares and shares == 0                     # fee walk stops earlier
+
+    sz = eng._sizing(_q("kalshi", 0.34, la), _q("polymarket", 0.6475, lb), 0.9875)
+    assert -0.40 < sz["net_roi_pct"] < -0.28                          # ≈ -0.32% (net negative)
+    assert sz["profit_usd"] < 0.0                                     # $100 reference is a guaranteed loss
+    assert sz["profit_at_max_usd"] <= 0.0 and sz["max_stake_usd"] == 0.0  # no profitable size to deploy
+
+
+def test_high_price_kalshi_leg_less_negative_than_midprice():
+    """kalshi 0.96 + poly 0.039 (implied 0.999): net-negative too, but the fee at P=0.96 is tiny, so it
+    is LESS negative than the 0.34 mid-price case."""
+    sz = eng._sizing(_q("kalshi", 0.96, [(0.96, 10000)]), _q("polymarket", 0.039, [(0.039, 10000)]), 0.999)
+    assert sz["net_roi_pct"] < 0.0                                    # still a net loss
+    assert sz["net_roi_pct"] > _net_roi_034()                        # but better than the 0.34 case
+
+
+def test_poly_vs_poly_net_equals_gross():
+    """No Kalshi leg -> no fee -> net_roi_pct == gross roi and fee_rate_pct == 0."""
+    implied = 0.95
+    sz = eng._sizing(_q("polymarket", 0.45, [(0.45, 10000)]), _q("polymarket", 0.50, [(0.50, 10000)]), implied)
+    gross = round((1.0 / implied - 1.0) * 100.0, 4)
+    assert sz["net_roi_pct"] == gross and sz["fee_rate_pct"] == 0.0
+
+
+def test_snapshot_non_arb_row_carries_net_roi():
+    """Every priced snapshot row — including a NON-ARB (implied > 1) — carries net_roi_pct so the panel
+    can sort all markets by net edge."""
+    from src.genz.engine import Market, PricedVenue
+    na = _node("btts", "btts", "yes", None, "2way", "high", "K_Y", "YES", "P_Y")
+    nb = _node("btts", "btts", "no", None, "2way", "high", "K_N", "NO", "P_N")
+    market = Market(game="G", away="A", home="H", market_type="btts", market_key="btts", line=None,
+                    kind="2way", confidence="high", kickoff="2026-07-06T19:00:00Z",
+                    sides={"yes": na, "no": nb})
+    priced = {
+        ("kalshi", "K_Y", "YES"): PricedVenue("kalshi", "K_Y", 0.55, 0.55, 5500.0, ladder=[(0.55, 100)]),
+        ("poly", "P_N", "BUY"): PricedVenue("poly", "P_N", 0.50, 0.50, 5000.0, ladder=[(0.50, 100)]),
+    }
+    snap = eng._market_snapshot(market, priced)
+    assert snap["implied_cost"] > 1.0                                # a non-arb
+    assert snap["net_roi_pct"] is not None and snap["net_roi_pct"] < 0.0
+    assert snap["max_stake_usd"] is None                             # ...yet no depth/stake sizing

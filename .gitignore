@@ -44,3 +44,5 @@ data/scan.lock
 data/executor/
 # Derived group-tier slug/token cache (rebuilt on its own TTL); only written when group_markets on.
 data/cache/group_slugmap.json
+# Claude Code local session/agent state — never commit.
+.claude/

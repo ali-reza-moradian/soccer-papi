@@ -429,7 +429,10 @@ def run_cycle(tree: dict[str, Any], md: Any, gz_cfg: gz_config.GenzConfig,
         if want_live:
             attempted_trade = True             # consumed the single per-cycle attempt
         survived = bool(result.arb_survived)
-        wt = high_conf and survived and c.roi_pct >= gz_cfg.min_edge_pct
+        # Gate would_trade on the executor's NET edge (after Kalshi's ceil-to-cent fee), not gross ROI —
+        # most gross arbs here are net-negative once the taker fee is paid.
+        net = result.detail.get("net_edge_pct")
+        wt = high_conf and survived and net not in ("", None) and float(net) >= gz_cfg.min_edge_pct
         would_trade += 1 if wt else 0
         row.update(net_edge_pct=result.detail.get("net_edge_pct", ""), arb_survived=survived,
                    would_trade=wt, exec_status=result.status,
@@ -523,16 +526,29 @@ def write_heartbeat(res: CycleResult, *, now: datetime, path: Optional[str] = No
 # --------------------------------------------------------------------------- #
 SNAPSHOT_REF_STAKE = 100.0            # reference TOTAL stake for the split/profit fields ($)
 
-_SIZING_FIELDS = ("depth_a_usd", "depth_b_usd", "max_stake_usd",
-                  "split_a_usd", "split_b_usd", "profit_usd", "profit_at_max_usd")
+# Depth/stake fields are None for a non-arb (implied >= 1); the net fields below are computed for EVERY
+# priced row so the dashboard can sort all markets by net edge.
+_DEPTH_FIELDS = ("depth_a_usd", "depth_b_usd", "max_stake_usd",
+                 "split_a_usd", "split_b_usd", "profit_usd", "profit_at_max_usd")
+_NET_FIELDS = ("fee_rate_pct", "net_roi_pct")
+_SIZING_FIELDS = _DEPTH_FIELDS + _NET_FIELDS
 
 
-def _arb_max_fill(ladder_a: list, ladder_b: list) -> tuple[float, float, float]:
+def _kalshi_fee_rate(price: float) -> float:
+    """The SMOOTH per-contract Kalshi taker fee in dollars: 0.07·P·(1−P), with no ceil-to-cent. This is
+    the amortized floor of the official fee (roundup_to_cent(0.07·C·P·(1−P))) and is what the sizing math
+    uses; the exact ceil-to-cent version lives in the executor (fees_sizing) for real order sizes."""
+    return 0.07 * price * (1.0 - price)
+
+
+def _arb_max_fill(ladder_a: list, ladder_b: list, venue_a: str,
+                  venue_b: str) -> tuple[float, float, float, float]:
     """Walk two ascending ask ladders IN LOCKSTEP — buying equal shares on each side (so the payout is
     equal whichever outcome wins) — up to the MARGINAL boundary where the next contract's combined price
-    (marginal_a + marginal_b) would reach 1.0. Beyond that a contract costs more than the $1 it can
-    return, so it is no longer part of the arb. Returns (shares, cost_a, cost_b): the max risk-free
-    equal-share fill and the dollars spent on each leg. Naturally bounded by the THINNER leg's depth."""
+    PLUS Kalshi taker fees (marginal_a + marginal_b + fee legs) would reach 1.0. Beyond that a contract
+    costs more than the $1 it can return, so it is no longer part of the arb. Returns
+    (shares, cost_a, cost_b, fee_total): the max risk-free equal-share fill, the dollars spent on each
+    leg (pre-fee), and the total smooth fee. Naturally bounded by the THINNER leg's depth."""
     def _cum(ladder: list) -> list[tuple[float, float]]:
         out, c = [], 0.0
         for p, s in ladder:
@@ -541,51 +557,69 @@ def _arb_max_fill(ladder_a: list, ladder_b: list) -> tuple[float, float, float]:
                 out.append((float(p), c))          # (price, cumulative size through this level)
         return out
 
+    a_kalshi, b_kalshi = venue_a == "kalshi", venue_b == "kalshi"
     ca, cb = _cum(ladder_a), _cum(ladder_b)
     ia = ib = 0
-    n = cost_a = cost_b = 0.0
+    n = cost_a = cost_b = fee_total = 0.0
     while ia < len(ca) and ib < len(cb):
         pa, a_end = ca[ia]
         pb, b_end = cb[ib]
-        if pa + pb >= 1.0:                          # marginal contract no longer profitable -> stop
+        fee_a = _kalshi_fee_rate(pa) if a_kalshi else 0.0
+        fee_b = _kalshi_fee_rate(pb) if b_kalshi else 0.0
+        if pa + pb + fee_a + fee_b >= 1.0:          # marginal contract no longer profitable NET of fees
             break
         nxt = min(a_end, b_end)                     # buy equal shares up to the next ladder step
         take = nxt - n
         if take > 0:
             cost_a += take * pa
             cost_b += take * pb
+            fee_total += take * (fee_a + fee_b)
             n = nxt
         if a_end <= nxt + 1e-9:                     # advance the leg(s) whose level is exhausted
             ia += 1
         if b_end <= nxt + 1e-9:
             ib += 1
-    return n, cost_a, cost_b
+    return n, cost_a, cost_b, fee_total
 
 
 def _sizing(qa: SideQuote, qb: SideQuote, implied: float) -> dict[str, Optional[float]]:
-    """Depth-aware stake sizing for a real arb: per-leg fillable dollars, the max total stake before the
-    edge disappears, a $100 reference split, and guaranteed profit at $100 and at max. All None for a
-    non-arb (implied >= 1). Money rounded to cents. Reuses the ladders already fetched this cycle."""
+    """Fee-HONEST stake sizing. The net fields (fee_rate_pct, net_roi_pct) are computed for EVERY priced
+    row from prices alone. The depth/stake fields (per-leg fillable dollars, max total stake before the
+    NET edge disappears, $100 split, guaranteed NET profit at $100 and at max) are for real arbs only —
+    None for a non-arb (implied >= 1). Money rounded to cents; ladders reused (no re-fetch)."""
+    fee_a = _kalshi_fee_rate(qa.price) if qa.venue == "kalshi" else 0.0
+    fee_b = _kalshi_fee_rate(qb.price) if qb.venue == "kalshi" else 0.0
+    out: dict[str, Optional[float]] = {k: None for k in _DEPTH_FIELDS}
+    if implied > 0:
+        out["fee_rate_pct"] = round((fee_a + fee_b) / implied * 100.0, 4)
+        out["net_roi_pct"] = round(((1.0 - fee_a - fee_b) / implied - 1.0) * 100.0, 4)
+    else:
+        out["fee_rate_pct"] = out["net_roi_pct"] = None
     if implied >= 1.0 or implied <= 0 or not qa.ladder or not qb.ladder:
-        return {k: None for k in _SIZING_FIELDS}
-    shares, cost_a, cost_b = _arb_max_fill(qa.ladder, qb.ladder)
+        return out                                  # non-arb -> depth/stake stay None
+    shares, cost_a, cost_b, fee_total = _arb_max_fill(qa.ladder, qb.ladder, qa.venue, qb.venue)
     max_stake = cost_a + cost_b
-    profit_at_max = shares - max_stake             # equal payout = shares (each pays $1)
-    ref = SNAPSHOT_REF_STAKE                        # $100 split at the top prices: stake_i = ref*p_i/implied
-    return {
+    profit_at_max = shares - max_stake - fee_total  # equal payout = shares (each pays $1), less fees
+    ref = SNAPSHOT_REF_STAKE                         # $100 split at the top prices: stake_i = ref*p_i/implied
+    n = ref / implied                               # contracts bought for a $ref total at top prices
+    ref_fee = n * fee_a + n * fee_b                 # smooth fee on those contracts (0 on a poly leg)
+    out.update({
         "depth_a_usd": round(cost_a, 2), "depth_b_usd": round(cost_b, 2),
         "max_stake_usd": round(max_stake, 2),
         "split_a_usd": round(ref * qa.price / implied, 2),
         "split_b_usd": round(ref * qb.price / implied, 2),
-        "profit_usd": round(ref / implied - ref, 2),
+        "profit_usd": round(ref / implied - ref - ref_fee, 2),
         "profit_at_max_usd": round(profit_at_max, 2),
-    }
+    })
+    return out
 
 
 def _market_snapshot(market: Market, priced: dict[tuple, "PricedVenue"]) -> Optional[dict[str, Any]]:
     """One market's best-of-both snapshot row (both sides), or None if it isn't fully priced. Includes
-    non-arbs (implied >= 1) — the dashboard shows all markets, not just edges. Real arbs also carry
-    depth-aware stake sizing (max_stake_usd, per-leg depth, $100 split + guaranteed profit)."""
+    non-arbs (implied >= 1) — the dashboard shows all markets, not just edges. EVERY priced row carries
+    the fee-honest net fields (net_roi_pct, fee_rate_pct) so all markets can be sorted by net edge; real
+    arbs additionally carry depth-aware stake sizing (max_stake_usd, per-leg depth, $100 split + NET
+    guaranteed profit)."""
     sides = list(market.sides.items())
     if len(sides) != 2:
         return None
@@ -628,9 +662,12 @@ def build_snapshot(tree: dict[str, Any], markets: list[Market], priced: dict[tup
             if row is not None:                            # the arb loop processed it (edge or rejected)
                 snap["would_trade"] = bool(row.get("would_trade"))
                 snap["exec_status"] = row.get("exec_status", "")
+                # the executor's exact net edge at the planned $10 size (incl. ceil-to-cent fee penalty)
+                snap["exec_net_edge_pct"] = row.get("net_edge_pct", "")
             else:                                          # priced but not an arb / not eligible
                 snap["would_trade"] = False
                 snap["exec_status"] = "no_arb" if snap["implied_cost"] >= 1.0 else "not_eligible"
+                snap["exec_net_edge_pct"] = ""
             mkts.append(snap)
         games_out[game_id] = {
             "teams": f"{g.get('away', '?')} vs {g.get('home', '?')}",

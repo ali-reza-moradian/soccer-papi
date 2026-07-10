@@ -61,7 +61,8 @@ class GenzConfig:
     interval_seconds: float = 20.0         # price-loop cycle target
     max_workers: int = 12                  # concurrent REST price fetches per cycle
     walk_stake_usd: float = 200.0          # stake to walk each book to (walk-to-stake fill)
-    min_edge_pct: float = 1.0              # implied-cost edge floor to flag/attempt an arb (after costs)
+    min_edge_pct: float = 1.0              # NET edge floor (%) to flag/attempt an arb — now gates the
+                                           # executor's net_edge_pct (after Kalshi's ceil-to-cent fee)
     max_plausible_roi_pct: float = 8.0     # arbs above this ROI (or implied_cost<0.5) are pairing/staleness bugs -> rejected
     min_total_implied: float = 0.95        # totals O/U over+under must sum >= this (same line/period == ~1.0); below -> mismatch
     http_timeout_seconds: float = 15.0     # per-call HTTP timeout (fail fast; a hung call must not stall a 20s cycle)
