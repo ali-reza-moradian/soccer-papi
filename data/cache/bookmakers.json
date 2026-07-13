@@ -97,7 +97,7 @@
   },
   {
     "bookmakerName": "7Bet LT",
-    "cloneOf": null,
+    "cloneOf": "lottoland",
     "liveOdds": true,
     "slug": "7bet.lt"
   },
@@ -181,7 +181,7 @@
   },
   {
     "bookmakerName": "All British Casino",
-    "cloneOf": null,
+    "cloneOf": "lottoland",
     "liveOdds": true,
     "slug": "allbritishcasino"
   },
@@ -421,7 +421,7 @@
   },
   {
     "bookmakerName": "Betfury",
-    "cloneOf": null,
+    "cloneOf": "bcgame",
     "liveOdds": true,
     "slug": "betfury"
   },
@@ -439,7 +439,7 @@
   },
   {
     "bookmakerName": "Betinia DK",
-    "cloneOf": null,
+    "cloneOf": "lottoland",
     "liveOdds": true,
     "slug": "betinia.dk"
   },
@@ -949,7 +949,7 @@
   },
   {
     "bookmakerName": "FEZbet",
-    "cloneOf": null,
+    "cloneOf": "lottoland",
     "liveOdds": true,
     "slug": "fezbet"
   },
@@ -958,6 +958,12 @@
     "cloneOf": null,
     "liveOdds": false,
     "slug": "fliff"
+  },
+  {
+    "bookmakerName": "Fonbet",
+    "cloneOf": null,
+    "liveOdds": null,
+    "slug": "fonbet"
   },
   {
     "bookmakerName": "Fortebet UG",
@@ -1021,7 +1027,7 @@
   },
   {
     "bookmakerName": "Golden Palace Sports BE",
-    "cloneOf": null,
+    "cloneOf": "lottoland",
     "liveOdds": true,
     "slug": "goldenpalacesports.be"
   },
@@ -1207,7 +1213,7 @@
   },
   {
     "bookmakerName": "LibraBet",
-    "cloneOf": null,
+    "cloneOf": "lottoland",
     "liveOdds": true,
     "slug": "librabet"
   },
@@ -1246,6 +1252,12 @@
     "cloneOf": null,
     "liveOdds": null,
     "slug": "mansion88"
+  },
+  {
+    "bookmakerName": "Marathonbet",
+    "cloneOf": null,
+    "liveOdds": null,
+    "slug": "marathonbet"
   },
   {
     "bookmakerName": "MARCAapuestas",
@@ -1735,7 +1747,7 @@
   },
   {
     "bookmakerName": "Rainbet",
-    "cloneOf": null,
+    "cloneOf": "rollbit",
     "liveOdds": true,
     "slug": "rainbet"
   },
@@ -2245,7 +2257,7 @@
   },
   {
     "bookmakerName": "Winpot MX",
-    "cloneOf": null,
+    "cloneOf": "lottoland",
     "liveOdds": true,
     "slug": "winpot.mx"
   },
