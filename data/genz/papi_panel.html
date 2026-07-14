@@ -240,7 +240,7 @@ function parseCSV(t){
 }
 function ogTable(){
   var body=document.getElementById('ogbody');
-  if(!OG.length){body.innerHTML='<div class="empty">No OG data.<br>OG writes <b>data/arbitrage_opportunities.csv</b> when its scanner runs.</div>';document.getElementById('ogcount').textContent='';return;}
+  if(!OG.length){body.innerHTML='<div class="empty">No OG data — serve from <b>data\\</b> (<b>python -m http.server 8080</b>), open <b>/genz/papi_panel.html</b>, and start <b>scripts/run_og_loop.ps1</b>.</div>';document.getElementById('ogcount').textContent='';return;}
   var rows=OG.slice();
   // latest first
   rows.sort(function(a,b){return (num(b.roi_pct)||0)-(num(a.roi_pct)||0);});

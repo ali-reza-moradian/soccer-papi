@@ -502,6 +502,16 @@ def merge_into(
             toa_books.setdefault(fid, set()).add(slug)
             cov.recovered[slug] = cov.recovered.get(slug, 0) + 1
 
+    # BTTS availability: we now request it, but some plans/fixtures simply don't carry it. If NO book
+    # in the response has a btts market, note it ONCE and continue — never fail the merge.
+    if events and not any(
+        isinstance(mk, dict) and mk.get("key") == "btts"
+        for ev in events if isinstance(ev, dict)
+        for bm in (ev.get("bookmakers") or []) if isinstance(bm, dict)
+        for mk in (bm.get("markets") or [])
+    ):
+        log.info("[THE-ODDS-API] btts not in response")
+
     return cov, toa_books
 
 
@@ -526,6 +536,8 @@ def _emit_book_markets(
             added += _emit_totals(entry, outcomes, idx, mk_update)
         elif key == "spreads":
             added += _emit_spreads(entry, outcomes, fm, idx, mk_update, log, label, slug)
+        elif key == "btts" and idx.btts:
+            added += _emit_btts(entry, outcomes, idx.btts, mk_update)
     return added
 
 
@@ -576,6 +588,25 @@ def _emit_totals(entry, outcomes, idx: MarketIndex, last_update) -> int:
         else:
             continue
         _add_leg(entry, spec["marketId"], oid, price, last_update)
+        added += 1
+    return added
+
+
+def _emit_btts(entry, outcomes, btts: dict[str, Any], last_update) -> int:
+    """Both-Teams-To-Score: 2 outcomes (Yes/No), full-time, no line — same routing shape as totals."""
+    added = 0
+    for o in outcomes:
+        price = _price(o)
+        if price is None:
+            continue
+        nm = str(o.get("name") or "").strip().lower()
+        if nm == "yes":
+            oid = btts["yes_oid"]
+        elif nm == "no":
+            oid = btts["no_oid"]
+        else:
+            continue  # unrecognised outcome -> drop, never guess
+        _add_leg(entry, btts["marketId"], oid, price, last_update)
         added += 1
     return added
 

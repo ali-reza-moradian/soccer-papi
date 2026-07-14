@@ -69,13 +69,12 @@ bookmakers:
   # are CONSERVATIVE DEFAULTS — adjust to your actual account tier. Applied via eff_odds in BOTH the
   # actionable and shadow universes, so observed exchange arbs are already net of commission.
   commission:
-    # FLAT APPROXIMATION of Kalshi's QUADRATIC sports trading fee. Real fee ≈ ceil(0.06 × C × P ×
-    # (1−P)) per contract, where P = price in dollars — so it is highest near the 50¢ midpoint and
-    # tapers toward the price extremes (favourites/longshots). As a fraction of NET winnings that is
-    # ≈ 0.06 × P; 0.03 is the even-money (~50¢) peak. We apply it as a single flat rate via eff_odds
-    # in both universes. TODO: refine to the real per-price formula if kalshi arbs look promising;
-    # CONFIRM against your account's actual fee tier first.
-    kalshi: 0.03
+    # FLAT APPROXIMATION of Kalshi's QUADRATIC taker fee. Real fee = ceil_to_cent(0.07 × C × P × (1−P))
+    # per contract, where P = price in dollars — highest near the 50¢ midpoint, tapering toward the
+    # extremes. A commission-on-net-winnings c adds ~c·P·(1−P) to a leg's implied cost, so setting
+    # c = 0.07 MATCHES the real 0.07·P·(1−P) fee curve. The old 0.03 under-charged it by HALF and minted
+    # phantom sub-1% Kalshi-leg alerts. Applied via eff_odds in BOTH the actionable and shadow universes.
+    kalshi: 0.07
     polymarket: 0.0
     betfair-ex: 0.05      # adjustable — standard Betfair Exchange ~2-5%; conservative 5%
     betfair-spb: 0.05     # adjustable — Betfair Sportsbook-via-exchange; conservative 5%
@@ -89,8 +88,8 @@ theoddsapi:
   # clone-dedup, and staleness rules apply unchanged. See src/theoddsapi.py.
   enabled: true
   wc_key: soccer_fifa_world_cup      # confirmed active; has_outrights=false (we skip the winner outright)
-  regions: eu,uk                     # both regions (6 credits/poll); 100K credits/15d covers 15-min cadence (~17,280)
-  markets: h2h,spreads,totals        # h2h→1x2, spreads→asian_handicap, totals→over/under
+  regions: eu                        # eu only (pinnacle + 1xbet are eu; uk only added shadow soft books at 2x cost)
+  markets: h2h,spreads,totals,btts   # h2h→1x2, spreads→asian_handicap, totals→over/under, btts→yes/no
   # MASTER SWITCH: while false, NO the-odds-api leg can form an actionable arb / send a Telegram
   # alert — they are tracked (shadow) only. When true, the per-book allow-list below (actionable_books)
   # is the REAL control over which recovered books may turn an arb actionable.

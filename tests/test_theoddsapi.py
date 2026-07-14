@@ -29,6 +29,9 @@ MARKETS_JSON = [
     {"marketId": 1502, "sportId": 10, "marketType": "spreads", "period": "fulltime", "handicap": 1.5,
      "marketName": "Asian Handicap",
      "outcomes": [{"outcomeId": 1502, "outcomeName": "1"}, {"outcomeId": 1503, "outcomeName": "2"}]},
+    {"marketId": 1600, "sportId": 10, "marketType": "bothteamsscore", "period": "fulltime", "handicap": 0,
+     "marketName": "Both Teams To Score",
+     "outcomes": [{"outcomeId": 1600, "outcomeName": "Yes"}, {"outcomeId": 1601, "outcomeName": "No"}]},
 ]
 
 BY_FIXTURE = {
@@ -70,6 +73,7 @@ def test_market_index():
     assert idx.totals[2.5]["marketId"] == 1010 and idx.totals[2.5]["scope"] == toa.SCOPE_PER_GAME
     assert idx.spreads[-1.5] == {"marketId": 1500, "home_oid": 1500, "away_oid": 1501,
                                  "scope": toa.SCOPE_PER_GAME}
+    assert idx.btts == {"marketId": 1600, "yes_oid": 1600, "no_oid": 1601, "scope": toa.SCOPE_PER_GAME}
     assert not idx.ambiguous
 
 
@@ -119,6 +123,48 @@ def test_merge_h2h_maps_by_identity_not_tag():
     # Every leg low_confidence: limit None, changedAt = last_update.
     assert legs["101"]["players"]["0"]["limit"] is None
     assert legs["101"]["players"]["0"]["changedAt"] == "2026-06-14T03:50:00Z"
+
+
+def test_merge_btts_maps_yes_no():
+    """A the-odds-api 'btts' market routes Yes/No onto the canonical BTTS marketId (family mapping),
+    same shape as totals — 2 outcomes, full-time, no line."""
+    idx = toa.build_market_index(MARKETS_JSON, 10)
+    payload = [_event("Australia", "Turkiye", "2026-06-14T04:00:00Z", [
+        _bm("onexbet", [{"key": "btts", "outcomes": [
+            {"name": "Yes", "price": 1.8}, {"name": "No", "price": 2.0}]}]),
+    ])]
+    raw: dict = {}
+    cov, toa_books = toa.merge_into(raw, BY_FIXTURE, idx, {"1xbet"}, payload,
+                                    tolerance_minutes=120, allow_books={"1xbet"}, cost_credits=4, log=LOG)
+    assert cov.matched == 1 and toa_books["idAAA"] == {"1xbet"}
+    mkt = raw["idAAA"]["bookmakerOdds"]["1xbet"]["markets"]["1600"]["outcomes"]
+    assert mkt["1600"]["players"]["0"]["price"] == 1.8   # Yes
+    assert mkt["1601"]["players"]["0"]["price"] == 2.0   # No
+
+
+def test_merge_btts_absent_logs_once_never_fails():
+    """When the response carries NO btts market, the merge must NOT fail — it logs the note exactly
+    once and continues."""
+    idx = toa.build_market_index(MARKETS_JSON, 10)
+    msgs: list = []
+
+    class _L:
+        def info(self, msg, *a):
+            msgs.append(msg % a if a else msg)
+        def warning(self, *a, **k):
+            pass
+        def debug(self, *a, **k):
+            pass
+
+    payload = [_event("Australia", "Turkiye", "2026-06-14T04:00:00Z", [
+        _bm("onexbet", [{"key": "h2h", "outcomes": [
+            {"name": "Australia", "price": 3.0}, {"name": "Turkiye", "price": 2.5}, {"name": "Draw", "price": 3.2}]}]),
+    ])]
+    raw: dict = {}
+    cov, _ = toa.merge_into(raw, BY_FIXTURE, idx, {"1xbet"}, payload,
+                            tolerance_minutes=120, allow_books={"1xbet"}, cost_credits=4, log=_L())
+    assert cov.matched == 1                                              # merge still succeeded
+    assert msgs.count("[THE-ODDS-API] btts not in response") == 1        # logged exactly once
 
 
 def test_merge_spread_sign_maps_home_point_to_handicap():

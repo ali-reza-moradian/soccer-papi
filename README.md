@@ -182,6 +182,25 @@ team / `Draw` / away team, and a market's line is made explicit (e.g. `Asian Han
 
 ---
 
+## Dashboard (`data/genz/papi_panel.html`)
+
+A single live panel with two tabs: **GENZ** (Kalshi⇄Polymarket, reads `genz_snapshot.json`) and **OG**
+(this 4-book scanner, reads `arbitrage_opportunities.csv`).
+
+`papi_panel.html` fetches `../arbitrage_opportunities.csv`, so the HTTP server root must be **`data\`**
+(open **`genz/papi_panel.html`**), **NOT** `data\genz`:
+
+```
+cd data
+python -m http.server 8080
+# then open http://localhost:8080/genz/papi_panel.html
+```
+
+Start the OG scanner loop in its own window so the OG tab has data:
+`powershell -ExecutionPolicy Bypass -File scripts\run_og_loop.ps1`.
+
+---
+
 ## Setup
 
 ### 1. Secrets (GitHub → Settings → Secrets and variables → Actions)

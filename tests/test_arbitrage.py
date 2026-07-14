@@ -96,6 +96,21 @@ def test_commission_reduces_effective_odds():
     assert math.isclose(res.arb_sum_S, expected_S, abs_tol=1e-9)
 
 
+def test_kalshi_commission_007_matches_quadratic_fee_at_midprice():
+    """Calibration: at the 50c midpoint the flat commission c=0.07 reproduces Kalshi's quadratic taker
+    fee. A kalshi leg's effective implied cost 1/eff_odds ~= P + 0.07*P*(1-P) (= 0.5175 at P=0.5) within
+    1e-3, so a kalshi leg needs ~1.75% of gross edge just to clear S<1 against a fair 50/50 counter-leg."""
+    P = 0.5
+    c = _cand(1, "Yes", "kalshi", 1.0 / P, limit=1000, commission=0.07, is_exchange=True)
+    eff_implied = 1.0 / c.eff_odds                       # 1/1.93 = 0.51813
+    assert math.isclose(eff_implied, P + 0.07 * P * (1 - P), abs_tol=1e-3)   # ~= 0.5175
+    # A fair 50c counter-leg (no commission) leaves S = 0.5175.. + 0.5 > 1 -> the fee kills the phantom.
+    other = _cand(2, "No", "polymarket", 1.0 / P, limit=1000)
+    res = compute_arb([c, other])
+    assert not res.is_arb and res.arb_sum_S > 1.0
+    assert math.isclose(res.arb_sum_S, eff_implied + 0.5, abs_tol=1e-9)
+
+
 def test_select_legs_allows_same_account_for_multiple_legs():
     """One account may back more than one leg of the same arb (user bets this way)."""
     outcomes = {
