@@ -89,7 +89,10 @@ theoddsapi:
   enabled: true
   wc_key: soccer_fifa_world_cup      # confirmed active; has_outrights=false (we skip the winner outright)
   regions: eu                        # eu only (pinnacle + 1xbet are eu; uk only added shadow soft books at 2x cost)
-  markets: h2h,spreads,totals,btts   # h2h→1x2, spreads→asian_handicap, totals→over/under, btts→yes/no
+  markets: h2h,spreads,totals
+  # DO NOT add btts here. The bulk /sports/{key}/odds endpoint rejects it with 422
+  # INVALID_MARKET, which poisons the ENTIRE call (Pinnacle + 1xbet vanish). btts needs the
+  # per-event odds endpoint — separate future work. Deliberate removal, twice now.
   # MASTER SWITCH: while false, NO the-odds-api leg can form an actionable arb / send a Telegram
   # alert — they are tracked (shadow) only. When true, the per-book allow-list below (actionable_books)
   # is the REAL control over which recovered books may turn an arb actionable.
@@ -180,6 +183,8 @@ polymarket:
   gamma_base: https://gamma-api.polymarket.com
   clob_base: https://clob.polymarket.com
   clob_max_workers: 8                # concurrent CLOB best-ask fetches (the per-game speed fix)
+  series_slug: soccer-fifwc          # WC event series; series-scan fallback for a game's SAFE-TIER
+                                     # siblings when the direct '<slug>-more-markets' fetch misses
   # SHADOW gate (separate from the `polymarket` slug already in bookmakers.actionable): while false,
   # any arb containing a polymarket-DIRECT leg is forced non-actionable, so polymarket-direct stays
   # shadow-only for verification across a few live runs — exactly like the kalshi / the-odds-api

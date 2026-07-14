@@ -151,6 +151,22 @@ def test_tie_leg_detected_by_word_boundary_draw_or_tie():
         assert set(outs.keys()) == {"101", "102", "103"}       # exactly home / draw / away
 
 
+def test_reg_time_prefix_stripped_from_team_labels():
+    """Kalshi drifted the semis' subtitles to 'Reg Time: <Team>' / 'Reg Time: Tie'. The regulation
+    prefix must be stripped so the TEAM labels still normalize to the fixture (else 0/2 unmatched)."""
+    ev = "KXWCGAME-26JUL14FRAESP"
+    markets = [_mkt("Reg Time: France", "0.3800", "500", event=ev),
+               _mkt("Reg Time: Tie", "0.3200", "100", event=ev),
+               _mkt("Reg Time: Spain", "0.3000", "200", event=ev)]
+    by_fixture = {"fx": {"p1": "France", "p2": "Spain", "start_time": "2026-07-14T19:00:00.000Z",
+                         "status_id": 0, "tournament": "World Cup"}}
+    raw: dict = {}
+    cov, _ = kalshi.merge_into(raw, by_fixture, INDEX, markets, now=NOW, log=LOG)
+    assert cov.matched == 1, cov.incomplete                     # 1 tie + 2 teams, matched despite prefix
+    outs = raw["fx"]["bookmakerOdds"]["kalshi"]["markets"]["101"]["outcomes"]
+    assert set(outs.keys()) == {"101", "102", "103"}           # France(home) / Tie(draw) / Spain(away)
+
+
 def test_incomplete_event_warning_prints_raw_subtitles():
     """When an event can't form 1 tie + 2 teams, the warning echoes the raw yes_sub_title list so the
     next label drift is self-diagnosing."""

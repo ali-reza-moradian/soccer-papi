@@ -98,6 +98,10 @@ _BROAD_TERMS = ("FIFA World Cup",)
 MAX_SEARCH_TERMS = 80      # safety cap on /public-search calls per cycle
 MAX_EVENTS = 60            # safety cap on events we price (CLOB /book calls) per cycle
 
+# WC event SERIES slug — used to enumerate a game's sibling events ('<slug>-more-markets', etc.) when
+# the direct '<slug>-more-markets' fetch misses (config polymarket.series_slug overrides).
+DEFAULT_SERIES_SLUG = "soccer-fifwc"
+
 # Depth-aware pricing: default % worse than the best ask the fillable band (the leg's `limit`) may
 # span (config overrides it).
 DEFAULT_DEPTH_SLIPPAGE_PCT = 2.0
@@ -629,33 +633,84 @@ def _spread_canonical(line: float, market_index) -> Optional[dict]:
     return market_index.spreads.get(round(line, 2)) or market_index.spreads.get(round(-line, 2))
 
 
-def _plan_extra_markets(client, parsed, market_index, fid, raw_by_fixture, log) -> dict[str, Any]:
-    """Fetch the '<slug>-more-markets' sibling and return UNPRICED token plans for the totals / BTTS /
-    spreads lines that (a) map to a canonical marketId AND (b) have a live counterparty on this
-    fixture. No CLOB calls here — pricing happens later in one concurrent batch."""
+def _harvest_siblings(events, market_index, fid, raw_by_fixture) -> dict[str, Any]:
+    """Merge totals / BTTS / spreads plans out of one OR MORE sibling events — only lines that (a) map to
+    a canonical marketId AND (b) have a live counterparty on this fixture. First value per line wins."""
+    plan: dict[str, Any] = {"totals": {}, "btts": None, "spreads": []}
+    seen_sp: set = set()
+    for ev in events:
+        if not isinstance(ev, dict):
+            continue
+        tot_tokens, btts_tokens = parse_more_markets_tokens(ev)
+        for line, toks in tot_tokens.items():
+            if line in plan["totals"]:
+                continue
+            spec = market_index.totals.get(line)
+            if spec and _has_counterparty(raw_by_fixture, fid, spec["marketId"]):
+                plan["totals"][line] = toks
+        if plan["btts"] is None and btts_tokens and market_index.btts \
+                and _has_counterparty(raw_by_fixture, fid, market_index.btts["marketId"]):
+            plan["btts"] = btts_tokens
+        for sp in parse_spread_markets(ev):
+            key = (sp["named"], sp["line"])
+            if key in seen_sp:
+                continue
+            spec = _spread_canonical(sp["line"], market_index)
+            if spec and _has_counterparty(raw_by_fixture, fid, spec["marketId"]):
+                plan["spreads"].append(sp)
+                seen_sp.add(key)
+    return plan
+
+
+def _slug_suffix(game_slug: str, sib_slug: Any) -> str:
+    """The sibling suffix after '<game_slug>-' (e.g. 'more-markets'), or the whole slug if no prefix."""
+    s = str(sib_slug or "")
+    pref = game_slug + "-"
+    return s[len(pref):] if s.startswith(pref) else s
+
+
+def _series_siblings(client, series_slug: str, game_slug: str, cache: dict, log) -> list[dict]:
+    """One game's SIBLING events (slug '<game_slug>-<suffix>') out of the series page, which is fetched
+    ONCE per scan cycle and reused for every game via ``cache``."""
+    events = cache.get(series_slug)
+    if events is None:
+        try:
+            events = client.events_by_series(series_slug, closed=False)
+        except PolymarketError as exc:
+            log.warning("[POLYMARKET] series scan %s failed (%s) — 1x2 only.", series_slug, exc)
+            events = []
+        cache[series_slug] = events
+    pref = game_slug + "-"
+    return [e for e in (events or []) if isinstance(e, dict) and str(e.get("slug") or "").startswith(pref)]
+
+
+def _plan_extra_markets(client, parsed, market_index, fid, raw_by_fixture, log, *,
+                        series_slug: str = DEFAULT_SERIES_SLUG, series_cache: Optional[dict] = None) -> dict[str, Any]:
+    """UNPRICED token plans for the totals / BTTS / spreads lines with a live counterparty. Tries the
+    direct '<slug>-more-markets' sibling first; if that returns NO usable event, falls back to scanning
+    the series and harvesting from ALL siblings whose slug starts with the game slug (mirrors the GenZ
+    series-scan fix). No CLOB calls here — pricing happens later in one concurrent batch."""
     plan: dict[str, Any] = {"totals": {}, "btts": None, "spreads": []}
     if not parsed.slug:
         return plan
+    sib = None
     try:
-        sib = client.events_by_slug(f"{parsed.slug}-more-markets")
+        got = client.events_by_slug(f"{parsed.slug}-more-markets")
+        sib = (got[0] if isinstance(got, list) and got else got)
     except PolymarketError as exc:
-        log.warning("[POLYMARKET] %s-more-markets fetch failed (%s) — 1x2 only.", parsed.slug, exc)
-        return plan
-    sib = (sib[0] if isinstance(sib, list) and sib else sib)
-    if not isinstance(sib, dict):
-        return plan
-    tot_tokens, btts_tokens = parse_more_markets_tokens(sib)
-    for line, toks in tot_tokens.items():
-        spec = market_index.totals.get(line)
-        if spec and _has_counterparty(raw_by_fixture, fid, spec["marketId"]):
-            plan["totals"][line] = toks
-    if btts_tokens and market_index.btts and _has_counterparty(raw_by_fixture, fid, market_index.btts["marketId"]):
-        plan["btts"] = btts_tokens
-    for sp in parse_spread_markets(sib):
-        spec = _spread_canonical(sp["line"], market_index)
-        if spec and _has_counterparty(raw_by_fixture, fid, spec["marketId"]):
-            plan["spreads"].append(sp)
-    return plan
+        log.warning("[POLYMARKET] %s-more-markets fetch failed (%s) — trying series scan.", parsed.slug, exc)
+    direct = _harvest_siblings([sib] if isinstance(sib, dict) else [], market_index, fid, raw_by_fixture)
+    if direct["totals"] or direct["btts"] or direct["spreads"]:
+        return direct
+    # FALLBACK: no usable '-more-markets' -> enumerate the series (cached per cycle) and harvest from
+    # every sibling whose slug starts with this game's slug.
+    if series_slug and series_cache is not None:
+        sibs = _series_siblings(client, series_slug, parsed.slug, series_cache, log)
+        if sibs:
+            log.info("[POLYMARKET] %s siblings: %s", parsed.title or parsed.slug,
+                     [_slug_suffix(parsed.slug, s.get("slug")) for s in sibs])
+            return _harvest_siblings(sibs, market_index, fid, raw_by_fixture)
+    return direct
 
 
 def price_leg(client: PolymarketClient, token: str, *, depth_pricing: bool = False,
@@ -805,7 +860,8 @@ def fetch_wc_events(client: PolymarketClient, by_fixture: dict[str, dict[str, An
                     market_index=None, raw_by_fixture: Optional[dict] = None,
                     max_workers: int = 8, *, depth_pricing: bool = False,
                     slippage_pct: float = DEFAULT_DEPTH_SLIPPAGE_PCT,
-                    reference_size: float = DEFAULT_WALK_STAKE) -> list[PolyEvent]:
+                    reference_size: float = DEFAULT_WALK_STAKE,
+                    series_slug: str = DEFAULT_SERIES_SLUG) -> list[PolyEvent]:
     """Discover WC match events and return priced PolyEvents the merge maps to fixtures. FAST PATH:
       1. parse + MATCH each event to a fixture FIRST (no network) — skip events that won't merge;
       2. plan which extra (totals/BTTS/spreads) lines to price — only canonical lines that have a
@@ -817,6 +873,7 @@ def fetch_wc_events(client: PolymarketClient, by_fixture: dict[str, dict[str, An
     plans: list[dict[str, Any]] = []
     skipped_unmatched = 0
     matched_fids: set[str] = set()
+    series_cache: dict[str, list[dict]] = {}          # series page fetched ONCE per cycle, reused per game
     for ev in candidates.values():
         if len(plans) >= MAX_EVENTS:
             log.warning("[POLYMARKET] hit MAX_EVENTS=%s — not planning further candidates.", MAX_EVENTS)
@@ -829,7 +886,8 @@ def fetch_wc_events(client: PolymarketClient, by_fixture: dict[str, dict[str, An
             skipped_unmatched += 1
             continue
         matched_fids.add(fid)
-        extra = (_plan_extra_markets(client, parsed, market_index, fid, raw_by_fixture, log)
+        extra = (_plan_extra_markets(client, parsed, market_index, fid, raw_by_fixture, log,
+                                     series_slug=series_slug, series_cache=series_cache)
                  if market_index is not None else {"totals": {}, "btts": None, "spreads": []})
         plans.append({"parsed": parsed, "extra": extra})
 

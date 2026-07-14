@@ -76,6 +76,13 @@ tr:hover td{background:var(--panel2)}
 .hide{display:none}
 .books{font-family:var(--mono);font-size:11px;color:var(--dim)}
 .books .bind{color:var(--amber)}
+tr.shadow td{opacity:.5}
+.tag.shadow{background:var(--elev);color:var(--dim)}
+tr.betrow td{border-bottom:1px solid var(--border);padding-top:2px}
+.betline{font-family:var(--mono);font-size:12px;color:var(--green)}
+.betline b{color:var(--dim);font-weight:600}
+.betline .v{color:var(--faint)}
+.betline .warn{color:var(--amber)}
 </style>
 </head>
 <body>
@@ -110,17 +117,18 @@ tr:hover td{background:var(--panel2)}
 <!-- ===== OG ===== -->
 <div id="tab-og" class="hide">
   <div class="ctrl">
+    <div class="seg" id="ogSeg"><button data-o="funded" class="on">Funded</button><button data-o="all">All</button></div>
     <span class="count" id="ogcount"></span>
   </div>
   <div class="wrap"><div id="ogbody"><div class="empty">Loading…</div></div></div>
   <div class="foot">
     <div>OG · 4-book pre-game scanner (Kalshi, Polymarket, Pinnacle, 1xbet) · <span class="dry">ALERT-ONLY</span> — you place these by hand.</div>
-    <div>Last 48h, newest first. 1xbet is treated as bettable at any size — verify the price on the book before betting.</div>
+    <div>Last 48h. <b>Funded</b> = every leg on Kalshi / Polymarket / Pinnacle / 1xbet (sorted first); <b>SHADOW</b> rows need a book you can't place on. BET splits scale to your bankroll box. 1xbet is bettable at any size — verify the price before betting.</div>
   </div>
 </div>
 
 <script>
-var SNAP=null,HB=null,OG=[],curGame=null,view='all',mFilter='',BANK=3000,tab='genz';
+var SNAP=null,HB=null,OG=[],curGame=null,view='all',mFilter='',BANK=3000,tab='genz',ogView='funded';
 function num(x){var n=parseFloat(x);return isNaN(n)?null:n;}
 function pct(x){return x==null?'-':(x*100).toFixed(1)+'%';}
 function money(x){return x==null?'-':'$'+Number(x).toLocaleString(undefined,{maximumFractionDigits:0});}
@@ -286,28 +294,58 @@ function ogLegs(r){                                             // "outcome odds
   }catch(e){}
   return esc(String(r.bookmakers||'').replace(/\|/g,' + '));    // fallback -> books string, never NaN
 }
+// FUNDED = every leg's book is one we can actually place on. Computed from the parsed legs_json books.
+var OG_FUNDED={kalshi:1,polymarket:1,pinnacle:1,'1xbet':1};
+function parseLegs(r){try{var l=JSON.parse(r.legs_json);return Array.isArray(l)?l:null;}catch(e){return null;}}
+function ogBooks(r){
+  var legs=parseLegs(r);
+  if(legs)return legs.map(function(L){return String(L.book||'').toLowerCase();});
+  return String(r.bookmakers||'').split(/[,|]/).map(function(b){return b.trim().toLowerCase();}).filter(Boolean);
+}
+function ogShadowBooks(r){   // de-duped list of books NOT in the funded set (empty => funded)
+  var seen={},out=[];
+  ogBooks(r).forEach(function(b){if(b&&!OG_FUNDED[b]&&!seen[b]){seen[b]=1;out.push(b);}});
+  return out;
+}
+function ogBetLine(r){   // per-leg stakes scaled to the bankroll box, recomputed live on change
+  var legs=parseLegs(r),tmax=num(r.total_stake_max),roiD=num(r.roi_decimal);
+  if(!legs||!legs.length||tmax==null||tmax<=0)return '';
+  var scale=Math.min(1,BANK/tmax);
+  if(legs.some(function(L){var s=num(L.stake);return s!=null&&s*scale<1;}))
+    return '<span class="betline"><span class="warn">below $1 legs — raise bankroll</span></span>';
+  var parts=legs.map(function(L){var s=num(L.stake);return '$'+(s!=null?Math.round(s*scale):0)+' '+esc(L.outcome||'?')+' @ '+esc(L.book||'?');});
+  var profit=(roiD!=null?roiD:0)*tmax*scale;
+  return '<span class="betline"><b>BET:</b> '+parts.join('  +  ')+'  <span class="v">-> profit $'+Math.round(profit)+' on $'+Math.round(tmax*scale)+'</span></span>';
+}
 function ogTable(){
   var body=document.getElementById('ogbody');
   if(!OG.length){body.innerHTML='<div class="empty">No OG data — serve from <b>data\\</b> (<b>python -m http.server 8080</b>), open <b>/genz/papi_panel.html</b>, and start <b>scripts/run_og_loop.ps1</b>.</div>';document.getElementById('ogcount').textContent='';return;}
   var cutoff=Date.now()-48*3600*1000;
   var rows=OG.filter(function(r){var ms=parseET(r.detected_at_et);return ms!=null&&ms>=cutoff;});
-  rows.sort(function(a,b){return (parseET(b.detected_at_et)||0)-(parseET(a.detected_at_et)||0);});  // newest first
+  rows.forEach(function(r){r._shadow=ogShadowBooks(r);r._funded=r._shadow.length===0;r._ts=parseET(r.detected_at_et)||0;});
+  if(ogView==='funded')rows=rows.filter(function(r){return r._funded;});
+  // Funded first, then shadow; newest-first WITHIN each group.
+  rows.sort(function(a,b){if(a._funded!==b._funded)return a._funded?-1:1;return b._ts-a._ts;});
   if(rows.length>200)rows=rows.slice(0,200);
-  document.getElementById('ogcount').textContent=rows.length+' shown (last 48h)';
-  if(!rows.length){body.innerHTML='<div class="empty">No OG arbs in the last 48h.<br>Is <b>scripts/run_og_loop.ps1</b> running?</div>';return;}
+  var nF=rows.filter(function(r){return r._funded;}).length;
+  document.getElementById('ogcount').textContent=nF+' funded'+(ogView==='funded'?'':' + '+(rows.length-nF)+' shadow')+' (last 48h)';
+  if(!rows.length){body.innerHTML='<div class="empty">No '+(ogView==='funded'?'FUNDED ':'')+'OG arbs in the last 48h.<br>'+(ogView==='funded'?'Flip to <b>All</b> to see shadow-book arbs, or is ':'Is ')+'<b>scripts/run_og_loop.ps1</b> running?</div>';return;}
   var h='<table><thead><tr><th>Detected</th><th>Match</th><th>Market</th><th>Legs (outcome odds@book)</th><th class="num">S</th><th class="num">ROI</th><th class="num">T_max</th><th class="num">Max profit</th></tr></thead><tbody>';
   for(var i=0;i<rows.length;i++){
-    var r=rows[i],ms=parseET(r.detected_at_et);
-    var when=ms!=null?new Date(ms).toLocaleString(undefined,{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}):'-';
+    var r=rows[i],ms=r._ts;
+    var when=ms?new Date(ms).toLocaleString(undefined,{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}):'-';
     var S=num(r.arb_sum_S),roi=num(r.roi_pct),tmax=num(r.total_stake_max),prof=num(r.max_profit);
-    h+='<tr><td class="leg">'+esc(when)+'</td>'
-      +'<td class="mtype">'+esc(r.match||'')+'</td>'
+    var badge=r._funded?'':' <span class="tag shadow">SHADOW: '+esc(r._shadow.join(', '))+'</span>';
+    h+='<tr class="'+(r._funded?'':'shadow')+'"><td class="leg">'+esc(when)+'</td>'
+      +'<td class="mtype">'+esc(r.match||'')+badge+'</td>'
       +'<td class="leg">'+esc(r.market||'')+'</td>'
       +'<td class="leg">'+ogLegs(r)+'</td>'
       +'<td class="num"><span class="sum '+(S!=null&&S<1?'arb':'no')+'">'+(S!=null?S.toFixed(4):'-')+'</span></td>'
       +'<td class="num"><span class="roi '+(roi>0?'pos':'neg')+'">'+(roi!=null?roi.toFixed(2)+'%':'-')+'</span></td>'
       +'<td class="num">'+money(tmax)+'</td>'
       +'<td class="num prof">'+money2(prof)+'</td></tr>';
+    var bet=ogBetLine(r);
+    if(bet)h+='<tr class="betrow'+(r._funded?'':' shadow')+'"><td></td><td colspan="7">'+bet+'</td></tr>';
   }
   body.innerHTML=h+'</tbody></table>';
 }
@@ -321,7 +359,8 @@ document.querySelectorAll('.bigtab').forEach(function(b){b.onclick=function(){
   document.getElementById('tab-og').classList.toggle('hide',tab!=='og');
   renderAll();
 };});
-document.getElementById('bank').oninput=function(e){var v=parseFloat(e.target.value);if(v>0){BANK=v;table();}};
+document.getElementById('bank').oninput=function(e){var v=parseFloat(e.target.value);if(v>0){BANK=v;if(tab==='og')ogTable();else table();}};
+document.getElementById('ogSeg').querySelectorAll('button').forEach(function(b){b.onclick=function(){ogView=b.getAttribute('data-o');document.getElementById('ogSeg').querySelectorAll('button').forEach(function(x){x.classList.toggle('on',x===b);});ogTable();};});
 document.getElementById('viewSeg').querySelectorAll('button').forEach(function(b){b.onclick=function(){view=b.getAttribute('data-v');document.getElementById('viewSeg').querySelectorAll('button').forEach(function(x){x.classList.toggle('on',x===b);});table();};});
 document.getElementById('mfilter').onchange=function(e){mFilter=e.target.value;table();};
 setInterval(function(){document.getElementById('clock').textContent=new Date().toLocaleTimeString();health();},1000);

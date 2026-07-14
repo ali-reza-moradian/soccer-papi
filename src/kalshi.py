@@ -316,6 +316,10 @@ _DAY_MATCH_TOLERANCE_MIN = 36 * 60
 # "Tie (Regulation)" or "Draw" must still be the tie leg and never fall into the two team legs.
 _TIE_RE = re.compile(r"\b(?:tie|draw)\b", re.IGNORECASE)
 
+# Kalshi prefixes some events' subtitles with a regulation-time tag, e.g. "Reg Time: France" / "Reg
+# Time: Tie". Strip it before classifying so the TEAM label ("France") still normalizes to the fixture.
+_SUBTITLE_PREFIX_RE = re.compile(r"^\s*reg(?:ulation)?\s+time\s*:\s*", re.IGNORECASE)
+
 
 def _event_commence_iso(event_ticker: str) -> Optional[str]:
     """Parse the date from KXWCGAME-<YYMMMDD><HOME3><AWAY3> (e.g. ...-26JUN13USAPAR -> 2026-06-13)
@@ -685,14 +689,15 @@ def merge_into(
             pl = _leg_price_limit(m)
             if pl is None:
                 continue
-            if _TIE_RE.search(sub):                    # 'Tie', 'Draw', 'Tie (Regulation)', … -> the tie leg
+            clean = _SUBTITLE_PREFIX_RE.sub("", sub).strip()   # drop a 'Reg Time:' regulation prefix
+            if _TIE_RE.search(clean):                  # 'Tie', 'Draw', 'Tie (Regulation)', … -> the tie leg
                 tie_leg = pl
                 tie_ticker = m.get("ticker")
             else:
-                norm = normalize_team(sub)
+                norm = normalize_team(clean)
                 team_legs[norm] = pl
                 team_tickers[norm] = m.get("ticker")
-                team_raw_names.append(sub)
+                team_raw_names.append(clean)
 
         if tie_leg is None or len(team_legs) != 2:
             cov.incomplete.append(label)

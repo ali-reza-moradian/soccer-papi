@@ -152,11 +152,13 @@ class _FakeClient:
     """Stand-in for PolymarketClient: canned search() + events_by_slug() + book() responses, no
     network. ``events_by_slug`` maps an exact slug -> the list of events Gamma's /events?slug= returns
     (a 404/miss is an empty list); ``slug_errors`` is a set of slugs that raise PolymarketError."""
-    def __init__(self, events_by_term=None, books_by_token=None, events_by_slug=None, slug_errors=None):
+    def __init__(self, events_by_term=None, books_by_token=None, events_by_slug=None, slug_errors=None,
+                 series=None):
         self.events_by_term = events_by_term or {}
         self.books_by_token = books_by_token or {}
         self.slugs = events_by_slug or {}
         self.slug_errors = set(slug_errors or ())
+        self.series = series or {}                    # series_slug -> [event, ...] (the series page)
 
     def search(self, q):
         return {"events": self.events_by_term.get(q, [])}
@@ -165,6 +167,9 @@ class _FakeClient:
         if slug in self.slug_errors:
             raise polymarket.PolymarketError(f"404 no event for {slug}")
         return self.slugs.get(slug, [])
+
+    def events_by_series(self, series_slug, *, closed=False, page_limit=100, max_pages=50):
+        return list(self.series.get(series_slug, []))
 
     def book(self, token_id):
         b = self.books_by_token.get(token_id)
@@ -620,6 +625,68 @@ def test_parse_more_markets_tokens_full_game_only():
     totals, btts = polymarket.parse_more_markets_tokens(_more_markets_event())
     assert totals == {2.5: ("t_o25", "t_u25"), 4.5: ("t_o45", "t_u45")}   # half/team excluded
     assert btts == ("t_btts_y", "t_btts_n")                               # half BTTS excluded
+
+
+class _CapLog:
+    def __init__(self):
+        self.infos, self.warnings = [], []
+    def info(self, msg, *a):
+        self.infos.append(msg % a if a else msg)
+    def warning(self, msg, *a):
+        self.warnings.append(msg % a if a else msg)
+    def debug(self, *a, **k):
+        pass
+
+
+def test_plan_extra_markets_series_scan_fallback_when_more_markets_404s():
+    """When '<slug>-more-markets' 404s, the series scan enumerates the game's siblings (by slug prefix)
+    and harvests their totals / BTTS / spreads from ALL of them (mirrors the GenZ series-scan fix)."""
+    game = "fifwc-eng-arg-2026-07-09"
+    parsed = polymarket.PolyEvent(event_id="e1", title="England vs Argentina", commence_iso=None,
+                                  legs=[], slug=game)
+    idx = polymarket.build_market_index(MARKETS_FULL + [
+        {"marketId": 1500, "sportId": 10, "marketType": "spreads", "period": "fulltime", "handicap": -1.5,
+         "marketName": "Asian Handicap",
+         "outcomes": [{"outcomeId": 1500, "outcomeName": "1"}, {"outcomeId": 1501, "outcomeName": "2"}]},
+    ], 10)
+    # a counterparty exists on this fixture for totals 2.5 (1010), BTTS (104) and the -1.5 spread (1500)
+    raw = {"fx": {"bookmakerOdds": {"pinnacle": {"markets": {"1010": {}, "104": {}, "1500": {}}}}}}
+    sib_mm = {"slug": game + "-more-markets", "markets": [
+        _binary_market("O/U 2.5", '["Over", "Under"]', '["t_o25", "t_u25"]'),
+        _binary_market("Both Teams to Score", '["Yes", "No"]', '["t_by", "t_bn"]'),
+    ]}
+    sib_sp = {"slug": game + "-alt-lines", "markets": [
+        _binary_market("England (-1.5)", '["England", "Argentina"]', '["t_eng", "t_arg"]'),
+    ]}
+    other = {"slug": "fifwc-fra-esp-2026-07-08-more-markets", "markets": []}   # different game -> excluded
+    client = _FakeClient(slug_errors={game + "-more-markets"},                 # direct sibling 404s
+                         series={"soccer-fifwc": [sib_mm, sib_sp, other]})
+    cap, cache = _CapLog(), {}
+    plan = polymarket._plan_extra_markets(client, parsed, idx, "fx", raw, cap,
+                                          series_slug="soccer-fifwc", series_cache=cache)
+    assert plan["totals"] == {2.5: ("t_o25", "t_u25")}
+    assert plan["btts"] == ("t_by", "t_bn")
+    assert [(s["named"], s["line"]) for s in plan["spreads"]] == [("England", -1.5)]
+    assert "soccer-fifwc" in cache                                          # series page cached for reuse
+    assert any("England vs Argentina siblings:" in m and "more-markets" in m and "alt-lines" in m
+               for m in cap.infos)
+
+
+def test_plan_extra_markets_prefers_direct_more_markets_no_series_scan():
+    """When the direct '<slug>-more-markets' returns a usable event, we use it and never touch the
+    series page (the fetch is saved)."""
+    game = "fifwc-eng-arg-2026-07-09"
+    parsed = polymarket.PolyEvent(event_id="e1", title="England vs Argentina", commence_iso=None,
+                                  legs=[], slug=game)
+    raw = {"fx": {"bookmakerOdds": {"pinnacle": {"markets": {"1010": {}}}}}}
+    direct = {"slug": game + "-more-markets",
+              "markets": [_binary_market("O/U 2.5", '["Over", "Under"]', '["t_o25", "t_u25"]')]}
+    client = _FakeClient(events_by_slug={game + "-more-markets": [direct]})   # no series set at all
+    cache = {}
+    plan = polymarket._plan_extra_markets(client, parsed, INDEX_FULL, "fx", raw, LOG,
+                                          series_slug="soccer-fifwc", series_cache=cache)
+    assert plan["totals"] == {2.5: ("t_o25", "t_u25")}
+    assert cache == {}                                                      # series page never fetched
 
 
 def test_merge_injects_polymarket_totals_and_btts():
