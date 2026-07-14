@@ -103,25 +103,24 @@ tr:hover td{background:var(--panel2)}
   <div class="wrap"><div id="body"><div class="empty">Loading…</div></div></div>
   <div class="foot">
     <div>GENZ · Kalshi ⇄ Polymarket · pre-game only · <span class="dry">DRY-RUN</span> — places nothing.</div>
-    <div>Sorted by <b>Net %</b> (after Kalshi's taker fee). Red row = extra-time rule mismatch (both legs can lose — never bet it). Amber row = gross sub-1 but the fee eats the edge (not a real arb). "Bet this" &amp; Profit are NET of fees, capped by your bankroll AND real book depth. Profit only if BOTH legs fill at these prices.</div>
+    <div>Sorted by <b>Net %</b> (after Kalshi's taker fee). Red row = extra-time rule mismatch (both legs can lose — never bet it). Amber row = gross sub-1 but the fee eats the edge (not a real arb). "Bet this" &amp; Profit are NET of fees, sized by WALKING the real order book — the avg fill rises with size (never linear-scaled) — and capped by your bankroll/venue AND book depth.</div>
   </div>
 </div>
 
 <!-- ===== OG ===== -->
 <div id="tab-og" class="hide">
   <div class="ctrl">
-    <div class="seg" id="ogSeg"><button data-o="all" class="on">All</button><button data-o="clean">Hide 1xbet-dependent</button></div>
     <span class="count" id="ogcount"></span>
   </div>
   <div class="wrap"><div id="ogbody"><div class="empty">Loading…</div></div></div>
   <div class="foot">
     <div>OG · 4-book pre-game scanner (Kalshi, Polymarket, Pinnacle, 1xbet) · <span class="dry">ALERT-ONLY</span> — you place these by hand.</div>
-    <div>Most OG arbs depend on 1xbet, the unreliable book — those are flagged. Verify on the book before betting.</div>
+    <div>Last 48h, newest first. 1xbet is treated as bettable at any size — verify the price on the book before betting.</div>
   </div>
 </div>
 
 <script>
-var SNAP=null,HB=null,OG=[],curGame=null,view='all',mFilter='',BANK=3000,tab='genz',ogView='all';
+var SNAP=null,HB=null,OG=[],curGame=null,view='all',mFilter='',BANK=3000,tab='genz';
 function num(x){var n=parseFloat(x);return isNaN(n)?null:n;}
 function pct(x){return x==null?'-':(x*100).toFixed(1)+'%';}
 function money(x){return x==null?'-':'$'+Number(x).toLocaleString(undefined,{maximumFractionDigits:0});}
@@ -162,20 +161,34 @@ function filter(){
   types.forEach(function(t){h+='<option value="'+t+'">'+t.replace(/_/g,' ')+'</option>';});
   sel.innerHTML=h;sel.value=cur;
 }
+function interpPoint(p,c,f){   // piecewise-linear WITHIN a level (constant price there) -> exact
+  var ca=p.cost_a_usd+f*(c.cost_a_usd-p.cost_a_usd), cb=p.cost_b_usd+f*(c.cost_b_usd-p.cost_b_usd);
+  var sh=p.shares+f*(c.shares-p.shares), fe=p.fee_usd+f*(c.fee_usd-p.fee_usd);
+  return {shares:sh,cost_a_usd:ca,cost_b_usd:cb,fee_usd:fe,stake_usd:ca+cb,profit_usd:sh-ca-cb-fe};
+}
 function sizing(m){
-  var sum=num(m.implied_cost),net=num(m.net_roi_pct);
-  if(sum==null||sum>=1)return null;
-  if(net==null||net<=0)return null;                 // no edge left net of the Kalshi fee -> not a real arb
-  var pa=num(m.price_a),pb=num(m.price_b);
-  if(pa==null||pb==null)return null;
-  var maxDepth=num(m.max_stake_usd),da=num(m.depth_a_usd),db=num(m.depth_b_usd);  // depth/max are fee-aware
-  var capA=Math.min(BANK,da!=null?da:Infinity), capB=Math.min(BANK,db!=null?db:Infinity);
-  var Ta=capA*sum/pa, Tb=capB*sum/pb, T=Math.min(Ta,Tb);
-  if(maxDepth!=null)T=Math.min(T,maxDepth);
-  if(!isFinite(T)||T<=0)return null;
-  var sa=T*pa/sum, sb=T*pb/sum;
-  var bound=(T===Ta&&capA===BANK)||(T===Tb&&capB===BANK)?'bankroll':'book depth';
-  return {total:T,sa:sa,sb:sb,profit:T*net/100,boundBy:bound};   // NET guaranteed profit (fee-honest)
+  // Walk the fee-aware fill_curve: largest point with BOTH per-venue cost <= bankroll AND profit still
+  // rising. Prices RISE as the book fills, so we NEVER linear-scale the $100 reference.
+  var curve=m.fill_curve;
+  if(!curve||!curve.length)return null;
+  var cap=BANK, prev={shares:0,cost_a_usd:0,cost_b_usd:0,fee_usd:0,stake_usd:0,profit_usd:0};
+  var best=null, bounded='book depth';
+  for(var i=0;i<curve.length;i++){
+    var cur=curve[i];
+    if(cur.cost_a_usd<=cap&&cur.cost_b_usd<=cap){best=cur;prev=cur;continue;}
+    var fa=cur.cost_a_usd>prev.cost_a_usd?(cap-prev.cost_a_usd)/(cur.cost_a_usd-prev.cost_a_usd):Infinity;
+    var fb=cur.cost_b_usd>prev.cost_b_usd?(cap-prev.cost_b_usd)/(cur.cost_b_usd-prev.cost_b_usd):Infinity;
+    var f=Math.min(fa,fb,1);
+    if(f>0){best=interpPoint(prev,cur,f);bounded='bankroll';}
+    break;
+  }
+  if(!best||best.stake_usd<=0||best.shares<=0||best.profit_usd<=0)return null;
+  return {total:best.stake_usd,sa:best.cost_a_usd,sb:best.cost_b_usd,profit:best.profit_usd,
+          shares:best.shares,avgA:best.cost_a_usd/best.shares,avgB:best.cost_b_usd/best.shares,boundBy:bounded};
+}
+function fillTag(top,avg){   // show avg fill next to top price when they differ >= 0.5c
+  if(top==null||avg==null||Math.abs(avg-top)<0.005)return '';
+  return ' <span class="v">(fills '+(avg*100).toFixed(1)+'c)</span>';
 }
 function table(){
   var g=(SNAP&&curGame&&SNAP.games)?SNAP.games[curGame]:null,body=document.getElementById('body');
@@ -201,9 +214,10 @@ function table(){
     var tag;
     if(m.period_mismatch)tag='<span class="trap-tag">extra-time trap</span>';
     else if(m.would_trade)tag='<span class="tag would">would trade</span>';
-    else if(feeTrap)tag='<span class="tag flag">fee &gt; edge</span>';
     else if(/rejected/.test(m.exec_status||''))tag='<span class="tag rej">'+String(m.exec_status).replace('rejected_','rej: ')+'</span>';
-    else tag='<span class="tag noarb">no arb</span>';
+    else if(netArb)tag='<span class="tag would">NET +'+net.toFixed(1)+'%</span>';   // positive net, below trade floor -> still GREEN
+    else if(feeTrap)tag='<span class="tag flag">FEE &gt; EDGE</span>';               // gross<1 but net<=0 -> not an arb
+    else tag='<span class="tag noarb">NO ARB</span>';                                // only when sum >= 100%
     var xnet=num(m.exec_net_edge_pct);
     var xcap=(xnet!=null)?'<span class="cap">net@$10 '+xnet.toFixed(1)+'%</span>':'';
     var betCell='<span class="bet none">-</span>',profCell='<span class="roi neg">-</span>';
@@ -211,7 +225,10 @@ function table(){
     else if(netArb){
       var s=sizing(m);
       if(s){
-        betCell='<span class="bet"><span class="amt">'+money2(s.sa)+'</span> <span class="v">'+(va==='k'?'KALSHI':'POLY')+' '+m.side_a+'</span><br><span class="amt">'+money2(s.sb)+'</span> <span class="v">'+(vb==='k'?'KALSHI':'POLY')+' '+m.side_b+'</span><br><span class="v">total '+money(s.total)+' &middot; capped by '+s.boundBy+'</span></span>';
+        var kA=(va==='k'?'KALSHI':'POLY'),kB=(vb==='k'?'KALSHI':'POLY');
+        betCell='<span class="bet"><span class="amt">'+money2(s.sa)+'</span> <span class="v">'+kA+' '+m.side_a+' '+pa+'</span>'+fillTag(num(m.price_a),s.avgA)
+          +'<br><span class="amt">'+money2(s.sb)+'</span> <span class="v">'+kB+' '+m.side_b+' '+pb+'</span>'+fillTag(num(m.price_b),s.avgB)
+          +'<br><span class="v">total '+money(s.total)+' &middot; '+Math.round(s.shares)+' sh &middot; capped by '+s.boundBy+'</span></span>';
         profCell='<span class="prof">'+money2(s.profit)+'<span class="cap">net on '+money(s.total)+'</span>'+xcap+'</span>';
       }
     }
@@ -226,45 +243,71 @@ function table(){
 }
 
 /* ---------- OG ---------- */
+function esc(s){return String(s==null?'':s).replace(/[&<>]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;'}[c];});}
+// RFC-4180: quoted fields may contain commas, CR/LF, and doubled "" quotes. Map columns BY HEADER NAME.
 function parseCSV(t){
-  var lines=t.trim().split(/\r?\n/);if(lines.length<2)return[];
-  var H=lines[0].split(',');
-  var out=[];
-  for(var i=1;i<lines.length;i++){
-    // naive split; json columns may contain commas -> take first H.length-? Just guard.
-    var c=lines[i].split(',');
-    var o={};for(var k=0;k<H.length;k++)o[H[k].trim()]=(c[k]||'').trim();
+  var rows=[],row=[],field='',i=0,n=t.length,inQ=false;
+  while(i<n){
+    var ch=t.charAt(i);
+    if(inQ){
+      if(ch==='"'){ if(t.charAt(i+1)==='"'){field+='"';i+=2;continue;} inQ=false;i++;continue; }
+      field+=ch;i++;continue;
+    }
+    if(ch==='"'){inQ=true;i++;continue;}
+    if(ch===','){row.push(field);field='';i++;continue;}
+    if(ch==='\r'){i++;continue;}
+    if(ch==='\n'){row.push(field);rows.push(row);row=[];field='';i++;continue;}
+    field+=ch;i++;
+  }
+  if(field!==''||row.length){row.push(field);rows.push(row);}   // flush final field/row
+  if(rows.length<2)return[];
+  var H=rows[0],out=[];
+  for(var r=1;r<rows.length;r++){
+    if(rows[r].length===1&&rows[r][0]==='')continue;            // skip blank line
+    var o={};for(var k=0;k<H.length;k++)o[H[k]]=(rows[r][k]!=null?rows[r][k]:'');
     out.push(o);
   }
   return out;
 }
+function parseET(s){                                            // "2026-07-14T09:22:03-0400" -> ms
+  if(!s)return null;
+  var ms=Date.parse(String(s).replace(/([+-]\d{2})(\d{2})$/,'$1:$2'));  // -0400 -> -04:00
+  return isNaN(ms)?null:ms;
+}
+function ogLegs(r){                                             // "outcome odds@book + ..." from legs_json
+  try{
+    var legs=JSON.parse(r.legs_json);
+    if(Array.isArray(legs)&&legs.length){
+      return legs.map(function(L){
+        var od=(L.decimal_odds!=null&&!isNaN(L.decimal_odds))?Number(L.decimal_odds).toFixed(2):'?';
+        return esc(L.outcome||'?')+' '+od+'@'+esc(L.book||'?');
+      }).join(' + ');
+    }
+  }catch(e){}
+  return esc(String(r.bookmakers||'').replace(/\|/g,' + '));    // fallback -> books string, never NaN
+}
 function ogTable(){
   var body=document.getElementById('ogbody');
   if(!OG.length){body.innerHTML='<div class="empty">No OG data — serve from <b>data\\</b> (<b>python -m http.server 8080</b>), open <b>/genz/papi_panel.html</b>, and start <b>scripts/run_og_loop.ps1</b>.</div>';document.getElementById('ogcount').textContent='';return;}
-  var rows=OG.slice();
-  // latest first
-  rows.sort(function(a,b){return (num(b.roi_pct)||0)-(num(a.roi_pct)||0);});
-  var dep=function(r){return /1xbet/i.test(r.bookmakers||'')||/1xbet/i.test(r.binding_book||'');};
-  if(ogView==='clean')rows=rows.filter(function(r){return !dep(r);});
-  document.getElementById('ogcount').textContent=rows.length+' shown';
-  if(!rows.length){body.innerHTML='<div class="empty">Nothing left after hiding 1xbet-dependent arbs.<br>That is the honest picture: OG\'s edge leans on the flaky book.</div>';return;}
-  var h='<table><thead><tr><th>Match</th><th>Market</th><th>Books</th><th class="num">ROI</th><th class="num">Max profit</th><th class="num">Liquidity</th><th>Kickoff</th><th>Flags</th></tr></thead><tbody>';
-  for(var i=0;i<rows.length&&i<250;i++){
-    var r=rows[i],roi=num(r.roi_pct),isDep=dep(r);
-    var books=String(r.bookmakers||'').replace(/\|/g,' + ');
-    if(r.binding_book)books=books.replace(new RegExp(r.binding_book,'i'),'<span class="bind">'+r.binding_book+'</span>');
-    var flags='';
-    if(isDep)flags+='<span class="tag flag">1xbet-dependent</span> ';
-    if(String(r.low_confidence).toLowerCase()==='true')flags+='<span class="tag rej">low conf</span> ';
-    if(!flags)flags='<span class="tag noarb">-</span>';
-    h+='<tr class="'+(isDep?'trap':'')+'"><td class="mtype">'+(r.match||'')+'</td>'
-      +'<td class="leg">'+(r.market||r.market_type||'')+' '+(r.line||'')+'</td>'
-      +'<td class="books">'+books+'</td>'
+  var cutoff=Date.now()-48*3600*1000;
+  var rows=OG.filter(function(r){var ms=parseET(r.detected_at_et);return ms!=null&&ms>=cutoff;});
+  rows.sort(function(a,b){return (parseET(b.detected_at_et)||0)-(parseET(a.detected_at_et)||0);});  // newest first
+  if(rows.length>200)rows=rows.slice(0,200);
+  document.getElementById('ogcount').textContent=rows.length+' shown (last 48h)';
+  if(!rows.length){body.innerHTML='<div class="empty">No OG arbs in the last 48h.<br>Is <b>scripts/run_og_loop.ps1</b> running?</div>';return;}
+  var h='<table><thead><tr><th>Detected</th><th>Match</th><th>Market</th><th>Legs (outcome odds@book)</th><th class="num">S</th><th class="num">ROI</th><th class="num">T_max</th><th class="num">Max profit</th></tr></thead><tbody>';
+  for(var i=0;i<rows.length;i++){
+    var r=rows[i],ms=parseET(r.detected_at_et);
+    var when=ms!=null?new Date(ms).toLocaleString(undefined,{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}):'-';
+    var S=num(r.arb_sum_S),roi=num(r.roi_pct),tmax=num(r.total_stake_max),prof=num(r.max_profit);
+    h+='<tr><td class="leg">'+esc(when)+'</td>'
+      +'<td class="mtype">'+esc(r.match||'')+'</td>'
+      +'<td class="leg">'+esc(r.market||'')+'</td>'
+      +'<td class="leg">'+ogLegs(r)+'</td>'
+      +'<td class="num"><span class="sum '+(S!=null&&S<1?'arb':'no')+'">'+(S!=null?S.toFixed(4):'-')+'</span></td>'
       +'<td class="num"><span class="roi '+(roi>0?'pos':'neg')+'">'+(roi!=null?roi.toFixed(2)+'%':'-')+'</span></td>'
-      +'<td class="num prof">'+money2(num(r.max_profit))+'</td>'
-      +'<td class="num" style="font-family:var(--mono);color:var(--dim)">'+money(num(r.max_liquidity))+'</td>'
-      +'<td class="leg">'+(r.kickoff_et||'')+'</td>'
-      +'<td>'+flags+'</td></tr>';
+      +'<td class="num">'+money(tmax)+'</td>'
+      +'<td class="num prof">'+money2(prof)+'</td></tr>';
   }
   body.innerHTML=h+'</tbody></table>';
 }
@@ -277,11 +320,6 @@ document.querySelectorAll('.bigtab').forEach(function(b){b.onclick=function(){
   document.getElementById('tab-genz').classList.toggle('hide',tab!=='genz');
   document.getElementById('tab-og').classList.toggle('hide',tab!=='og');
   renderAll();
-};});
-document.getElementById('ogSeg').querySelectorAll('button').forEach(function(b){b.onclick=function(){
-  ogView=b.getAttribute('data-o');
-  document.getElementById('ogSeg').querySelectorAll('button').forEach(function(x){x.classList.toggle('on',x===b);});
-  ogTable();
 };});
 document.getElementById('bank').oninput=function(e){var v=parseFloat(e.target.value);if(v>0){BANK=v;table();}};
 document.getElementById('viewSeg').querySelectorAll('button').forEach(function(b){b.onclick=function(){view=b.getAttribute('data-v');document.getElementById('viewSeg').querySelectorAll('button').forEach(function(x){x.classList.toggle('on',x===b);});table();};});

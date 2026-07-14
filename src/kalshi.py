@@ -311,6 +311,11 @@ def ask_ladder(book: Any, side: str = "YES") -> list[tuple[float, float]]:
 # (hypothetically) matched two in-window fixtures as `ambiguous`, never guessing.
 _DAY_MATCH_TOLERANCE_MIN = 36 * 60
 
+# The 1x2 tie leg's yes_sub_title varies by event ("Tie", "Draw", "Tie (Regulation)", …). Classify it
+# by CONTAINING 'tie' or 'draw' as a WORD (case-insensitive), never by equality — a drifted label like
+# "Tie (Regulation)" or "Draw" must still be the tie leg and never fall into the two team legs.
+_TIE_RE = re.compile(r"\b(?:tie|draw)\b", re.IGNORECASE)
+
 
 def _event_commence_iso(event_ticker: str) -> Optional[str]:
     """Parse the date from KXWCGAME-<YYMMMDD><HOME3><AWAY3> (e.g. ...-26JUN13USAPAR -> 2026-06-13)
@@ -673,12 +678,14 @@ def merge_into(
         team_legs: dict[str, tuple[float, float]] = {}
         team_tickers: dict[str, Any] = {}
         team_raw_names: list[str] = []
+        all_subs: list[str] = []                       # every subtitle seen (for self-diagnosing label drift)
         for m in ms:
+            sub = str(m.get("yes_sub_title") or "").strip()
+            all_subs.append(sub)
             pl = _leg_price_limit(m)
             if pl is None:
                 continue
-            sub = str(m.get("yes_sub_title") or "").strip()
-            if sub.lower() == "tie":
+            if _TIE_RE.search(sub):                    # 'Tie', 'Draw', 'Tie (Regulation)', … -> the tie leg
                 tie_leg = pl
                 tie_ticker = m.get("ticker")
             else:
@@ -689,8 +696,8 @@ def merge_into(
 
         if tie_leg is None or len(team_legs) != 2:
             cov.incomplete.append(label)
-            log.warning("[KALSHI] %s: need 1 active Tie + 2 active team markets (got tie=%s, teams=%s) — skipping.",
-                        label, tie_leg is not None, len(team_legs))
+            log.warning("[KALSHI] %s: need 1 active Tie + 2 active team markets (got tie=%s, teams=%s; "
+                        "subtitles=%s) — skipping.", label, tie_leg is not None, len(team_legs), all_subs)
             continue
 
         fm, reason = match_event_to_fixture(team_raw_names[0], team_raw_names[1], ev_commence,

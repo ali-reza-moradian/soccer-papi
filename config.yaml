@@ -303,7 +303,9 @@ thresholds:
   # so sizes stay realistic, and the leg is flagged UNVERIFIED in alerts + the xlsx log. Override
   # per book below (e.g. a book you know holds more). A leg WITH a real reported limit is unaffected.
   assumed_unknown_limit: 1000        # default assumed max stake ($) for any leg lacking a real limit
-  assumed_unknown_limit_by_book: {}  # per-book overrides, e.g. {pinnacle: 5000, 1xbet: 2000}
+  # 1xbet is treated as bettable at ANY size; the user sizes it manually. Effectively uncapped so its
+  # legs are never depth-throttled in T_max. Add other per-book overrides here, e.g. {pinnacle: 5000}.
+  assumed_unknown_limit_by_book: {1xbet: 100000}
 
 telegram:
   rank_by: profit                    # profit (= roi * T_max) | roi

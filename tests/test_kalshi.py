@@ -130,6 +130,48 @@ def test_merge_maps_regardless_of_market_order():
     _assert_usa_par_mapping(raw)   # identical home/draw/away despite [Paraguay, Tie, USA] order
 
 
+def test_tie_leg_detected_by_word_boundary_draw_or_tie():
+    """The tie leg is classified by CONTAINING 'tie'/'draw' as a WORD (not equality), so 'Draw' and
+    'Tie (Regulation)' both yield 1 tie + 2 team legs — the semis bug had tie=False, teams=3."""
+    cases = [
+        ("Draw", "France", "Spain", "KXWCGAME-26JUL08FRASPA", "2026-07-08T19:00:00.000Z"),
+        ("Tie (Regulation)", "England", "Argentina", "KXWCGAME-26JUL09ENGARG", "2026-07-09T19:00:00.000Z"),
+    ]
+    for tie_sub, away, home, ev, start in cases:
+        markets = [_mkt(away, "0.3200", "500", event=ev),
+                   _mkt(tie_sub, "0.4000", "100", event=ev),
+                   _mkt(home, "0.2500", "200", event=ev)]
+        by_fixture = {"fx": {"p1": away, "p2": home, "start_time": start, "status_id": 0,
+                             "tournament": "World Cup"}}
+        raw: dict = {}
+        cov, _ = kalshi.merge_into(raw, by_fixture, INDEX, markets, now=NOW, log=LOG)
+        assert cov.matched == 1, (tie_sub, cov.incomplete)     # 1 tie + 2 teams (tie NOT filed as a team)
+        outs = raw["fx"]["bookmakerOdds"]["kalshi"]["markets"]["101"]["outcomes"]
+        assert outs["102"]["players"]["0"]["price"] == 2.5     # the tie/draw leg -> X (0.40 -> 2.5)
+        assert set(outs.keys()) == {"101", "102", "103"}       # exactly home / draw / away
+
+
+def test_incomplete_event_warning_prints_raw_subtitles():
+    """When an event can't form 1 tie + 2 teams, the warning echoes the raw yes_sub_title list so the
+    next label drift is self-diagnosing."""
+    msgs: list = []
+
+    class _L:
+        def warning(self, msg, *a):
+            msgs.append(msg % a if a else msg)
+        def info(self, *a, **k):
+            pass
+        def debug(self, *a, **k):
+            pass
+
+    ev = "KXWCGAME-26JUL08FRASPA"
+    markets = [_mkt("France", "0.3200", "500", event=ev), _mkt("Spain", "0.2500", "200", event=ev)]
+    by_fixture = {"fx": {"p1": "France", "p2": "Spain", "start_time": "2026-07-08T19:00:00.000Z",
+                         "status_id": 0}}
+    kalshi.merge_into({}, by_fixture, INDEX, markets, now=NOW, log=_L())
+    assert any("subtitles=" in m and "France" in m and "Spain" in m for m in msgs)
+
+
 # --------------------------------------------------------------------------- #
 # Safety: never guess an unmatched fixture; skip non-active markets             #
 # --------------------------------------------------------------------------- #

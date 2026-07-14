@@ -621,3 +621,90 @@ def test_snapshot_non_arb_row_carries_net_roi():
     assert snap["implied_cost"] > 1.0                                # a non-arb
     assert snap["net_roi_pct"] is not None and snap["net_roi_pct"] < 0.0
     assert snap["max_stake_usd"] is None                             # ...yet no depth/stake sizing
+
+
+# --------------------------------------------------------------------------- #
+# HONEST SIZING AT ANY STAKE: the fill_curve (prices RISE as the book fills, so profit does NOT scale   #
+# linearly with stake). Each breakpoint = one consumed ladder level.                                    #
+# --------------------------------------------------------------------------- #
+def _fee_of(ladder, shares):
+    """Independent smooth-fee recompute for a kalshi leg walked to `shares`."""
+    fee, rem = 0.0, shares
+    for p, s in ladder:
+        take = min(rem, s)
+        if take <= 0:
+            break
+        fee += 0.07 * p * (1.0 - p) * take
+        rem -= take
+    return fee
+
+
+def _indep_profit(la, lb, va, vb, shares):
+    """Profit at `shares` recomputed independently via bookmath.walk_book + the smooth fee."""
+    from src import bookmath
+    ca = bookmath.walk_book(la, shares).cost
+    cb = bookmath.walk_book(lb, shares).cost
+    fee = (_fee_of(la, shares) if va == "kalshi" else 0.0) + (_fee_of(lb, shares) if vb == "kalshi" else 0.0)
+    return shares - ca - cb - fee
+
+
+def test_fill_curve_monotonic_and_matches_walk_book():
+    """fill_curve is monotonic in stake, and each breakpoint's profit matches an INDEPENDENT walk_book
+    recomputation within 1e-6."""
+    la, lb = [(0.44, 300), (0.46, 500), (0.48, 5000)], [(0.50, 200), (0.51, 9000)]  # kalshi / poly
+    curve = eng._walk_arb(la, lb, "kalshi", "polymarket")
+    assert len(curve) >= 3
+    for i in range(1, len(curve)):
+        p, c = curve[i - 1], curve[i]
+        assert c["stake_usd"] > p["stake_usd"] and c["shares"] > p["shares"]      # monotonic in stake
+        assert c["profit_usd"] > p["profit_usd"]                                  # profit still rising
+    for pt in curve:
+        assert abs(pt["profit_usd"] - _indep_profit(la, lb, "kalshi", "polymarket", pt["shares"])) < 1e-6
+
+
+def test_fill_curve_stops_at_fee_boundary():
+    """The fee-aware walk stops at the fee boundary: on a deep ladder it ends BEFORE the pre-fee walk
+    (which only stops at gross 1.0)."""
+    la, lb = [(0.45, 100), (0.49, 5000)], [(0.50, 10000)]
+    fee_curve = eng._walk_arb(la, lb, "kalshi", "polymarket")   # 0.49+0.50+fee(0.49) > 1 -> stops at 100
+    raw_curve = eng._walk_arb(la, lb, "polymarket", "polymarket")  # no fee: 0.49+0.50 < 1 -> goes deeper
+    assert fee_curve[-1]["shares"] < raw_curve[-1]["shares"]
+    assert fee_curve[-1]["shares"] == 100                       # bounded by the 45c level, fee kills 49c
+
+
+def test_fill_curve_thin_second_level_declining_marginal_beats_linear():
+    """A thin cheap level (45c x 400) over a worse-but-deep level (47c) gives DECLINING marginal profit;
+    a naive linear scaling of the top fill OVERSTATES profit at the deeper stake — so an honest
+    curve-based recommendation sizes below the linear cap."""
+    la, lb = [(0.45, 400), (0.47, 100000)], [(0.50, 100000)]    # kalshi / poly
+    curve = eng._walk_arb(la, lb, "kalshi", "polymarket")
+    assert len(curve) >= 2
+    c0, c1 = curve[0], curve[1]
+    m0 = c0["profit_usd"] / c0["shares"]                        # $/share, cheap level
+    m1 = (c1["profit_usd"] - c0["profit_usd"]) / (c1["shares"] - c0["shares"])   # $/share, deeper level
+    assert m1 < m0                                              # DECLINING marginal profit
+    naive = c0["profit_usd"] / c0["stake_usd"] * c1["stake_usd"]  # linear scaling of the top-of-book edge
+    assert c1["profit_usd"] < naive                            # linear OVERSTATES -> honest size < naive
+
+
+def test_snapshot_row_carries_fill_curve():
+    """A real-arb snapshot row carries fill_curve; a non-arb row has fill_curve None."""
+    from src.genz.engine import Market, PricedVenue
+    na = _node("corners", "corners|8.5", "over", 8.5, "2way", "high", "K_O", "YES", "P_O")
+    nb = _node("corners", "corners|8.5", "under", 8.5, "2way", "high", "K_U", "NO", "P_U")
+    market = Market(game="G", away="A", home="H", market_type="corners", market_key="corners|8.5",
+                    line=8.5, kind="2way", confidence="high", kickoff="2026-07-06T19:00:00Z",
+                    sides={"over": na, "under": nb})
+    arb = {
+        ("kalshi", "K_O", "YES"): PricedVenue("kalshi", "K_O", 0.45, 0.45, 4500.0, ladder=[(0.45, 100), (0.50, 900)]),
+        ("poly", "P_U", "BUY"): PricedVenue("poly", "P_U", 0.50, 0.50, 5500.0, ladder=[(0.50, 200), (0.55, 800)]),
+    }
+    row = eng._market_snapshot(market, arb)
+    assert isinstance(row["fill_curve"], list) and row["fill_curve"]
+    assert set(row["fill_curve"][0]) == {"stake_usd", "shares", "cost_a_usd", "cost_b_usd", "fee_usd", "profit_usd"}
+
+    flat = {
+        ("kalshi", "K_O", "YES"): PricedVenue("kalshi", "K_O", 0.55, 0.55, 5500.0, ladder=[(0.55, 100)]),
+        ("poly", "P_U", "BUY"): PricedVenue("poly", "P_U", 0.50, 0.50, 5000.0, ladder=[(0.50, 200)]),
+    }
+    assert eng._market_snapshot(market, flat)["fill_curve"] is None   # non-arb

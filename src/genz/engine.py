@@ -541,14 +541,18 @@ def _kalshi_fee_rate(price: float) -> float:
     return 0.07 * price * (1.0 - price)
 
 
-def _arb_max_fill(ladder_a: list, ladder_b: list, venue_a: str,
-                  venue_b: str) -> tuple[float, float, float, float]:
-    """Walk two ascending ask ladders IN LOCKSTEP — buying equal shares on each side (so the payout is
-    equal whichever outcome wins) — up to the MARGINAL boundary where the next contract's combined price
-    PLUS Kalshi taker fees (marginal_a + marginal_b + fee legs) would reach 1.0. Beyond that a contract
-    costs more than the $1 it can return, so it is no longer part of the arb. Returns
-    (shares, cost_a, cost_b, fee_total): the max risk-free equal-share fill, the dollars spent on each
-    leg (pre-fee), and the total smooth fee. Naturally bounded by the THINNER leg's depth."""
+_FILL_CURVE_MAX_POINTS = 25           # cap the snapshot fill-curve; merge the deepest tail levels if more
+
+
+def _walk_arb(ladder_a: list, ladder_b: list, venue_a: str, venue_b: str) -> list[dict[str, float]]:
+    """The fee-aware lockstep walk as a CURVE. Buys EQUAL shares on each side (equal payout whichever
+    outcome wins), stepping through both ascending ask ladders together, up to the MARGINAL boundary
+    where the next contract's combined price PLUS Kalshi taker fees (marginal_a + marginal_b + fee legs)
+    would reach $1 — beyond that a contract costs more than the $1 it can return. Emits ONE cumulative
+    breakpoint per consumed ladder segment: {stake_usd, shares, cost_a_usd, cost_b_usd, fee_usd,
+    profit_usd} (UNROUNDED; profit = shares − cost_a − cost_b − fee). Empty when not even the first
+    contract is profitable net of fees. This is the single source of truth for honest sizing at ANY
+    stake — prices RISE as the book is consumed, so profit does NOT scale linearly with stake."""
     def _cum(ladder: list) -> list[tuple[float, float]]:
         out, c = [], 0.0
         for p, s in ladder:
@@ -560,49 +564,86 @@ def _arb_max_fill(ladder_a: list, ladder_b: list, venue_a: str,
     a_kalshi, b_kalshi = venue_a == "kalshi", venue_b == "kalshi"
     ca, cb = _cum(ladder_a), _cum(ladder_b)
     ia = ib = 0
-    n = cost_a = cost_b = fee_total = 0.0
+    n = cost_a = cost_b = fee = 0.0
+    curve: list[dict[str, float]] = []
     while ia < len(ca) and ib < len(cb):
         pa, a_end = ca[ia]
         pb, b_end = cb[ib]
-        fee_a = _kalshi_fee_rate(pa) if a_kalshi else 0.0
-        fee_b = _kalshi_fee_rate(pb) if b_kalshi else 0.0
-        if pa + pb + fee_a + fee_b >= 1.0:          # marginal contract no longer profitable NET of fees
+        fa = _kalshi_fee_rate(pa) if a_kalshi else 0.0
+        fb = _kalshi_fee_rate(pb) if b_kalshi else 0.0
+        if pa + pb + fa + fb >= 1.0:                # next contract no longer profitable NET of fees
             break
         nxt = min(a_end, b_end)                     # buy equal shares up to the next ladder step
         take = nxt - n
         if take > 0:
             cost_a += take * pa
             cost_b += take * pb
-            fee_total += take * (fee_a + fee_b)
+            fee += take * (fa + fb)
             n = nxt
+            curve.append({"stake_usd": cost_a + cost_b, "shares": n,
+                          "cost_a_usd": cost_a, "cost_b_usd": cost_b, "fee_usd": fee,
+                          "profit_usd": n - cost_a - cost_b - fee})
         if a_end <= nxt + 1e-9:                     # advance the leg(s) whose level is exhausted
             ia += 1
         if b_end <= nxt + 1e-9:
             ib += 1
-    return n, cost_a, cost_b, fee_total
+    return curve
 
 
-def _sizing(qa: SideQuote, qb: SideQuote, implied: float) -> dict[str, Optional[float]]:
+def _arb_max_fill(ladder_a: list, ladder_b: list, venue_a: str,
+                  venue_b: str) -> tuple[float, float, float, float]:
+    """(shares, cost_a, cost_b, fee_total) at the fee-adjusted stop boundary — the END of the lockstep
+    walk (see _walk_arb). Zeros when no contract is profitable net of fees. Bounded by the thinner leg."""
+    curve = _walk_arb(ladder_a, ladder_b, venue_a, venue_b)
+    if not curve:
+        return 0.0, 0.0, 0.0, 0.0
+    last = curve[-1]
+    return last["shares"], last["cost_a_usd"], last["cost_b_usd"], last["fee_usd"]
+
+
+def _cap_curve(curve: list[dict[str, float]], cap: int = _FILL_CURVE_MAX_POINTS) -> list[dict[str, float]]:
+    """Keep the leading detail and the final boundary point, merging the deepest tail levels into the
+    last breakpoint when the walk produced more than `cap` points."""
+    if len(curve) <= cap:
+        return curve
+    return curve[:cap - 1] + curve[-1:]
+
+
+def _round_curve(curve: list[dict[str, float]]) -> list[dict[str, float]]:
+    """Round curve values to 6 dp for a clean snapshot (well within the 1e-6 recompute tolerance)."""
+    return [{k: round(v, 6) for k, v in pt.items()} for pt in curve]
+
+
+def _sizing(qa: SideQuote, qb: SideQuote, implied: float) -> dict[str, Any]:
     """Fee-HONEST stake sizing. The net fields (fee_rate_pct, net_roi_pct) are computed for EVERY priced
-    row from prices alone. The depth/stake fields (per-leg fillable dollars, max total stake before the
-    NET edge disappears, $100 split, guaranteed NET profit at $100 and at max) are for real arbs only —
-    None for a non-arb (implied >= 1). Money rounded to cents; ladders reused (no re-fetch)."""
+    row from prices alone. For real arbs (implied < 1) it also emits the depth/stake fields AND the full
+    fill_curve — cumulative breakpoints so the dashboard can size at ANY stake with the true (rising)
+    avg fill, never a linear scaling of the top-of-book. All curve/depth fields are None for a non-arb.
+    Money rounded to cents; ladders reused (no re-fetch)."""
     fee_a = _kalshi_fee_rate(qa.price) if qa.venue == "kalshi" else 0.0
     fee_b = _kalshi_fee_rate(qb.price) if qb.venue == "kalshi" else 0.0
-    out: dict[str, Optional[float]] = {k: None for k in _DEPTH_FIELDS}
+    out: dict[str, Any] = {k: None for k in _DEPTH_FIELDS}
+    out["fill_curve"] = None
     if implied > 0:
         out["fee_rate_pct"] = round((fee_a + fee_b) / implied * 100.0, 4)
         out["net_roi_pct"] = round(((1.0 - fee_a - fee_b) / implied - 1.0) * 100.0, 4)
     else:
         out["fee_rate_pct"] = out["net_roi_pct"] = None
     if implied >= 1.0 or implied <= 0 or not qa.ladder or not qb.ladder:
-        return out                                  # non-arb -> depth/stake stay None
-    shares, cost_a, cost_b, fee_total = _arb_max_fill(qa.ladder, qb.ladder, qa.venue, qb.venue)
+        return out                                  # non-arb -> depth/stake/curve stay None
+    curve = _walk_arb(qa.ladder, qb.ladder, qa.venue, qb.venue)
+    if curve:
+        last = curve[-1]
+        shares, cost_a, cost_b, fee_total = (last["shares"], last["cost_a_usd"],
+                                             last["cost_b_usd"], last["fee_usd"])
+    else:
+        shares = cost_a = cost_b = fee_total = 0.0
     max_stake = cost_a + cost_b
     profit_at_max = shares - max_stake - fee_total  # equal payout = shares (each pays $1), less fees
     ref = SNAPSHOT_REF_STAKE                         # $100 split at the top prices: stake_i = ref*p_i/implied
     n = ref / implied                               # contracts bought for a $ref total at top prices
     ref_fee = n * fee_a + n * fee_b                 # smooth fee on those contracts (0 on a poly leg)
+    out["fill_curve"] = _round_curve(_cap_curve(curve))
     out.update({
         "depth_a_usd": round(cost_a, 2), "depth_b_usd": round(cost_b, 2),
         "max_stake_usd": round(max_stake, 2),
