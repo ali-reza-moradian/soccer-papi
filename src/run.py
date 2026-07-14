@@ -14,8 +14,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-from . import (catalog, excel_log, formatting as fmt, group_markets, kalshi, normalize, player_props,
-               polymarket, scoreboard, theoddsapi)
+from . import (bookmath, catalog, excel_log, formatting as fmt, group_markets, kalshi, normalize,
+               og_sizing, player_props, polymarket, scoreboard, theoddsapi)
 from .arbitrage import (ArbResult, Candidate, cap_total_investment, compute_arb, make_arb_id,
                         make_signature, select_legs)
 from .config import Config, load_config
@@ -1337,7 +1337,89 @@ def _maybe_send_shadow_digest(sb_rows, cfg: Config, now: datetime, log) -> str:
     return "send FAILED"
 
 
+def _og_leg_specs(opp: Opportunity, poly_client, kalshi_client, log) -> list[dict[str, Any]]:
+    """Per-leg specs for og_sizing.honest_size: EXCHANGE legs (polymarket/kalshi) carry a FRESH ask
+    ladder walked from the live book; every other book is flat (top odds, effective_limit cap). A
+    book-fetch failure degrades that leg to flat — it never breaks the run."""
+    specs: list[dict[str, Any]] = []
+    for leg in opp.res.legs:
+        v = leg.venue or {}
+        venue, vid, vside = v.get("venue"), v.get("venue_id"), v.get("venue_side")
+        spec: dict[str, Any] = {"outcome": _outcome(opp, leg.outcome_name), "book": leg.book,
+                                "top_odds": leg.decimal_odds, "limit": leg.effective_limit}
+        ladder = None
+        try:
+            if venue == "polymarket" and vid and poly_client is not None:
+                ladder = bookmath.valid_asks(polymarket._ask_levels(poly_client.book(vid)))
+            elif venue == "kalshi" and vid and kalshi_client is not None:
+                ladder = kalshi.ask_ladder(kalshi_client.orderbook(vid), vside or "YES")
+        except Exception as exc:  # noqa: BLE001 - a book fetch must never break the run
+            log.info("[OG] %s book fetch failed (%s) — flat leg.", leg.book, exc)
+            ladder = None
+        if ladder:
+            spec["ladder"] = ladder
+            spec["top_odds"] = 1.0 / ladder[0][0]      # genuine best-ask (leg.decimal_odds is a walked fill)
+        specs.append(spec)
+    return specs
+
+
+def _write_og_current(opportunities, cfg: Config, now, log) -> None:
+    """Write data/og_current.json — EVERY arb alive THIS cycle (repeats included), each HONESTLY sized
+    by walking its exchange legs' real books. Current STATE, not an event log (the CSV keeps history):
+    no TTL / dedupe. Written every scan (incl. dry-run) so the panel always shows now. Drop-safe."""
+    path = os.path.join(os.path.dirname(cfg.csv_path) or ".", "og_current.json")
+    floor = float(cfg.threshold("min_total_stake", 20))
+    interval = int(cfg.get("og_scan_interval_s", default=300))
+    poly_client = kalshi_client = None
+    try:
+        poly_client = polymarket.PolymarketClient(
+            gamma_base=str(cfg.polymarket_opt("gamma_base", polymarket.GAMMA_BASE)),
+            clob_base=str(cfg.polymarket_opt("clob_base", polymarket.CLOB_BASE)))
+    except Exception:  # noqa: BLE001
+        poly_client = None
+    try:
+        kalshi_client = kalshi.KalshiClient(base_url=str(cfg.kalshi_opt("base_url", kalshi.DEFAULT_BASE_URL)))
+    except Exception:  # noqa: BLE001
+        kalshi_client = None
+
+    arbs: list[dict[str, Any]] = []
+    for opp in opportunities:
+        market = fmt.market_label(opp.spec.label, opp.spec.family, opp.spec.line)
+        try:
+            h = og_sizing.honest_size(_og_leg_specs(opp, poly_client, kalshi_client, log),
+                                      bankroll_cap=cfg.bankroll_total)
+        except Exception as exc:  # noqa: BLE001 - per-arb sizing must never break the run
+            log.info("[OG] og_current sizing failed for %s (%s) — skipped.", opp.match, exc)
+            continue
+        if h is None or h.t_max_honest < floor:
+            log.info("[OG] %s %s survives only to $%.0f — below floor",
+                     opp.match, market, 0.0 if h is None else h.t_max_honest)
+            continue
+        arbs.append({
+            "match": opp.match, "market": market, "fixture_id": opp.fixture_id,
+            "kickoff_et": fmt.iso_local(opp.kickoff_utc), "roi_pct": round(opp.res.roi_pct, 2),
+            "arb_sum_S": round(opp.res.arb_sum_S, 6), "actionable": opp.actionable,
+            "shadow_books": opp.shadow_books, "total_stake": h.total_stake,
+            "t_max_honest": h.t_max_honest, "profit": h.profit,
+            "legs": [{"outcome": lg.outcome, "book": lg.book, "top_odds": lg.top_odds,
+                      "avg_fill_odds": lg.avg_fill_odds, "stake": lg.stake, "payout": lg.payout}
+                     for lg in h.legs],
+        })
+    payload = {"cycle_utc": now.strftime("%Y-%m-%dT%H:%M:%SZ"), "scan_interval_s": interval, "arbs": arbs}
+    try:
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(payload, fh, ensure_ascii=False, indent=2)
+        os.replace(tmp, path)                              # atomic — the panel never reads a half file
+        log.info("[OG] og_current: %s arb(s) alive this cycle -> %s", len(arbs), path)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("[OG] failed to write og_current (%s).", exc)
+
+
 def _emit(opportunities, stats, cfg: Config, now, client, log):
+    # --- OG current-state (honest walked sizing) — always, even under dry-run (live state, not history).
+    _write_og_current(opportunities, cfg, now, log)
     # --- CSV ---
     # dry_run is verification-only: never mutate the opportunities CSV (mirrors the Telegram guards).
     if cfg.dry_run:

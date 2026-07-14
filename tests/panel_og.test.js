@@ -23,9 +23,18 @@ const sandbox = {
 vm.createContext(sandbox);
 vm.runInContext(js, sandbox);
 
-const { ogShadowBooks, ogBetLine } = sandbox;
+const { ogShadowBooks, ogBetLine, schemaStale } = sandbox;
 const strip = s => String(s).replace(/<[^>]+>/g, '');
 const legsJson = legs => JSON.stringify(legs);
+
+// --- schema (OLD-CODE) banner: fires when data exists but its schema is missing or < expected ---
+assert.strictEqual(schemaStale(null, null, 2), false, 'no data -> no banner');
+assert.strictEqual(schemaStale({ schema: 2, games: {} }, null, 2), false, 'current schema -> no banner');
+assert.strictEqual(schemaStale({ schema: 1, games: {} }, null, 2), true, 'old snapshot schema -> banner');
+assert.strictEqual(schemaStale({ cycle_utc: 'x', games: {} }, null, 2), true, 'missing schema -> banner');
+assert.strictEqual(schemaStale(null, { schema: 2 }, 2), false, 'heartbeat current -> no banner');
+assert.strictEqual(schemaStale(null, { schema: 1 }, 2), true, 'heartbeat old schema -> banner');
+assert.strictEqual(sandbox.EXPECTED_SCHEMA, 2, 'panel EXPECTED_SCHEMA matches engine');
 
 // --- funded vs shadow (computed from parsed legs_json books, NOT the actionable flag) ---
 const funded = { legs_json: legsJson([

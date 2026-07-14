@@ -196,8 +196,15 @@ python -m http.server 8080
 # then open http://localhost:8080/genz/papi_panel.html
 ```
 
-Start the OG scanner loop in its own window so the OG tab has data:
-`powershell -ExecutionPolicy Bypass -File scripts\run_og_loop.ps1`.
+Start each loop in its own window so the tabs have data:
+- OG: `powershell -ExecutionPolicy Bypass -File scripts\run_og_loop.ps1`
+- GenZ: `powershell -ExecutionPolicy Bypass -File scripts\run_genz_loop.ps1`
+
+**Prefer these fresh-interpreter loop runners over a long-lived `python -m src.genz.cli run --loop`.**
+A long-lived process keeps running the bytecode it started with, so after a `git pull` the snapshot
+lacks new fields and the dashboard shows a red **"ENGINE RUNNING OLD CODE — restart the GenZ loop"**
+banner (the runner re-execs python each cycle, so committed code is live within one cycle). Keep the
+`run --loop` flag for dev only.
 
 ---
 

@@ -515,7 +515,8 @@ def write_heartbeat(res: CycleResult, *, now: datetime, path: Optional[str] = No
     path = path or gz_config.HEARTBEAT_PATH
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w", encoding="utf-8") as fh:
-        json.dump({"last_cycle_utc": now.strftime("%Y-%m-%dT%H:%M:%SZ"), "games": res.games,
+        json.dump({"schema": SNAPSHOT_SCHEMA_VERSION,
+                   "last_cycle_utc": now.strftime("%Y-%m-%dT%H:%M:%SZ"), "games": res.games,
                    "nodes_priced": res.nodes_priced, "nodes_unpriced": res.nodes_unpriced,
                    "markets_skipped": res.markets_skipped, "arbs_found": res.arbs_found,
                    "would_trade": res.would_trade}, fh, indent=2)
@@ -525,6 +526,11 @@ def write_heartbeat(res: CycleResult, *, now: datetime, path: Optional[str] = No
 # Full-market snapshot — EVERY priced market each cycle (arb AND non-arb)         #
 # --------------------------------------------------------------------------- #
 SNAPSHOT_REF_STAKE = 100.0            # reference TOTAL stake for the split/profit fields ($)
+
+# Snapshot/heartbeat SCHEMA version — BUMP on ANY snapshot field change. The dashboard compares it to
+# its own expected value; a stale long-lived loop running old bytecode writes an old (or missing)
+# schema, which the panel turns into a loud "ENGINE RUNNING OLD CODE" banner. (v2: added fill_curve.)
+SNAPSHOT_SCHEMA_VERSION = 2
 
 # Depth/stake fields are None for a non-arb (implied >= 1); the net fields below are computed for EVERY
 # priced row so the dashboard can sort all markets by net edge.
@@ -716,7 +722,8 @@ def build_snapshot(tree: dict[str, Any], markets: list[Market], priced: dict[tup
             "started": _started(str(g.get("kickoff_utc", "")), now),
             "markets": mkts,
         }
-    return {"cycle_utc": now.strftime("%Y-%m-%dT%H:%M:%SZ"), "games": games_out}
+    return {"schema": SNAPSHOT_SCHEMA_VERSION,
+            "cycle_utc": now.strftime("%Y-%m-%dT%H:%M:%SZ"), "games": games_out}
 
 
 def write_snapshot(snapshot: dict[str, Any], path: Optional[str] = None) -> None:
