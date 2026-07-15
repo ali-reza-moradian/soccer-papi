@@ -208,6 +208,31 @@ banner (the runner re-execs python each cycle, so committed code is live within 
 
 ---
 
+## Operations — fully automatic, self-healing
+
+The four moving parts (panel HTTP server, tree builder, GenZ price loop, OG scanner) are kept alive by
+a supervisor that restarts any that die, and the supervisor itself starts at boot. Install **once**:
+
+```
+# in an ELEVATED (Administrator) PowerShell:
+powershell -ExecutionPolicy Bypass -File scripts\install_autostart.ps1
+schtasks /Run /TN SoccerPapi          # start it now, without rebooting
+```
+
+- **`scripts\run_all.ps1`** — the supervisor. Every 30s it finds each component by command line and
+  (re)starts the missing ones HIDDEN; refuses to run twice. The **cadence lives inside each loop** — the
+  supervisor only revives *dead* components (a timer-relaunched supervisor double-ran and killed the
+  tree twice in July; do not reintroduce that).
+- **`scripts\install_autostart.ps1`** — registers a single **ONSTART** scheduled task `SoccerPapi`
+  (SYSTEM, highest run level) that launches the supervisor at every boot. Reboot-proof.
+- **Logs** live in `data\ops\` (gitignored): `supervisor.log`, per-component `http.log` / `tree.log` /
+  `genz.log` / `og.log`, and `supervisor_heartbeat.json` (`{ts, components:{name: pid|null}}`).
+- **Stop the stack:** `powershell -File scripts\stop_all.ps1` — drops `data\ops\STOP_ALL`, the
+  supervisor kills all four and exits, then the flag is cleared. It returns on the next boot.
+- **Disable autostart entirely:** `schtasks /Change /TN SoccerPapi /Disable`.
+
+---
+
 ## Setup
 
 ### 1. Secrets (GitHub → Settings → Secrets and variables → Actions)

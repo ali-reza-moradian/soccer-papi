@@ -1397,10 +1397,11 @@ def _write_og_current(opportunities, cfg: Config, now, log) -> None:
                 "arb_sum_S": round(opp.res.arb_sum_S, 6), "net_roi_pct": round(opp.res.net_roi_pct, 4),
                 "fee_pct": round(opp.res.net_fee_rate * 100.0, 4), "actionable": opp.actionable,
                 "shadow_books": opp.shadow_books}
-        # GROSS-positive but the exact taker fees eat the edge -> a FEE > EDGE trap. Show it (amber), but
-        # never size a bet on it.
+        # GROSS-positive but the exact taker fees eat the edge -> a FEE > EDGE trap. Show it as an
+        # informational near-miss (amber, not placeable), but never size a bet on it.
         if opp.res.net_roi_pct <= 0:
-            base.update({"fee_trap": True, "total_stake": 0.0, "t_max_honest": 0.0, "profit": None, "legs": []})
+            base.update({"fee_trap": True, "below_floor": False, "total_stake": 0.0,
+                         "t_max_honest": 0.0, "profit": None, "legs": []})
             arbs.append(base)
             continue
         try:
@@ -1409,13 +1410,20 @@ def _write_og_current(opportunities, cfg: Config, now, log) -> None:
         except Exception as exc:  # noqa: BLE001 - per-arb sizing must never break the run
             log.info("[OG] og_current sizing failed for %s (%s) — skipped.", opp.match, exc)
             continue
+        # NET-positive but the honest boundary is below the stake floor: keep it as an informational
+        # near-miss (below_floor) with its net numbers — an empty Current tab then means "nothing even
+        # close", never ambiguity. Still log it.
         if h is None or h.t_max_honest < floor:
             log.info("[OG] %s %s survives only to $%.0f — below floor",
                      opp.match, market, 0.0 if h is None else h.t_max_honest)
+            base.update({"fee_trap": False, "below_floor": True,
+                         "total_stake": 0.0 if h is None else h.total_stake,
+                         "t_max_honest": 0.0 if h is None else h.t_max_honest, "profit": None, "legs": []})
+            arbs.append(base)
             continue
         base.update({
-            "fee_trap": False, "total_stake": h.total_stake, "t_max_honest": h.t_max_honest,
-            "profit": h.profit,
+            "fee_trap": False, "below_floor": False, "total_stake": h.total_stake,
+            "t_max_honest": h.t_max_honest, "profit": h.profit,
             "legs": [{"outcome": lg.outcome, "book": lg.book, "top_odds": lg.top_odds,
                       "avg_fill_odds": lg.avg_fill_odds, "stake": lg.stake, "payout": lg.payout}
                      for lg in h.legs],

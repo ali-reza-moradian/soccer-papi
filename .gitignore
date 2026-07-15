@@ -46,3 +46,5 @@ data/executor/
 data/cache/group_slugmap.json
 # Claude Code local session/agent state — never commit.
 .claude/
+# Supervisor runtime: logs, heartbeat, STOP_ALL flag (scripts/run_all.ps1). Machine-local, never commit.
+data/ops/
