@@ -20,7 +20,7 @@ from datetime import datetime, timezone
 from .. import kalshi as ks
 from .. import polymarket as pm
 from ..executor import config as exec_config
-from ..logsetup import get_logger
+from ..logsetup import get_logger, setup_logging
 from . import config as gz_config
 from . import engine as gz_engine
 from . import tree_builder
@@ -161,6 +161,10 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv=None) -> int:
+    # Configure the root logger -> stdout so every cycle's one-line summary is EMITTED (without this
+    # the "genz" logger propagates to a handler-less root and Python's lastResort drops all INFO; the
+    # supervisor then captures nothing and data/ops/genz.log stays 0 bytes).
+    setup_logging()
     args = build_parser().parse_args(argv)
     return args.func(args)
 

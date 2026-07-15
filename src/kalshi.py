@@ -302,6 +302,35 @@ def ask_ladder(book: Any, side: str = "YES") -> list[tuple[float, float]]:
     return out
 
 
+def best_bid(book: Any, side: str = "YES") -> Optional[float]:
+    """Highest RESTING BID price for ``side`` (the price a maker BUY would join) from a Kalshi
+    orderbook, or None. Handles the new orderbook_fp (yes_dollars/no_dollars are resting bids in
+    dollars) and the legacy integer-cent orderbook."""
+    book = book if isinstance(book, dict) else {}
+    is_yes = str(side).upper() == "YES"
+    best: Optional[float] = None
+    ofp = book.get("orderbook_fp")
+    if isinstance(ofp, dict):
+        for lvl in ofp.get("yes_dollars" if is_yes else "no_dollars") or []:
+            try:
+                p = float(lvl[0])
+            except (TypeError, ValueError, IndexError):
+                continue
+            if 0.0 < p < 1.0 and (best is None or p > best):
+                best = p
+    if best is None:
+        ob = book.get("orderbook")
+        ob = ob if isinstance(ob, dict) else book
+        for lvl in ob.get("yes" if is_yes else "no") or []:
+            try:
+                p = float(lvl[0]) / 100.0
+            except (TypeError, ValueError, IndexError):
+                continue
+            if 0.0 < p < 1.0 and (best is None or p > best):
+                best = p
+    return best
+
+
 # The event-ticker date is US-LOCAL, so for a fixture kicking off in UTC small-hours it can be one
 # calendar day BEHIND the fixture's UTC date (e.g. ticker 26JUN13 vs kickoff 2026-06-14T01:00Z). We
 # therefore match on team identity within the scan window, allowing the ticker date to differ from

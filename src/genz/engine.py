@@ -36,6 +36,7 @@ from ..executor.ledger import Ledger
 from ..executor.resolve import MarketData
 from . import config as gz_config
 from . import match_rules as mr
+from . import papermaker
 from . import tree_builder
 
 ARBS_COLUMNS = [
@@ -459,6 +460,9 @@ def run_cycle(tree: dict[str, Any], md: Any, gz_cfg: gz_config.GenzConfig,
         # Full-market snapshot: EVERY priced market (arb + non-arb) for the dashboard.
         rows_by_key = {(r.get("game"), r.get("market_key")): r for r in rows}
         write_snapshot(build_snapshot(tree, markets, priced, rows_by_key, now), snapshot_path)
+        # PAPER MAKER (dry-run): synthetic maker quotes on the PRE-GAME markets — measures the maker-side
+        # edge; NEVER places an order or touches the executor.
+        papermaker.run(eligible, priced, md, now, gz_cfg, log)
     if log:
         log.info("[GENZ] cycle: %d game(s), %d node(s) priced (%d unpriced), %d market(s) skipped, "
                  "%d arb(s), %d would-trade.", res.games, res.nodes_priced, res.nodes_unpriced,

@@ -207,3 +207,20 @@ class MarketData:
                 out.append((p, s))
         out.sort(key=lambda x: x[0])
         return out
+
+    def kalshi_best_bid(self, ticker: str, side: str = "YES") -> Optional[float]:
+        """Highest resting bid to JOIN on the LIVE Kalshi book for ``side`` (paper-maker only). None on
+        any error — a maker measurement must never break the caller."""
+        try:
+            from src.kalshi import best_bid
+            return best_bid(self._kalshi().orderbook(ticker), side)
+        except Exception:  # noqa: BLE001
+            return None
+
+    def poly_best_bid(self, token_id: str) -> Optional[float]:
+        """Highest resting bid to JOIN on the LIVE Polymarket book (paper-maker only). None on error."""
+        try:
+            from src.polymarket import best_bid
+            return best_bid(self._poly().book(token_id))
+        except Exception:  # noqa: BLE001
+            return None

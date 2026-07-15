@@ -25,6 +25,14 @@ TREE_META_PATH = os.path.join(GENZ_DIR, "tree_meta.json")
 ARBS_CSV_PATH = os.path.join(GENZ_DIR, "genz_arbs.csv")           # legacy single file (still read)
 HEARTBEAT_PATH = os.path.join(GENZ_DIR, "genz_heartbeat.json")
 SNAPSHOT_PATH = os.path.join(GENZ_DIR, "genz_snapshot.json")      # EVERY priced market each cycle (dashboard)
+PAPERMAKER_SUMMARY_PATH = os.path.join(GENZ_DIR, "papermaker_summary.json")   # paper-maker dry-run summary
+PAPERMAKER_STATE_PATH = os.path.join(GENZ_DIR, "papermaker_state.json")       # open quotes/drift across cycles
+
+
+def papermaker_path_for(now: Optional[datetime] = None) -> str:
+    """The DATED paper-maker event log — data/genz/papermaker_YYYYMMDD.csv (quote/fill/expiry events)."""
+    now = now or datetime.now(timezone.utc)
+    return os.path.join(GENZ_DIR, f"papermaker_{now.strftime('%Y%m%d')}.csv")
 
 
 def arbs_path_for(now: Optional[datetime] = None) -> str:
@@ -71,16 +79,24 @@ class GenzConfig:
     clob_base: str = "https://clob.polymarket.com"
     poly_series_slug: str = "soccer-fifwc"
     kalshi_series: list = field(default_factory=lambda: list(DEFAULT_KALSHI_SERIES))
+    poly_fee_rate: float = 0.05            # Polymarket sports taker rate (from bookmakers.poly_fee_rate)
+    # PAPER MAKER (dry-run maker-edge measurement — never places an order):
+    papermaker_enabled: bool = True
+    papermaker_target_net_pct: float = 1.0   # min net edge (%) a hedged maker combo must clear
+    papermaker_ref_shares: float = 100.0     # shares to walk the hedge book to when marking a fill
 
 
-def _block(config_path: str | None) -> dict[str, Any]:
+def _raw(config_path: str | None) -> dict[str, Any]:
     path = config_path or os.environ.get("CONFIG_PATH") or DEFAULT_CONFIG_PATH
     try:
         with open(path, "r", encoding="utf-8") as fh:
-            raw = yaml.safe_load(fh) or {}
+            return yaml.safe_load(fh) or {}
     except FileNotFoundError:
         return {}
-    blk = raw.get("genz")
+
+
+def _block(config_path: str | None) -> dict[str, Any]:
+    blk = _raw(config_path).get("genz")
     return blk if isinstance(blk, dict) else {}
 
 
@@ -102,4 +118,16 @@ def load_genz_config(config_path: str | None = None, *, overrides: dict[str, Any
     cfg.max_plausible_roi_pct = float(cfg.max_plausible_roi_pct)
     cfg.min_total_implied = float(cfg.min_total_implied)
     cfg.http_timeout_seconds = float(cfg.http_timeout_seconds)
+    # Cross-block reads: the shared Polymarket fee rate and the papermaker: block.
+    raw = _raw(config_path)
+    bk = raw.get("bookmakers") if isinstance(raw.get("bookmakers"), dict) else {}
+    if bk.get("poly_fee_rate") is not None:
+        cfg.poly_fee_rate = float(bk["poly_fee_rate"])
+    pm = raw.get("papermaker") if isinstance(raw.get("papermaker"), dict) else {}
+    if pm.get("enabled") is not None:
+        cfg.papermaker_enabled = bool(pm["enabled"])
+    if pm.get("target_net_pct") is not None:
+        cfg.papermaker_target_net_pct = float(pm["target_net_pct"])
+    if pm.get("ref_shares") is not None:
+        cfg.papermaker_ref_shares = float(pm["ref_shares"])
     return cfg

@@ -491,6 +491,18 @@ def _ask_levels(book: Any) -> list[tuple[Any, Any]]:
             for lvl in (book or {}).get("asks") or [] if isinstance(lvl, dict)]
 
 
+def best_bid(book: Any) -> Optional[float]:
+    """Highest RESTING BID price on a CLOB order book (the price a maker BUY would join), or None."""
+    best: Optional[float] = None
+    for lvl in (book or {}).get("bids") or []:
+        if not isinstance(lvl, dict):
+            continue
+        p = _num(lvl.get("price"))
+        if p is not None and 0.0 < p < 1.0 and (best is None or p > best):
+            best = p
+    return best
+
+
 def _price_from_book(book: Any, *, depth_pricing: bool = False,
                      slippage_pct: float = DEFAULT_DEPTH_SLIPPAGE_PCT,
                      reference_size: float = DEFAULT_WALK_STAKE) -> Optional[tuple[float, float]]:

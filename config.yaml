@@ -401,3 +401,12 @@ genz:
                                     # O/U node summing below this is a period/line mispairing -> rejected.
   http_timeout_seconds: 15          # per-call HTTP timeout — fail fast so one hung call can't stall a cycle
   poly_series_slug: soccer-fifwc    # Polymarket WC series; siblings discovered by game-slug prefix
+
+# PAPER MAKER — DRY-RUN measurement of the maker-side edge with SYNTHETIC quotes. It NEVER places an
+# order and NEVER touches the executor/order API; it just measures whether a passive (maker-fee-free)
+# leg + an aggressive hedge would clear the target net. Driven from the genz price cycle. See
+# src/genz/papermaker.py. Fills are UNDERCOUNTED (20s sampling misses fast wicks) -> a lower bound.
+papermaker:
+  enabled: true
+  target_net_pct: 1.0               # min net edge (%) a hedged maker combo must clear at the quote price
+  ref_shares: 100                   # shares to walk the hedge book to when marking a synthetic fill
