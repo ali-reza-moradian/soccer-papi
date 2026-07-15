@@ -36,9 +36,20 @@ def kalshi_fee_usd(count: int, price: float) -> float:
     return kalshi_fee_cents(count, price) / 100.0
 
 
-def poly_fee_usd(usd_notional: float = 0.0) -> float:
-    """Polymarket charges no taker fee on general markets -> 0.0 (kept as a hook for clarity)."""
-    return 0.0
+DEFAULT_POLY_FEE_RATE = 0.05          # gamma feeSchedule.rate for sports markets (verified live)
+
+
+def poly_fee_usd(count: float, price: float, rate: float = DEFAULT_POLY_FEE_RATE) -> float:
+    """Polymarket sports TAKER fee in DOLLARS for ``count`` shares bought at ``price`` (dollars in (0,1)).
+
+    CONFIRMED to the cent against the live trade widget: the fee is charged in SHARES on payout —
+    fee_shares = rate x min(P, 1-P) x count — and each fee share forfeits $1 at settlement, so
+    fee_usd = fee_shares x $1 = rate x min(P, 1-P) x count. rate = the market's feeSchedule rate (0.05,
+    exponent 1); makers pay 0 (takerOnly). A non-sports market (fees disabled) or rate <= 0 -> 0."""
+    if count <= 0 or rate <= 0:
+        return 0.0
+    p = min(max(float(price), 0.0), 1.0)
+    return rate * min(p, 1.0 - p) * float(count)
 
 
 # --------------------------------------------------------------------------- #
@@ -129,16 +140,16 @@ class EdgeResult:
 
 
 def edge_after_costs(size: float, kalshi_fill_price: float, poly_fill_price: float,
-                     kalshi_count: int) -> EdgeResult:
+                     kalshi_count: int, poly_fee_rate: float = DEFAULT_POLY_FEE_RATE) -> EdgeResult:
     """Net edge of buying ``size`` complementary shares on each venue at the walked fill prices.
 
     Each share pays $1 if its outcome wins; the two legs cover complementary outcomes, so payout is
-    a guaranteed ``size`` dollars. Profit = payout - (kalshi cost + poly cost + fees). Kalshi fees
-    use the integer contract count; Poly is fee-free."""
+    a guaranteed ``size`` dollars. Profit = payout - (kalshi cost + poly cost + BOTH taker fees). Kalshi
+    fees use the integer contract count; Poly fees are the share-based sports taker fee."""
     k_cost = size * kalshi_fill_price
     p_cost = size * poly_fill_price
     k_fee = kalshi_fee_usd(kalshi_count, kalshi_fill_price)
-    p_fee = poly_fee_usd(p_cost)
+    p_fee = poly_fee_usd(size, poly_fill_price, poly_fee_rate)
     total_cost = k_cost + p_cost + k_fee + p_fee
     payout = float(size)
     net = payout - total_cost
@@ -153,22 +164,31 @@ def edge_after_costs(size: float, kalshi_fill_price: float, poly_fill_price: flo
     )
 
 
-def edge_after_costs_n(size: float, leg_fills: list[tuple[str, float]]) -> EdgeResult:
+def edge_after_costs_n(size: float, leg_fills: list[tuple[str, float]],
+                       poly_fee_rate: float = DEFAULT_POLY_FEE_RATE) -> EdgeResult:
     """N-leg generalization of :func:`edge_after_costs`.
 
     ``leg_fills`` is one (venue, fill_price) per leg. The legs together are MECE over the market's
-    outcomes, so payout = ``size`` (exactly one wins). Cost = size*Σ(fill_price) + Σ(kalshi taker
-    fees, one per kalshi leg at ``size`` contracts) (Poly is fee-free)."""
+    outcomes, so payout = ``size`` (exactly one wins). Cost = size*Σ(fill_price) + Σ(taker fees): a
+    Kalshi taker fee per kalshi leg (integer contract count) and the share-based sports taker fee per
+    Polymarket leg."""
     per_leg: list[dict[str, Any]] = []
     total_leg_cost = 0.0
     k_fee_total = 0.0
+    p_fee_total = 0.0
     for venue, fp in leg_fills:
         cost = size * fp
-        fee = kalshi_fee_usd(int(size), fp) if venue == "kalshi" else poly_fee_usd(cost)
+        if venue == "kalshi":
+            fee = kalshi_fee_usd(int(size), fp)
+            k_fee_total += fee
+        elif venue == "polymarket":
+            fee = poly_fee_usd(size, fp, poly_fee_rate)
+            p_fee_total += fee
+        else:
+            fee = 0.0
         total_leg_cost += cost
-        k_fee_total += fee if venue == "kalshi" else 0.0
         per_leg.append({"venue": venue, "fill_price": fp, "cost": cost, "fee": fee})
-    total_cost = total_leg_cost + k_fee_total       # poly fees are 0
+    total_cost = total_leg_cost + k_fee_total + p_fee_total
     payout = float(size)
     net = payout - total_cost
     edge_pct = (net / total_cost * 100.0) if total_cost > 0 else 0.0
@@ -179,7 +199,7 @@ def edge_after_costs_n(size: float, leg_fills: list[tuple[str, float]]) -> EdgeR
         kalshi_fill_price=k_fps[0] if k_fps else 0.0,
         poly_fill_price=p_fps[0] if p_fps else 0.0,
         kalshi_cost=size * sum(k_fps), poly_cost=size * sum(p_fps),
-        kalshi_fee=k_fee_total, poly_fee=0.0,
+        kalshi_fee=k_fee_total, poly_fee=p_fee_total,
         total_cost=total_cost, payout=payout, net_profit=net, net_edge_pct=edge_pct,
         arb_survived=net > 0.0, per_leg=per_leg,
     )

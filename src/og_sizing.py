@@ -58,7 +58,7 @@ def _prep(legs: list[dict[str, Any]]):
             for p, s in asks:
                 c += s
                 cum.append((p, c))                      # (price, cumulative shares through this level)
-            ex.append({"leg": lg, "asks": asks, "cum": cum, "depth": c})
+            ex.append({"leg": lg, "asks": asks, "cum": cum, "depth": c, "fee_book": lg.get("fee_book")})
         else:
             d = float(lg["top_odds"])
             if d <= 1.0:
@@ -69,20 +69,43 @@ def _prep(legs: list[dict[str, Any]]):
     return ex, fx
 
 
+def _exch_fee_rate(fee_book: Optional[str], price: float, poly_rate: float) -> float:
+    """Per-share taker fee for a walked exchange leg: Kalshi 0.07·p·(1−p); Polymarket poly_rate·min(p,1−p)."""
+    if fee_book == "kalshi":
+        return 0.07 * price * (1.0 - price)
+    if fee_book == "polymarket":
+        return poly_rate * min(price, 1.0 - price)
+    return 0.0
+
+
+def _walk_fee(e, R: float, poly_rate: float) -> float:
+    """The exact taker fee ($) for buying R shares on one exchange leg — fee_rate(level price)·shares
+    summed across the consumed ladder levels."""
+    fee, rem = 0.0, R
+    for p, s in e["asks"]:
+        take = min(rem, s)
+        if take <= 0:
+            break
+        fee += _exch_fee_rate(e["fee_book"], p, poly_rate) * take
+        rem -= take
+    return fee
+
+
 def _total_cost(ex, fx, R: float) -> float:
     return (sum(bookmath.walk_book(e["asks"], R).cost for e in ex)
             + sum(R / f["odds"] for f in fx))
 
 
-def _size_at(ex, fx, R: float):
-    """Per-leg fills at equal-payout target R. Returns (sized, total_stake, min_payout)."""
+def _size_at(ex, fx, R: float, poly_rate: float):
+    """Per-leg fills at equal-payout target R. Returns (sized, total_stake, min_payout, fee_total)."""
     sized: list[SizedLeg] = []
-    total = 0.0
+    total = fee_total = 0.0
     min_pay = _INF
     for e in ex:
         w = bookmath.walk_book(e["asks"], R)
         cost, pay = w.cost, w.filled                    # each share pays $1 -> payout == shares filled
         total += cost
+        fee_total += _walk_fee(e, R, poly_rate)
         min_pay = min(min_pay, pay)
         sized.append(SizedLeg(e["leg"]["outcome"], e["leg"]["book"], float(e["leg"]["top_odds"]),
                               (pay / cost if cost > 0 else 0.0), cost, pay))
@@ -92,7 +115,7 @@ def _size_at(ex, fx, R: float):
         total += stake
         min_pay = min(min_pay, R)
         sized.append(SizedLeg(f["leg"]["outcome"], f["leg"]["book"], d, d, stake, R))
-    return sized, total, min_pay
+    return sized, total, min_pay, fee_total
 
 
 def _solve_R_for_total(ex, fx, target: float, hi: float) -> float:
@@ -107,11 +130,13 @@ def _solve_R_for_total(ex, fx, target: float, hi: float) -> float:
     return lo
 
 
-def honest_size(legs: list[dict[str, Any]], *, bankroll_cap: float = 0.0) -> Optional[HonestSize]:
-    """Honestly size one arb. ``legs`` = per-leg dicts with ``outcome``, ``book``, ``top_odds`` and
-    EITHER ``ladder`` (ascending (price, size) ask book -> walked EXCHANGE leg) OR ``limit`` (flat FIXED
-    leg). Returns a HonestSize, or None when not even the first unit of payout is profitable at the
-    margin (no honest edge)."""
+def honest_size(legs: list[dict[str, Any]], *, bankroll_cap: float = 0.0,
+                poly_fee_rate: float = 0.05) -> Optional[HonestSize]:
+    """Honestly size one arb, NET of the exact exchange taker fees. ``legs`` = per-leg dicts with
+    ``outcome``, ``book``, ``top_odds`` and EITHER ``ladder`` (ascending (price, size) ask book ->
+    walked EXCHANGE leg; set ``fee_book`` = 'kalshi'/'polymarket' for its exact per-share fee) OR
+    ``limit`` (flat FIXED leg; ``top_odds`` should already be commission-adjusted). Returns a HonestSize,
+    or None when not even the first unit of payout is profitable at the margin NET of fees."""
     prep = _prep(legs)
     if prep is None:
         return None
@@ -136,10 +161,16 @@ def honest_size(legs: list[dict[str, Any]], *, bankroll_cap: float = 0.0) -> Opt
         if bp <= prev + 1e-9:
             continue
         mid = 0.5 * (prev + bp)
-        margs = [exch_marginal(e, mid) for e in ex]
-        if any(m is None for m in margs):               # an exchange leg exhausted mid-segment
+        margs = []
+        for e in ex:                                    # marginal price PLUS the leg's per-share fee
+            p = exch_marginal(e, mid)
+            if p is None:                               # an exchange leg exhausted mid-segment
+                margs = None
+                break
+            margs.append(p + _exch_fee_rate(e["fee_book"], p, poly_fee_rate))
+        if margs is None:
             break
-        if fixed_S + sum(margs) < 1.0:                  # marginal S still < 1 -> this whole segment pays
+        if fixed_S + sum(margs) < 1.0:                  # marginal S still < 1 NET of fees -> segment pays
             R_star, prev = bp, bp
         else:
             break                                       # marginal boundary reached
@@ -148,13 +179,13 @@ def honest_size(legs: list[dict[str, Any]], *, bankroll_cap: float = 0.0) -> Opt
     if R_star <= 0:
         return None
 
-    _, boundary_total, _ = _size_at(ex, fx, R_star)
+    _, boundary_total, _, _ = _size_at(ex, fx, R_star, poly_fee_rate)
     R_rec, recommended_total = R_star, boundary_total
     if bankroll_cap and 0.0 < bankroll_cap < boundary_total:
         R_rec = _solve_R_for_total(ex, fx, bankroll_cap, R_star)
         recommended_total = bankroll_cap
-    sized, total, min_pay = _size_at(ex, fx, R_rec)
+    sized, total, min_pay, fee_total = _size_at(ex, fx, R_rec, poly_fee_rate)
     return HonestSize(total_stake=round(total, 2), t_max_honest=round(boundary_total, 2),
-                      profit=round(min_pay - total, 2),
+                      profit=round(min_pay - total - fee_total, 2),   # NET of exchange taker fees
                       legs=[SizedLeg(l.outcome, l.book, round(l.top_odds, 4), round(l.avg_fill_odds, 4),
                                      round(l.stake, 2), round(l.payout, 2)) for l in sized])

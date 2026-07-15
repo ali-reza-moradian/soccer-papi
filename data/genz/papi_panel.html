@@ -111,7 +111,7 @@ tr.betrow td{border-bottom:1px solid var(--border);padding-top:2px}
   <div class="wrap"><div id="body"><div class="empty">Loading…</div></div></div>
   <div class="foot">
     <div>GENZ · Kalshi ⇄ Polymarket · pre-game only · <span class="dry">DRY-RUN</span> — places nothing.</div>
-    <div>Sorted by <b>Net %</b> (after Kalshi's taker fee). Red row = extra-time rule mismatch (both legs can lose — never bet it). Amber row = gross sub-1 but the fee eats the edge (not a real arb). "Bet this" &amp; Profit are NET of fees, sized by WALKING the real order book — the avg fill rises with size (never linear-scaled) — and capped by your bankroll/venue AND book depth.</div>
+    <div>Sorted by <b>Net %</b> (after Kalshi + Polymarket taker fees). <b>Fee %</b> = both venues' fees at the quoted prices. Red row = extra-time rule mismatch (both legs can lose — never bet it). Amber row = gross sub-1 but the fees eat the edge (not a real arb). "Bet this" &amp; Profit are NET of fees, sized by WALKING the real order book — the avg fill rises with size (never linear-scaled) — and capped by your bankroll/venue AND book depth.</div>
   </div>
 </div>
 
@@ -126,13 +126,13 @@ tr.betrow td{border-bottom:1px solid var(--border);padding-top:2px}
   <div class="wrap"><div id="ogbody"><div class="empty">Loading…</div></div></div>
   <div class="foot">
     <div>OG · 4-book pre-game scanner (Kalshi, Polymarket, Pinnacle, 1xbet) · <span class="dry">ALERT-ONLY</span> — you place these by hand.</div>
-    <div><b>Current</b> = arbs alive THIS scan, HONESTLY sized by walking each exchange leg's real book (per-leg <b>$stake outcome @ book (fills)</b>, profit &amp; max stake are the walked truth — no top-of-book lie). <b>History</b> = the 48h CSV. <b>Funded</b> = every leg on Kalshi / Polymarket / Pinnacle / 1xbet (sorted first); <b>SHADOW</b> needs a book you can't place on. 1xbet is bettable at any size — verify the price before betting.</div>
+    <div><b>Current</b> = arbs alive THIS scan, HONESTLY sized by walking each exchange leg's real book NET of ALL taker fees (Kalshi 0.07·p·(1−p), Polymarket 0.05·min(p,1−p)); per-leg <b>$stake outcome @ book (fills)</b>, profit &amp; max stake are the walked truth. Amber <b>FEE &gt; EDGE</b> = gross sub-1 but the fees eat it. <b>History</b> = the 48h CSV. <b>Funded</b> = every leg on Kalshi / Polymarket / Pinnacle / 1xbet (sorted first); <b>SHADOW</b> needs a book you can't place on. 1xbet is bettable at any size — verify the price before betting.</div>
   </div>
 </div>
 
 <script>
 var SNAP=null,HB=null,OG=[],OGC=null,curGame=null,view='all',mFilter='',BANK=3000,tab='genz',ogView='funded',ogSrc='current';
-var EXPECTED_SCHEMA=2;   // must match src/genz/engine.py SNAPSHOT_SCHEMA_VERSION
+var EXPECTED_SCHEMA=3;   // must match src/genz/engine.py SNAPSHOT_SCHEMA_VERSION
 function num(x){var n=parseFloat(x);return isNaN(n)?null:n;}
 function pct(x){return x==null?'-':(x*100).toFixed(1)+'%';}
 function money(x){return x==null?'-':'$'+Number(x).toLocaleString(undefined,{maximumFractionDigits:0});}
@@ -340,26 +340,37 @@ function ogCurrent(){   // DEFAULT — honest walked sizing from data/og_current
   var arbs=(OGC.arbs||[]).slice();
   arbs.forEach(function(a){a._shadow=ogShadowBooks(a);a._funded=a._shadow.length===0;});
   if(ogView==='funded')arbs=arbs.filter(function(a){return a._funded;});
-  arbs.sort(function(a,b){if(a._funded!==b._funded)return a._funded?-1:1;return (num(b.profit)||-1e9)-(num(a.profit)||-1e9);});
+  arbs.sort(function(a,b){
+    if(a._funded!==b._funded)return a._funded?-1:1;                 // funded first
+    if(!!a.fee_trap!==!!b.fee_trap)return a.fee_trap?1:-1;          // bettable before FEE>EDGE traps
+    return (num(b.profit)||-1e9)-(num(a.profit)||-1e9);
+  });
   var nF=arbs.filter(function(a){return a._funded;}).length,when=cyc?new Date(cyc).toLocaleTimeString():'—';
   cnt.textContent='CURRENT · cycle '+when+' · '+nF+' funded'+(ogView==='funded'?'':' + '+(arbs.length-nF)+' shadow');
   if(!arbs.length){body.innerHTML='<div class="empty">No '+(ogView==='funded'?'FUNDED ':'')+'OG arbs alive right now.'+(ogView==='funded'?'<br>Flip to <b>All</b> for shadow-book arbs.':'')+'</div>';return;}
-  var h='<table><thead><tr><th>Match</th><th>Market</th><th>Legs — $stake outcome @ book (fills)</th><th class="num">S</th><th class="num">ROI</th><th class="num">Profit</th><th class="num">Max stake</th></tr></thead><tbody>';
+  var h='<table><thead><tr><th>Match</th><th>Market</th><th>Legs — $stake outcome @ book (fills)</th><th class="num">S</th><th class="num">ROI</th><th class="num">Net %</th><th class="num">Fee %</th><th class="num">Profit</th><th class="num">Max stake</th><th>Status</th></tr></thead><tbody>';
   for(var i=0;i<arbs.length;i++){
-    var a=arbs[i],S=num(a.arb_sum_S),roi=num(a.roi_pct),prof=num(a.profit),tmax=num(a.t_max_honest);
+    var a=arbs[i],S=num(a.arb_sum_S),roi=num(a.roi_pct),net=num(a.net_roi_pct),fee=num(a.fee_pct),prof=num(a.profit),tmax=num(a.t_max_honest);
+    var trap=!!a.fee_trap;
     var badge=a._funded?'':' <span class="tag shadow">SHADOW: '+esc(a._shadow.join(', '))+'</span>';
-    var legs=(a.legs||[]).map(function(L){
+    var legs=trap?'<span class="bet none">gross only — fees exceed edge</span>':(a.legs||[]).map(function(L){
       var top=num(L.top_odds),avg=num(L.avg_fill_odds);
       var fills=(top!=null&&avg!=null&&Math.abs(avg-top)>=0.01)?' <span class="v">(fills '+avg.toFixed(2)+')</span>':'';
       return '$'+Math.round(num(L.stake)||0)+' '+esc(L.outcome||'?')+' @ '+esc(L.book||'?')+fills;
     }).join('  +  ');
-    h+='<tr class="'+(a._funded?'':'shadow')+'"><td class="mtype">'+esc(a.match||'')+badge+'</td>'
+    var netCell=(net!=null)?'<span class="net '+(net>0?'pos':'neg')+'">'+net.toFixed(2)+'%</span>':'-';
+    var feeCell=(fee!=null)?'<span class="fee">'+fee.toFixed(2)+'%</span>':'-';
+    var status=trap?'<span class="tag flag">FEE &gt; EDGE</span>':'<span class="tag would">bettable</span>';
+    h+='<tr class="'+(trap?'feetrap':(a._funded?'':'shadow'))+'"><td class="mtype">'+esc(a.match||'')+badge+'</td>'
       +'<td class="leg">'+esc(a.market||'')+'</td>'
       +'<td class="betline">'+legs+'</td>'
       +'<td class="num"><span class="sum '+(S!=null&&S<1?'arb':'no')+'">'+(S!=null?S.toFixed(4):'-')+'</span></td>'
       +'<td class="num"><span class="roi '+(roi>0?'pos':'neg')+'">'+(roi!=null?roi.toFixed(2)+'%':'-')+'</span></td>'
-      +'<td class="num prof">'+money2(prof)+'</td>'
-      +'<td class="num">'+money(tmax)+'</td></tr>';
+      +'<td class="num">'+netCell+'</td>'
+      +'<td class="num">'+feeCell+'</td>'
+      +'<td class="num prof">'+(trap?'-':money2(prof))+'</td>'
+      +'<td class="num">'+(trap?'-':money(tmax))+'</td>'
+      +'<td>'+status+'</td></tr>';
   }
   body.innerHTML=h+'</tbody></table>';
 }

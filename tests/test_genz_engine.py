@@ -708,3 +708,34 @@ def test_snapshot_row_carries_fill_curve():
         ("poly", "P_U", "BUY"): PricedVenue("poly", "P_U", 0.50, 0.50, 5000.0, ladder=[(0.50, 200)]),
     }
     assert eng._market_snapshot(market, flat)["fill_curve"] is None   # non-arb
+
+
+# --------------------------------------------------------------------------- #
+# POLYMARKET taker fee folded into the GenZ net fields (alongside the Kalshi fee)  #
+# --------------------------------------------------------------------------- #
+def test_poly_fee_folded_into_net_roi_btts_cross_venue():
+    """A cross-venue BTTS arb Kalshi 0.47 + Polymarket 0.51 with poly fees ENABLED (0.05): net_roi folds
+    BOTH taker fees -> ~ -2.2% (gross sub-1 but a NET loss)."""
+    from src.genz.engine import SideQuote
+    qk = SideQuote("kalshi", {}, 0.47, 47000.0, ladder=[(0.47, 100000)])
+    qp = SideQuote("polymarket", {"poly_fee_enabled": True, "poly_fee_rate": 0.05},
+                   0.51, 51000.0, ladder=[(0.51, 100000)])
+    sz = eng._sizing(qk, qp, 0.98)
+    assert -2.4 < sz["net_roi_pct"] < -2.0                      # ~ -2.24%
+    assert sz["fee_rate_pct"] > 0
+
+
+def test_poly_fee_disabled_equals_old_kalshi_only_behavior():
+    """poly_fee_enabled=false -> the poly leg's fee is 0, so net_roi is the OLD (Kalshi-only) value."""
+    from src.genz.engine import SideQuote
+    qk = SideQuote("kalshi", {}, 0.47, 47000.0, ladder=[(0.47, 100000)])
+    qp_off = SideQuote("polymarket", {"poly_fee_enabled": False}, 0.51, 51000.0, ladder=[(0.51, 100000)])
+    off = eng._sizing(qk, qp_off, 0.98)["net_roi_pct"]
+    old = round(((1 - eng._kalshi_fee_rate(0.47)) / 0.98 - 1) * 100, 4)    # Kalshi-only, pre-poly-fee
+    assert off == old
+
+
+def test_poly_leg_fee_rate_helper():
+    assert eng._poly_fee_rate(0.51, {"poly_fee_enabled": True, "poly_fee_rate": 0.05}) == 0.05 * 0.49
+    assert eng._poly_fee_rate(0.51, {"poly_fee_enabled": False}) == 0.0
+    assert eng._poly_fee_rate(0.51, None) == 0.0

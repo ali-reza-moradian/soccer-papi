@@ -233,6 +233,15 @@ def find_arbs(markets: list[Market], priced: dict[tuple, PricedVenue]) -> list[A
     return found
 
 
+def _arb_poly_fee_rate(c: ArbCandidate) -> float:
+    """The Polymarket taker rate to charge the executor for THIS arb (0 unless a poly leg's market has
+    fees enabled) — so the executor's net edge matches the engine's node-aware net_roi (exec parity)."""
+    for q in (c.quote_a, c.quote_b):
+        if q.venue == "polymarket" and q.node and q.node.get("poly_fee_enabled"):
+            return float(q.node.get("poly_fee_rate") or 0.0)
+    return 0.0
+
+
 def _arb_dict(c: ArbCandidate) -> dict[str, Any]:
     """Build the executor's arb-dict (two cross-venue legs) from a best-of-both candidate."""
     def leg(side_role: str, q: SideQuote) -> dict[str, Any]:
@@ -425,7 +434,7 @@ def run_cycle(tree: dict[str, Any], md: Any, gz_cfg: gz_config.GenzConfig,
         want_live = high_conf and exec_cfg.live_allowed and not attempted_trade
         result = exec_engine.execute_arb(
             _arb_dict(c), live=want_live, cfg=exec_cfg, market_data=md, kalshi=kalshi, poly=poly,
-            ledger=ledger, guard=guard, write_log=False, log=log)
+            ledger=ledger, guard=guard, write_log=False, poly_fee_rate=_arb_poly_fee_rate(c), log=log)
         if want_live:
             attempted_trade = True             # consumed the single per-cycle attempt
         survived = bool(result.arb_survived)
@@ -529,8 +538,9 @@ SNAPSHOT_REF_STAKE = 100.0            # reference TOTAL stake for the split/prof
 
 # Snapshot/heartbeat SCHEMA version — BUMP on ANY snapshot field change. The dashboard compares it to
 # its own expected value; a stale long-lived loop running old bytecode writes an old (or missing)
-# schema, which the panel turns into a loud "ENGINE RUNNING OLD CODE" banner. (v2: added fill_curve.)
-SNAPSHOT_SCHEMA_VERSION = 2
+# schema, which the panel turns into a loud "ENGINE RUNNING OLD CODE" banner. (v2: added fill_curve;
+# v3: Polymarket taker fee folded into net_roi_pct / fee_rate_pct / fill_curve.)
+SNAPSHOT_SCHEMA_VERSION = 3
 
 # Depth/stake fields are None for a non-arb (implied >= 1); the net fields below are computed for EVERY
 # priced row so the dashboard can sort all markets by net edge.
@@ -547,18 +557,41 @@ def _kalshi_fee_rate(price: float) -> float:
     return 0.07 * price * (1.0 - price)
 
 
+def _poly_fee_rate(price: float, node: Optional[dict]) -> float:
+    """The per-share Polymarket sports TAKER fee = rate·min(P,1−P) when the market has fees enabled, else
+    0. Confirmed to the cent against the live trade widget: the fee is charged in SHARES on payout (each
+    fee share forfeits $1 at settlement), so as a per-share cost it is exactly rate·min(P,1−P) — the
+    additive counterpart of the Kalshi fee. rate = the market's feeSchedule rate (persisted on the node
+    by the tree builder; default 0.05 when enabled but unspecified)."""
+    if node and node.get("poly_fee_enabled"):
+        return float(node.get("poly_fee_rate") or 0.0) * min(price, 1.0 - price)
+    return 0.0
+
+
+def _leg_fee_rate(price: float, venue: str, node: Optional[dict]) -> float:
+    """Per-share taker fee for one leg by venue: Kalshi 0.07·P·(1−P); Polymarket rate·min(P,1−P) (fee
+    schedule off the node); anything else 0."""
+    if venue == "kalshi":
+        return _kalshi_fee_rate(price)
+    if venue == "polymarket":
+        return _poly_fee_rate(price, node)
+    return 0.0
+
+
 _FILL_CURVE_MAX_POINTS = 25           # cap the snapshot fill-curve; merge the deepest tail levels if more
 
 
-def _walk_arb(ladder_a: list, ladder_b: list, venue_a: str, venue_b: str) -> list[dict[str, float]]:
+def _walk_arb(ladder_a: list, ladder_b: list, venue_a: str, venue_b: str,
+              node_a: Optional[dict] = None, node_b: Optional[dict] = None) -> list[dict[str, float]]:
     """The fee-aware lockstep walk as a CURVE. Buys EQUAL shares on each side (equal payout whichever
     outcome wins), stepping through both ascending ask ladders together, up to the MARGINAL boundary
-    where the next contract's combined price PLUS Kalshi taker fees (marginal_a + marginal_b + fee legs)
-    would reach $1 — beyond that a contract costs more than the $1 it can return. Emits ONE cumulative
-    breakpoint per consumed ladder segment: {stake_usd, shares, cost_a_usd, cost_b_usd, fee_usd,
-    profit_usd} (UNROUNDED; profit = shares − cost_a − cost_b − fee). Empty when not even the first
-    contract is profitable net of fees. This is the single source of truth for honest sizing at ANY
-    stake — prices RISE as the book is consumed, so profit does NOT scale linearly with stake."""
+    where the next contract's combined price PLUS BOTH venues' taker fees (marginal_a + marginal_b +
+    fee legs) would reach $1 — beyond that a contract costs more than the $1 it can return. Each leg
+    carries its OWN venue fee (Kalshi and/or Polymarket). Emits ONE cumulative breakpoint per consumed
+    ladder segment: {stake_usd, shares, cost_a_usd, cost_b_usd, fee_usd, profit_usd} (UNROUNDED; profit
+    = shares − cost_a − cost_b − fee). Empty when not even the first contract is profitable net of fees.
+    This is the single source of truth for honest sizing at ANY stake — prices RISE as the book is
+    consumed, so profit does NOT scale linearly with stake."""
     def _cum(ladder: list) -> list[tuple[float, float]]:
         out, c = [], 0.0
         for p, s in ladder:
@@ -567,7 +600,6 @@ def _walk_arb(ladder_a: list, ladder_b: list, venue_a: str, venue_b: str) -> lis
                 out.append((float(p), c))          # (price, cumulative size through this level)
         return out
 
-    a_kalshi, b_kalshi = venue_a == "kalshi", venue_b == "kalshi"
     ca, cb = _cum(ladder_a), _cum(ladder_b)
     ia = ib = 0
     n = cost_a = cost_b = fee = 0.0
@@ -575,8 +607,8 @@ def _walk_arb(ladder_a: list, ladder_b: list, venue_a: str, venue_b: str) -> lis
     while ia < len(ca) and ib < len(cb):
         pa, a_end = ca[ia]
         pb, b_end = cb[ib]
-        fa = _kalshi_fee_rate(pa) if a_kalshi else 0.0
-        fb = _kalshi_fee_rate(pb) if b_kalshi else 0.0
+        fa = _leg_fee_rate(pa, venue_a, node_a)
+        fb = _leg_fee_rate(pb, venue_b, node_b)
         if pa + pb + fa + fb >= 1.0:                # next contract no longer profitable NET of fees
             break
         nxt = min(a_end, b_end)                     # buy equal shares up to the next ladder step
@@ -596,11 +628,11 @@ def _walk_arb(ladder_a: list, ladder_b: list, venue_a: str, venue_b: str) -> lis
     return curve
 
 
-def _arb_max_fill(ladder_a: list, ladder_b: list, venue_a: str,
-                  venue_b: str) -> tuple[float, float, float, float]:
+def _arb_max_fill(ladder_a: list, ladder_b: list, venue_a: str, venue_b: str,
+                  node_a: Optional[dict] = None, node_b: Optional[dict] = None) -> tuple[float, float, float, float]:
     """(shares, cost_a, cost_b, fee_total) at the fee-adjusted stop boundary — the END of the lockstep
     walk (see _walk_arb). Zeros when no contract is profitable net of fees. Bounded by the thinner leg."""
-    curve = _walk_arb(ladder_a, ladder_b, venue_a, venue_b)
+    curve = _walk_arb(ladder_a, ladder_b, venue_a, venue_b, node_a, node_b)
     if not curve:
         return 0.0, 0.0, 0.0, 0.0
     last = curve[-1]
@@ -626,8 +658,8 @@ def _sizing(qa: SideQuote, qb: SideQuote, implied: float) -> dict[str, Any]:
     fill_curve — cumulative breakpoints so the dashboard can size at ANY stake with the true (rising)
     avg fill, never a linear scaling of the top-of-book. All curve/depth fields are None for a non-arb.
     Money rounded to cents; ladders reused (no re-fetch)."""
-    fee_a = _kalshi_fee_rate(qa.price) if qa.venue == "kalshi" else 0.0
-    fee_b = _kalshi_fee_rate(qb.price) if qb.venue == "kalshi" else 0.0
+    fee_a = _leg_fee_rate(qa.price, qa.venue, qa.node)   # Kalshi and/or Polymarket per-share taker fee
+    fee_b = _leg_fee_rate(qb.price, qb.venue, qb.node)
     out: dict[str, Any] = {k: None for k in _DEPTH_FIELDS}
     out["fill_curve"] = None
     if implied > 0:
@@ -637,7 +669,7 @@ def _sizing(qa: SideQuote, qb: SideQuote, implied: float) -> dict[str, Any]:
         out["fee_rate_pct"] = out["net_roi_pct"] = None
     if implied >= 1.0 or implied <= 0 or not qa.ladder or not qb.ladder:
         return out                                  # non-arb -> depth/stake/curve stay None
-    curve = _walk_arb(qa.ladder, qb.ladder, qa.venue, qb.venue)
+    curve = _walk_arb(qa.ladder, qb.ladder, qa.venue, qb.venue, qa.node, qb.node)
     if curve:
         last = curve[-1]
         shares, cost_a, cost_b, fee_total = (last["shares"], last["cost_a_usd"],

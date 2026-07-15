@@ -69,17 +69,16 @@ bookmakers:
   # are CONSERVATIVE DEFAULTS — adjust to your actual account tier. Applied via eff_odds in BOTH the
   # actionable and shadow universes, so observed exchange arbs are already net of commission.
   commission:
-    # FLAT APPROXIMATION of Kalshi's QUADRATIC taker fee. Real fee = ceil_to_cent(0.07 × C × P × (1−P))
-    # per contract, where P = price in dollars — highest near the 50¢ midpoint, tapering toward the
-    # extremes. A commission-on-net-winnings c adds ~c·P·(1−P) to a leg's implied cost, so setting
-    # c = 0.07 MATCHES the real 0.07·P·(1−P) fee curve. The old 0.03 under-charged it by HALF and minted
-    # phantom sub-1% Kalshi-leg alerts. Applied via eff_odds in BOTH the actionable and shadow universes.
-    kalshi: 0.07
-    polymarket: 0.0
+    # Kalshi and Polymarket are NO LONGER in this map — they now use EXACT per-share taker fees
+    # (kalshi 0.07·P·(1−P); polymarket poly_fee_rate·min(P,1−P)) via arbitrage.exchange_fee_rate, folded
+    # into the NET fields / og_current sizing. The books below keep the commission-on-net-winnings model.
     betfair-ex: 0.05      # adjustable — standard Betfair Exchange ~2-5%; conservative 5%
     betfair-spb: 0.05     # adjustable — Betfair Sportsbook-via-exchange; conservative 5%
     matchbook: 0.02       # adjustable — Matchbook ~1.5-2%; conservative 2%
     smarkets: 0.02        # adjustable — Smarkets ~2%; conservative 2%
+  # Polymarket sports TAKER fee rate (gamma feeSchedule.rate; verified live). Used by the exact exchange
+  # fee model for polymarket legs: fee_shares = poly_fee_rate·min(P,1−P)·shares (forfeited at settlement).
+  poly_fee_rate: 0.05
 
 theoddsapi:
   # Supplemental SECOND data source (the-odds-api.com, key in ODDS_API_KEY). Fills WC gaps OddsPapi

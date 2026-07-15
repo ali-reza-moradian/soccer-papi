@@ -62,6 +62,21 @@ class Leg:
     venue: Optional[dict] = None     # execution metadata (additive), copied from the Candidate
 
 
+DEFAULT_POLY_FEE_RATE = 0.05          # gamma feeSchedule.rate for Polymarket sports markets (verified)
+
+
+def exchange_fee_rate(book: str, price: float, poly_fee_rate: float = DEFAULT_POLY_FEE_RATE) -> float:
+    """Per-share taker fee for a prediction-market EXCHANGE leg at implied ``price`` (= 1/odds):
+    Kalshi 0.07*p*(1-p); Polymarket poly_fee_rate*min(p,1-p) (charged in shares on payout). Sportsbooks
+    and betting exchanges use the COMMISSION model (eff_odds) instead, so they return 0 here."""
+    p = min(max(float(price), 0.0), 1.0)
+    if book == "kalshi":
+        return 0.07 * p * (1.0 - p)
+    if book == "polymarket":
+        return poly_fee_rate * min(p, 1.0 - p)
+    return 0.0
+
+
 @dataclass
 class ArbResult:
     legs: list[Leg]
@@ -74,6 +89,11 @@ class ArbResult:
     involves_exchange: bool
     low_confidence: bool
     unverified_books: list[str] = field(default_factory=list)  # books whose limit was assumed
+    # NET-of-fees fields: S/ROI above are GROSS (raw odds; non-exchange commission in eff_odds), these
+    # subtract the exact prediction-market taker fees (Kalshi + Polymarket) on top.
+    net_fee_rate: float = 0.0          # Σ per-share exchange taker fee across legs
+    net_roi_decimal: float = 0.0       # ((1 - net_fee_rate)/S - 1)
+    net_max_profit: float = 0.0        # t_max * net_roi_decimal
 
     @property
     def is_arb(self) -> bool:
@@ -82,6 +102,10 @@ class ArbResult:
     @property
     def roi_pct(self) -> float:
         return self.roi_decimal * 100.0
+
+    @property
+    def net_roi_pct(self) -> float:
+        return self.net_roi_decimal * 100.0
 
 
 # --------------------------------------------------------------------------- #
@@ -141,7 +165,8 @@ def select_legs(outcomes: dict[int, list[Candidate]]) -> Optional[list[Candidate
 # --------------------------------------------------------------------------- #
 def compute_arb(candidates: list[Candidate], assumed_unknown_limit: float = 1000.0,
                 assumed_unknown_limit_by_book: Optional[dict[str, float]] = None,
-                low_confidence_limit_floor: float = 10.0) -> ArbResult:
+                low_confidence_limit_floor: float = 10.0,
+                poly_fee_rate: float = DEFAULT_POLY_FEE_RATE) -> ArbResult:
     """Compute the full arbitrage result for one chosen leg per outcome.
 
     UNKNOWN-LIMIT REALISM: a leg whose book reported no real stake limit is NOT treated as
@@ -160,6 +185,9 @@ def compute_arb(candidates: list[Candidate], assumed_unknown_limit: float = 1000
 
     S = sum(1.0 / c.eff_odds for c in candidates)
     roi = (1.0 / S) - 1.0
+    # NET of the exact prediction-market taker fees (Kalshi + Polymarket), applied on top of the gross S.
+    net_fee_rate = sum(exchange_fee_rate(c.book, 1.0 / c.eff_odds, poly_fee_rate) for c in candidates)
+    net_roi = (1.0 - net_fee_rate) / S - 1.0
 
     def _effective_limit(c: Candidate) -> tuple[float, bool]:
         """Return (limit used for sizing, unverified?). Real limit if reported, else assumed cap."""
@@ -211,6 +239,9 @@ def compute_arb(candidates: list[Candidate], assumed_unknown_limit: float = 1000
         involves_exchange=any(c.is_exchange for c in candidates),
         low_confidence=low_confidence,
         unverified_books=sorted({c.book for c, _, unv in sized if unv}),
+        net_fee_rate=net_fee_rate,
+        net_roi_decimal=net_roi,
+        net_max_profit=t_max * net_roi,
     )
 
 
@@ -229,6 +260,7 @@ def cap_total_investment(res: ArbResult, bankroll_total: float) -> ArbResult:
         leg.stake = round(leg.stake * factor, 2)
     res.t_max = float(bankroll_total)
     res.max_profit = res.t_max * res.roi_decimal
+    res.net_max_profit = res.t_max * res.net_roi_decimal
     return res
 
 

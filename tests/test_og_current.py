@@ -31,6 +31,7 @@ class _Cfg:
     def __init__(self, csv_path):
         self.csv_path = csv_path
         self.bankroll_total = 30000
+        self.poly_fee_rate = 0.05
 
     def threshold(self, key, default):
         return default

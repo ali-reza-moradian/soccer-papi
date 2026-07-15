@@ -247,6 +247,37 @@ def _poly_token_periods(events: list[dict]) -> dict[str, Optional[str]]:
     return out
 
 
+_POLY_FEE_DEFAULT_RATE = 0.05         # gamma feeSchedule.rate for sports markets (verified live)
+
+
+def _poly_market_fee(m: dict) -> dict[str, Any]:
+    """Per-market Polymarket taker-fee schedule from the gamma payload: {enabled, rate, taker_only}.
+    Older / non-sports markets carry feesEnabled false -> enabled False, rate 0. When enabled but the
+    rate is absent, default to 0.05 (the confirmed sports rate)."""
+    enabled = bool(m.get("feesEnabled"))
+    sched = m.get("feeSchedule") if isinstance(m.get("feeSchedule"), dict) else {}
+    rate = pm._num(sched.get("rate"))
+    if enabled and rate is None:
+        rate = _POLY_FEE_DEFAULT_RATE
+    taker_only = bool(sched.get("takerOnly") if "takerOnly" in sched else m.get("takerOnly"))
+    return {"enabled": enabled, "rate": float(rate or 0.0) if enabled else 0.0, "taker_only": taker_only}
+
+
+def _poly_token_fees(events: list[dict]) -> dict[str, dict[str, Any]]:
+    """clob_token_id -> fee schedule {enabled, rate, taker_only}. Both tokens of a binary market share
+    the market's fee schedule."""
+    out: dict[str, dict[str, Any]] = {}
+    for ev in events:
+        for m in ev.get("markets") or []:
+            if not isinstance(m, dict):
+                continue
+            fee = _poly_market_fee(m)
+            for tok in pm._as_list(m.get("clobTokenIds")):
+                if tok:
+                    out[str(tok)] = fee
+    return out
+
+
 # --------------------------------------------------------------------------- #
 # Kalshi side: enumerate all per-type series for the game                        #
 # --------------------------------------------------------------------------- #
@@ -410,6 +441,7 @@ def poly_options(series_events: list[dict], game: Game, log: Any = None) -> tupl
     failed: list[str] = []
     sibs = game_sibling_events(series_events, game)
     token_periods = _poly_token_periods(sibs)              # clob token -> settlement period (reg / full game)
+    token_fees = _poly_token_fees(sibs)                    # clob token -> taker-fee schedule
     for ev in sibs:
         slug = str(ev.get("slug") or "")
         try:
@@ -424,12 +456,15 @@ def poly_options(series_events: list[dict], game: Game, log: Any = None) -> tupl
         for outcome, token, poly_side in outs:
             if not token:
                 continue
+            fee = token_fees.get(str(token)) or {"enabled": False, "rate": 0.0, "taker_only": False}
             options.setdefault(outcome.twin_key(), {
                 "market_type": outcome.market_type, "market_key": outcome.group,
                 "side": outcome.side, "line": outcome.line, "kind": outcome.kind,
                 "confidence": outcome.confidence, "outcome_label": outcome.label or outcome.side,
                 "poly_token_id": str(token), "poly_side": poly_side,
                 "settle_period": token_periods.get(str(token)),
+                "poly_fee_enabled": fee["enabled"], "poly_fee_rate": fee["rate"],
+                "poly_fee_taker_only": fee["taker_only"],
             })
     return options, {"ok": ok, "failed": failed}
 
@@ -688,6 +723,9 @@ def join_game(k_opts: dict[str, dict], p_opts: dict[str, dict],
             "kalshi_ticker": k["kalshi_ticker"], "kalshi_side": k["kalshi_side"],
             "poly_token_id": p["poly_token_id"], "poly_side": p["poly_side"],
             "kalshi_period": kp, "poly_period": pp,
+            "poly_fee_enabled": p.get("poly_fee_enabled", False),
+            "poly_fee_rate": p.get("poly_fee_rate", 0.0),
+            "poly_fee_taker_only": p.get("poly_fee_taker_only", False),
         })
     unmatched: list[dict] = []
     mismatch_set = set(period_mismatch)

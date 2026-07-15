@@ -181,6 +181,7 @@ def execute_arb(arb: dict[str, Any], *, live: bool = False,
                 ledger: Optional[Ledger] = None, guard: Optional[Guardrails] = None,
                 confirm: Optional[Callable[[NormalizedArb, int], bool]] = None,
                 dryrun_log_path: Optional[str] = None, write_log: bool = True,
+                poly_fee_rate: float = fs.DEFAULT_POLY_FEE_RATE,
                 log: Any = None) -> ExecResult:
     """Dry-run by default. See module docstring for the live preconditions.
 
@@ -220,7 +221,8 @@ def execute_arb(arb: dict[str, Any], *, live: bool = False,
 
     # Walk every book at the intended size -> realized fill prices + edge after costs (all N legs).
     walks = [fs.walk_book(ladder, size) for ladder in ladders]
-    edge = fs.edge_after_costs_n(size, [(leg.venue, w.avg_price) for leg, w in zip(narb.legs, walks)])
+    edge = fs.edge_after_costs_n(size, [(leg.venue, w.avg_price) for leg, w in zip(narb.legs, walks)],
+                                 poly_fee_rate)
 
     if not live:
         return _do_dryrun(narb, ladders, walks, size, edge, dryrun_log_path, log, write_log)

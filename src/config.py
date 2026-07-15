@@ -122,6 +122,11 @@ class Config:
         return {k: float(v) for k, v in (self.get("bookmakers", "commission", default={}) or {}).items()}
 
     @property
+    def poly_fee_rate(self) -> float:
+        """Polymarket sports taker-fee rate for the exact exchange-fee model (default 0.05)."""
+        return float(self.get("bookmakers", "poly_fee_rate", default=0.05) or 0.05)
+
+    @property
     def pinned_tournament_ids(self) -> list[int]:
         return [int(x) for x in (self.get("tournaments", "pinned_ids", default=[]) or [])]
 

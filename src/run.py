@@ -58,6 +58,8 @@ class EngineCtx:
     assumed_unknown_limit_by_book: dict[str, float] = field(default_factory=dict)
     # Hard cap on total money staked across all legs of one arb (0 => no cap). Applied AFTER sizing.
     bankroll_total: float = 0.0
+    # Polymarket sports taker-fee rate for the exact exchange-fee model (kalshi/poly legs).
+    poly_fee_rate: float = 0.05
     # Time-to-kickoff-aware staleness (replaces a single flat max age): soft books hold steady
     # pre-match lines for hours, so the max allowed leg age scales with how far off kickoff is.
     # See max_leg_age_for(). All ages are minutes; horizons are hours.
@@ -186,7 +188,7 @@ def _arb_for_universe(
     if not chosen:
         return None
     res = compute_arb(chosen, ctx.assumed_unknown_limit, ctx.assumed_unknown_limit_by_book,
-                      ctx.low_confidence_limit_floor)
+                      ctx.low_confidence_limit_floor, ctx.poly_fee_rate)
     return cap_total_investment(res, ctx.bankroll_total)
 
 
@@ -948,6 +950,7 @@ def run_cycle(cfg: Config, log) -> int:
         assumed_unknown_limit=cfg.assumed_unknown_limit,
         assumed_unknown_limit_by_book=cfg.assumed_unknown_limit_by_book,
         bankroll_total=cfg.bankroll_total,
+        poly_fee_rate=cfg.poly_fee_rate,
         # Time-to-kickoff-aware staleness tiers (relaxed pre-match; tight inside the final hour).
         max_leg_age_far=float(cfg.threshold("max_leg_age_far_minutes", 360)),
         max_leg_age_mid=float(cfg.threshold("max_leg_age_mid_minutes", 60)),
@@ -1345,8 +1348,12 @@ def _og_leg_specs(opp: Opportunity, poly_client, kalshi_client, log) -> list[dic
     for leg in opp.res.legs:
         v = leg.venue or {}
         venue, vid, vside = v.get("venue"), v.get("venue_id"), v.get("venue_side")
+        # Fixed (non prediction-market) legs carry commission via eff_odds; exchange legs are gross
+        # (kalshi/poly commission removed) and priced by their exact per-share fee below.
         spec: dict[str, Any] = {"outcome": _outcome(opp, leg.outcome_name), "book": leg.book,
-                                "top_odds": leg.decimal_odds, "limit": leg.effective_limit}
+                                "top_odds": leg.eff_odds, "limit": leg.effective_limit}
+        if leg.book in ("kalshi", "polymarket"):
+            spec["fee_book"] = leg.book                # exact per-share taker fee in the walk
         ladder = None
         try:
             if venue == "polymarket" and vid and poly_client is not None:
@@ -1385,9 +1392,20 @@ def _write_og_current(opportunities, cfg: Config, now, log) -> None:
     arbs: list[dict[str, Any]] = []
     for opp in opportunities:
         market = fmt.market_label(opp.spec.label, opp.spec.family, opp.spec.line)
+        base = {"match": opp.match, "market": market, "fixture_id": opp.fixture_id,
+                "kickoff_et": fmt.iso_local(opp.kickoff_utc), "roi_pct": round(opp.res.roi_pct, 2),
+                "arb_sum_S": round(opp.res.arb_sum_S, 6), "net_roi_pct": round(opp.res.net_roi_pct, 4),
+                "fee_pct": round(opp.res.net_fee_rate * 100.0, 4), "actionable": opp.actionable,
+                "shadow_books": opp.shadow_books}
+        # GROSS-positive but the exact taker fees eat the edge -> a FEE > EDGE trap. Show it (amber), but
+        # never size a bet on it.
+        if opp.res.net_roi_pct <= 0:
+            base.update({"fee_trap": True, "total_stake": 0.0, "t_max_honest": 0.0, "profit": None, "legs": []})
+            arbs.append(base)
+            continue
         try:
             h = og_sizing.honest_size(_og_leg_specs(opp, poly_client, kalshi_client, log),
-                                      bankroll_cap=cfg.bankroll_total)
+                                      bankroll_cap=cfg.bankroll_total, poly_fee_rate=cfg.poly_fee_rate)
         except Exception as exc:  # noqa: BLE001 - per-arb sizing must never break the run
             log.info("[OG] og_current sizing failed for %s (%s) — skipped.", opp.match, exc)
             continue
@@ -1395,16 +1413,14 @@ def _write_og_current(opportunities, cfg: Config, now, log) -> None:
             log.info("[OG] %s %s survives only to $%.0f — below floor",
                      opp.match, market, 0.0 if h is None else h.t_max_honest)
             continue
-        arbs.append({
-            "match": opp.match, "market": market, "fixture_id": opp.fixture_id,
-            "kickoff_et": fmt.iso_local(opp.kickoff_utc), "roi_pct": round(opp.res.roi_pct, 2),
-            "arb_sum_S": round(opp.res.arb_sum_S, 6), "actionable": opp.actionable,
-            "shadow_books": opp.shadow_books, "total_stake": h.total_stake,
-            "t_max_honest": h.t_max_honest, "profit": h.profit,
+        base.update({
+            "fee_trap": False, "total_stake": h.total_stake, "t_max_honest": h.t_max_honest,
+            "profit": h.profit,
             "legs": [{"outcome": lg.outcome, "book": lg.book, "top_odds": lg.top_odds,
                       "avg_fill_odds": lg.avg_fill_odds, "stake": lg.stake, "payout": lg.payout}
                      for lg in h.legs],
         })
+        arbs.append(base)
     payload = {"cycle_utc": now.strftime("%Y-%m-%dT%H:%M:%SZ"), "scan_interval_s": interval, "arbs": arbs}
     try:
         os.makedirs(os.path.dirname(path) or ".", exist_ok=True)

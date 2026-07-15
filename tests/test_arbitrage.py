@@ -240,3 +240,33 @@ def test_signature_is_stable_and_order_independent():
     s1 = make_signature("fx1", 106, 2.5, r1.legs)
     s2 = make_signature("fx1", 106, 2.5, r2.legs)
     assert s1 == s2
+
+
+def test_all_poly_3way_net_negative_from_taker_fee():
+    """A 3-way all-Polymarket moneyline (S=0.989, GROSS-positive) is NET-NEGATIVE once the sports taker
+    fee (0.05*min(p,1-p) per leg) is applied: net_roi ~ -3.8% (gross-positive / net-negative)."""
+    legs = [_cand(1, "H", "polymarket", 1 / 0.36, limit=100000, is_exchange=True),
+            _cand(2, "X", "polymarket", 1 / 0.316, limit=100000, is_exchange=True),
+            _cand(3, "A", "polymarket", 1 / 0.3125, limit=100000, is_exchange=True)]
+    res = compute_arb(legs)
+    assert math.isclose(res.arb_sum_S, 0.9885, abs_tol=1e-3) and res.roi_pct > 0   # gross sub-1
+    assert math.isclose(res.net_roi_pct, -3.84, abs_tol=0.05)                      # NET ~ -3.8%
+
+
+def test_kalshi_poly_exact_fees_not_commission():
+    """Kalshi is no longer in the commission map — its net fee is the exact 0.07*p*(1-p); Polymarket is
+    0.05*min(p,1-p). A cross-venue btts K0.47 + P0.51 (S=0.98, gross-positive) -> net ~ -2.2%."""
+    res = compute_arb([_cand(1, "Yes", "kalshi", 1 / 0.47, limit=100000, is_exchange=True),
+                       _cand(2, "No", "polymarket", 1 / 0.51, limit=100000, is_exchange=True)])
+    assert math.isclose(res.arb_sum_S, 0.98, abs_tol=1e-6) and res.roi_pct > 0
+    assert math.isclose(res.net_roi_pct, -2.24, abs_tol=0.05)
+
+
+def test_poly_fee_rate_zero_leaves_gross_untouched():
+    """poly_fee_rate=0 (fees disabled) -> net == gross (the pre-fee behavior)."""
+    legs = [_cand(1, "H", "polymarket", 1 / 0.36, limit=100000, is_exchange=True),
+            _cand(2, "X", "polymarket", 1 / 0.316, limit=100000, is_exchange=True),
+            _cand(3, "A", "polymarket", 1 / 0.3125, limit=100000, is_exchange=True)]
+    res = compute_arb(legs, poly_fee_rate=0.0)
+    assert res.net_fee_rate == 0.0
+    assert math.isclose(res.net_roi_decimal, res.roi_decimal, abs_tol=1e-12)

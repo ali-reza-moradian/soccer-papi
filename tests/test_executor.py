@@ -309,7 +309,23 @@ def test_kalshi_fee_official_formula():
     assert fees_sizing.kalshi_fee_cents(100, 0.50) == 175      # exact $1.75, no float bump
     assert fees_sizing.kalshi_fee_usd(100, 0.50) == pytest.approx(1.75)
     assert fees_sizing.kalshi_fee_cents(0, 0.5) == 0
-    assert fees_sizing.poly_fee_usd(123.0) == 0.0
+
+
+def test_poly_taker_fee_five_live_anchors():
+    """The five CONFIRMED live trade-widget quotes: net payout = shares - rate*min(p,1-p)*shares, to the
+    cent. poly_fee_usd returns the fee in $ (fee shares x $1)."""
+    def net_payout(stake, price):
+        shares = stake / price
+        return shares - fees_sizing.poly_fee_usd(shares, price)   # rate default 0.05
+    assert net_payout(100, 0.51) == pytest.approx(191.27, abs=0.01)      # yes@0.51 $100
+    assert net_payout(3000, 0.51) == pytest.approx(5738.24, abs=0.01)    # yes@0.51 $3000
+    assert net_payout(100, 0.50) == pytest.approx(195.00, abs=0.01)      # no@0.50 $100
+    assert net_payout(3000, 0.50) == pytest.approx(5850.00, abs=0.01)    # no@0.50 $3000
+    # over walked-avg $3000 -> 3345.08; 0.8920 is a 4-dp display of ~0.891996, so allow the sub-cent
+    # price-rounding slack (the exact-price legs above pin the formula to the cent).
+    assert net_payout(3000, 0.8920) == pytest.approx(3345.08, abs=0.02)
+    assert fees_sizing.poly_fee_usd(0, 0.5) == 0.0                       # no shares -> no fee
+    assert fees_sizing.poly_fee_usd(200, 0.5, rate=0.0) == 0.0           # fees disabled -> 0
 
 
 def test_marketable_limit_clamps_and_crosses():
