@@ -139,6 +139,36 @@ def test_reprice_resets_queue():
     assert m.consume_print(REF, 0.45, 100, ts=3.0) == []        # 100 < 250 -> still no fill (reset held)
 
 
+def test_same_price_rearm_does_not_double_count_trades():
+    """REGRESSION: a same-price re-arm (a >=1-tick floor move that rounds to the same quote) must NOT
+    reset queue_ahead to the currently-displayed size — the prints that shrank the display are already
+    in cumulative_at_price, so doing so double-counts them and fills ~2x early (breaks the lower bound).
+    Here: arm(q=100, size=50); a 60 print (no fill); re-arm same price with displayed=40; a 30 print
+    (cum 90) MUST NOT fill; a further 60 (cum 150) fills."""
+    m = ShadowFillModel()
+    key = ("g", "mk", "over", "rest-poly")
+    m.arm(key, REF, 0.46, 50, queue_ahead=100, at_best=True, ts=0.0)
+    assert m.consume_print(REF, 0.46, 60, ts=1.0) == []          # cum 60 < 150
+    m.arm(key, REF, 0.46, 50, queue_ahead=40, at_best=True, ts=2.0)   # RE-ARM same price, display shrank
+    assert m.quotes[key].queue_ahead == 100                      # original queue preserved (not 40)
+    assert m.consume_print(REF, 0.46, 30, ts=3.0) == []          # cum 90 < 150 -> NO fill (old code fills)
+    fills = m.consume_print(REF, 0.46, 60, ts=4.0)               # cum 150 >= 100+50 -> fill
+    assert len(fills) == 1 and fills[0].trigger == "queue_consumed"
+
+
+def test_same_price_rearm_credits_cancels_ahead():
+    """A same-price re-arm where the display shrank with NO prints = cancels ahead of us -> credit them
+    once (queue_ahead drops), so we fill sooner. arm(q=100, size=50); no prints; re-arm displayed=30
+    (70 canceled ahead) -> queue_ahead=30; an 80 print (30 ahead + our 50) fills."""
+    m = ShadowFillModel()
+    key = ("g", "mk", "over", "rest-poly")
+    m.arm(key, REF, 0.46, 50, queue_ahead=100, at_best=True, ts=0.0)
+    m.arm(key, REF, 0.46, 50, queue_ahead=30, at_best=True, ts=1.0)   # 70 canceled ahead (no prints)
+    assert m.quotes[key].queue_ahead == 30                       # cancels credited
+    fills = m.consume_print(REF, 0.46, 80, ts=2.0)               # cum 80 >= 30+50 -> fill
+    assert len(fills) == 1 and fills[0].trigger == "queue_consumed"
+
+
 def test_print_only_fills_same_book():
     m = ShadowFillModel()
     m.arm(("g", "mk", "over", "rest-poly"), REF, 0.46, 50, queue_ahead=0, at_best=True, ts=0.0)

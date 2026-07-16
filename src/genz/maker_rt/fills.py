@@ -55,8 +55,15 @@ class ShadowFillModel:
         """Place OR reprice a shadow quote. A changed price/queue RESETS the consumed-so-far counter."""
         prev = self.quotes.get(key)
         if prev is not None and abs(prev.quote_price - quote_price) < _EPS and prev.rest_ref == rest_ref:
-            # same price -> keep the queue progress but refresh the displayed queue if it shrank
-            prev.queue_ahead = queue_ahead
+            # Same price (e.g. a >=1-tick FLOOR move that rounds to the same quote): keep the queue
+            # progress. INVARIANT: queue_ahead always holds the ORIGINAL-queue estimate. The prints that
+            # shrank the current display are ALREADY in cumulative_at_price, so we must NOT overwrite
+            # queue_ahead with the displayed size (that double-counts those trades and fills ~2x early).
+            # displayed_now + printed_since_join (= queue_ahead + prev.cumulative_at_price) is an upper
+            # bound on the original queue NET OF CANCELS, so take the min: cancels ahead are credited
+            # once (queue shrinks -> more conservative), trades are never re-counted, and a join behind
+            # us can only ever leave the estimate unchanged (never less conservative).
+            prev.queue_ahead = min(prev.queue_ahead, queue_ahead + prev.cumulative_at_price)
             prev.size = size
             prev.at_best = at_best
             prev.hedge_ctx = hedge_ctx or prev.hedge_ctx
