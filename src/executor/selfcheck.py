@@ -101,10 +101,14 @@ def run_selfcheck(*, cfg: Optional[exec_config.ExecConfig] = None,
                           dryrun_log_path=dpath, log=log)
         results.append(res)
 
-    # Two synthetic ledger rows so the ledger panel renders both a clean fill and an unwind.
+    # Two synthetic ledger rows so the ledger panel renders both a clean fill and an unwind. EXPLICIT,
+    # distinct trade_ids: the auto-generated id is f"T{int(time.time()*1000)}", so two append_submit
+    # calls in the same millisecond would collide and the second update() would overwrite the first
+    # row (dropping the 'filled' status). Pinning the ids makes the pair order/timing-independent.
     led = Ledger(lpath)
     tid_ok = led.append_submit({
-        "fingerprint": FP_PREFIX + "filled", "fixture": "[SELFCHECK] Alpha vs Beta",
+        "trade_id": FP_PREFIX + "filled", "fingerprint": FP_PREFIX + "filled",
+        "fixture": "[SELFCHECK] Alpha vs Beta",
         "market": "Both Teams To Score", "n_legs": 2, "intended_size": 80,
         "kalshi_ticker": "SC-K-BTTS-YES", "kalshi_side": "YES", "poly_token": "SC-P-BTTS-NO",
         "poly_side": "BUY", "modeled_edge_pct": 5.0, "status": "submitted", "note": "selfcheck sample",
@@ -114,7 +118,8 @@ def run_selfcheck(*, cfg: Optional[exec_config.ExecConfig] = None,
                residual_shares=0, unhedged_kalshi=0, unhedged_poly=0, realized_pnl=4.0,
                note="selfcheck sample: clean hedge")
     tid_uw = led.append_submit({
-        "fingerprint": FP_PREFIX + "unwind", "fixture": "[SELFCHECK] Gamma vs Delta",
+        "trade_id": FP_PREFIX + "unwind", "fingerprint": FP_PREFIX + "unwind",
+        "fixture": "[SELFCHECK] Gamma vs Delta",
         "market": "Full Time Result", "n_legs": 3, "intended_size": 80,
         "kalshi_ticker": "SC-K-HOME", "kalshi_side": "YES", "poly_token": "SC-P-AWAY",
         "poly_side": "BUY", "modeled_edge_pct": 6.0, "status": "submitted", "note": "selfcheck sample",

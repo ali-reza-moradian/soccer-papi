@@ -287,8 +287,19 @@ def _game_started(market: Market, now: datetime) -> bool:
 
 # O/U totals families. A same-line/period Over+Under MUST sum to ~1.0 (like corners); a cross-venue
 # best-of-both that sums well below 1 means the two legs are NOT the same outcome (a period/line
-# mispairing), not a real arb. Corners and spread are verified correct and are NOT gated here.
+# mispairing), not a real arb. Kept only as a FALLBACK for legacy nodes that carry no numeric line —
+# is_totals_node() below is the primary, FAMILY-driven test (so MLB total_runs is guarded like soccer
+# totals without hard-coding its market_type name).
 _TOTAL_FAMILIES = frozenset({"total_goals", "1h_total", "2h_total", "team_total"})
+
+
+def is_totals_node(market: "Market") -> bool:
+    """True if a market is a TOTALS family (Over/Under on a numeric line) — regardless of the
+    market_type string, so soccer total_goals/1h_total/… AND MLB total_runs are all caught. Falls back
+    to the legacy _TOTAL_FAMILIES name set for a node that carries no line."""
+    if set(market.sides) == {"over", "under"} and market.line is not None:
+        return True
+    return market.market_type in _TOTAL_FAMILIES
 
 
 def _period_disagrees(market: Market) -> bool:
@@ -445,7 +456,7 @@ def run_cycle(tree: dict[str, Any], md: Any, gz_cfg: gz_config.GenzConfig,
         # TOTALS COMPLEMENTARITY GUARD: a same-line/period Over+Under must sum to ~1.0 (like corners).
         # A totals O/U node summing below min_total_implied is a period/line MISPAIRING (the two legs
         # are not the same outcome), NOT a real arb — reject it so the phantom can never auto-trade.
-        if m.market_type in _TOTAL_FAMILIES and c.implied_cost < gz_cfg.min_total_implied:
+        if is_totals_node(m) and c.implied_cost < gz_cfg.min_total_implied:
             if log:
                 log.warning("[GENZ] REJECTED totals mispairing %s %s: over+under=%.4f < %.2f — legs not "
                             "complementary (period/line mismatch).",
@@ -515,7 +526,7 @@ def debug_gate(tree: dict[str, Any], *, now: Optional[datetime] = None, md: Any 
     if md is None:
         return
     cfg = gz_cfg or gz_config.load_genz_config()
-    totals = [m for m in collect_markets(tree) if m.market_type in _TOTAL_FAMILIES]
+    totals = [m for m in collect_markets(tree) if is_totals_node(m)]
     priced = price_markets(md, totals, cfg)
     for m in totals:
         out(f"[TOTALS] {m.game} {m.market_key} (line={m.line}):")

@@ -196,9 +196,30 @@ def _fee(rate=0.05):
     return {"feesEnabled": True, "feeSchedule": {"rate": rate}}
 
 
-def _pm_mkt(git, outcomes, tokens, desc):
-    d = {"groupItemTitle": git, "question": git, "outcomes": outcomes, "clobTokenIds": tokens,
-         "description": desc}
+# REAL-shaped Poly MLB markets (verified live 2026-07): moneyline groupItemTitle is null + the
+# question is '<away> vs. <home>'; a full-game total is groupItemTitle 'O/U 8.5' + question
+# '<away> vs. <home>: O/U 8.5'. The identity gate keys on exactly these fields.
+_MLB_TEAMS_TITLE = "New York Mets vs. Philadelphia Phillies"
+
+
+def _slug_line(line):
+    return str(line).replace(".", "pt")
+
+
+def _pm_ml(tokens=("tok_nym", "tok_phi")):
+    d = {"groupItemTitle": None, "question": _MLB_TEAMS_TITLE,
+         "outcomes": ["New York Mets", "Philadelphia Phillies"], "clobTokenIds": list(tokens),
+         "slug": "mlb-nym-phi-2026-07-16", "description": "moneyline"}
+    d.update(_fee())
+    return d
+
+
+def _pm_total(line, over_tok, under_tok, desc, *, f5=False):
+    frag = f"1st 5 Innings O/U {line}" if f5 else f"O/U {line}"
+    slugpart = ("f5-total-" if f5 else "total-") + _slug_line(line)
+    d = {"groupItemTitle": frag, "question": f"{_MLB_TEAMS_TITLE}: {frag}",
+         "outcomes": ["Over", "Under"], "clobTokenIds": [over_tok, under_tok],
+         "slug": f"mlb-nym-phi-2026-07-16-{slugpart}", "description": desc}
     d.update(_fee())
     return d
 
@@ -207,11 +228,9 @@ _POLY_MLB_EVENT = {
     "slug": "mlb-nym-phi-2026-07-16", "startTime": "2026-07-16T23:10:00Z",
     "title": "New York Mets vs. Philadelphia Phillies",
     "markets": [
-        _pm_mkt("New York Mets vs. Philadelphia Phillies", ["New York Mets", "Philadelphia Phillies"],
-                ["tok_nym", "tok_phi"], "moneyline"),
-        _pm_mkt("O/U 8.5", ["Over", "Under"], ["o85", "u85"],
-                "resolves on the official final statistics of the event"),   # official_result
-        _pm_mkt("O/U 10.5", ["Over", "Under"], ["o105", "u105"], "official final statistics"),  # poly-only line
+        _pm_ml(),
+        _pm_total(8.5, "o85", "u85", "resolves on the official final statistics of the event"),  # official
+        _pm_total(10.5, "o105", "u105", "official final statistics"),   # full-game, poly-only line
     ],
 }
 
@@ -317,3 +336,128 @@ def test_mlb_snapshot_carries_sport_and_settlement_risk():
     g = snap["games"][_MLB_SUF]
     tr = next(m for m in g["markets"] if m["market_type"] == "total_runs")
     assert tr["settlement_risk"] == "mlb_rain_rule" and tr["settlement_texts"] is not None
+
+
+# -- IDENTITY BEFORE SHAPE: exclude F5/run-line/NRFI sub-markets; keep ML + full-game totals --------- #
+class _CaptureLog:
+    def __init__(self):
+        self.infos, self.warnings = [], []
+
+    def info(self, fmt, *a):
+        self.infos.append(fmt % a if a else fmt)
+
+    def warning(self, fmt, *a):
+        self.warnings.append(fmt % a if a else fmt)
+
+
+def _mlb_game_nym_phi():
+    return M.MLBGame("26JUL161910NYMPHI", "26JUL161910NYMPHI", "2026-07-16", "NYM", "PHI",
+                     "New York Mets", "Philadelphia Phillies", "2026-07-16T23:10:00Z")
+
+
+def _mk_market(git, question, outcomes, tokens, slug):
+    d = {"groupItemTitle": git, "question": question, "outcomes": outcomes, "clobTokenIds": tokens,
+         "slug": slug, "description": ""}
+    d.update(_fee())
+    return d
+
+
+def test_poly_identity_keeps_ml_and_full_game_totals_excludes_the_rest():
+    """A real-shaped Poly game event (ML + full-game totals + F5 totals + a 3-outcome F5 moneyline +
+    run-line spread + NRFI): ONLY the moneyline (ml2 x2) and the full-game totals survive; every
+    F5/spread/NRFI sub-market is excluded and logged."""
+    game = _mlb_game_nym_phi()
+    base = "mlb-nym-phi-2026-07-16"
+    event = {"markets": [
+        _mk_market(None, _MLB_TEAMS_TITLE, ["New York Mets", "Philadelphia Phillies"],
+                   ["ml_a", "ml_h"], base),                                              # moneyline
+        _pm_total(8.5, "o85", "u85", "official final statistics"),                        # full-game total
+        _pm_total(9.5, "o95", "u95", "official final statistics"),                        # full-game total
+        _pm_total(3.5, "f5o", "f5u", "by the conclusion of the 5th inning", f5=True),     # F5 total -> excluded
+        _mk_market("1st 5 Innings", f"1st 5 Innings Moneyline: {_MLB_TEAMS_TITLE}",       # F5 ML (3-way) -> excluded
+                   ["New York Mets", "Tie", "Philadelphia Phillies"], ["f5a", "f5t", "f5h"],
+                   f"{base}-f5-moneyline"),
+        _mk_market("Spread -1.5", "Spread: Philadelphia Phillies (-1.5)",                 # run line -> excluded
+                   ["Philadelphia Phillies", "New York Mets"], ["sp_h", "sp_a"], f"{base}-spread-home-1pt5"),
+        _mk_market("NRFI", f"Will there be a run scored in the first inning?: {_MLB_TEAMS_TITLE}",
+                   ["Yes", "No"], ["nr_y", "nr_n"], f"{base}-nrfi"),                       # NRFI -> excluded
+    ]}
+    log = _CaptureLog()
+    opts = M.poly_mlb_options(event, game, log=log, game_id=game.game_id)
+    assert set(opts) == {"ml2|away", "ml2|home",
+                         "total_runs|8.5|over", "total_runs|8.5|under",
+                         "total_runs|9.5|over", "total_runs|9.5|under"}
+    assert opts["ml2|away"]["poly_token_id"] == "ml_a" and opts["ml2|home"]["poly_token_id"] == "ml_h"
+    assert opts["total_runs|8.5|over"]["poly_token_id"] == "o85"
+    # the surviving totals still carry the gamma fee plumbing
+    assert opts["total_runs|9.5|over"]["poly_fee_rate"] == 0.05 and opts["total_runs|9.5|over"]["poly_fee_enabled"]
+    excluded = "\n".join(log.infos)
+    assert "excluded sub-market" in excluded
+    assert any("1st 5" in r for r in log.infos)          # F5 total + F5 ML
+    assert any("Spread" in r for r in log.infos)          # run line
+    assert any("NRFI" in r.upper() for r in log.infos)    # NRFI
+
+
+def test_poly_identity_collision_drops_ambiguous_line():
+    """Two surviving full-game markets that map to the SAME line are ambiguous — the whole key is
+    dropped (never guessed) with a WARNING; other lines are unaffected."""
+    game = _mlb_game_nym_phi()
+    event = {"markets": [
+        _pm_total(8.5, "a_o", "a_u", "official final statistics"),
+        _pm_total(8.5, "b_o", "b_u", "official final statistics"),   # duplicate line -> collision
+        _pm_total(9.5, "c_o", "c_u", "official final statistics"),   # unique -> survives
+    ]}
+    log = _CaptureLog()
+    opts = M.poly_mlb_options(event, game, log=log, game_id="26JUL161910NYMPHI")
+    assert "total_runs|8.5|over" not in opts and "total_runs|8.5|under" not in opts
+    assert "total_runs|9.5|over" in opts and "total_runs|9.5|under" in opts
+    assert any("collision" in w.lower() for w in log.warnings)
+
+
+# -- DOUBLEHEADER explicit slug order (G1 base-first, G2 dh2-first) --------------------------------- #
+def test_dh_slug_order_g1_base_first_g2_dh2_first():
+    ev_base = {"slug": "mlb-tb-bos-2026-07-17", "startTime": "2026-07-17T17:35:00Z",
+               "title": "Tampa Bay Rays vs. Boston Red Sox", "markets": []}
+    ev_dh2 = {"slug": "mlb-tb-bos-2026-07-17-dh2", "startTime": "2026-07-17T23:10:00Z",
+              "title": "Tampa Bay Rays vs. Boston Red Sox", "markets": []}
+
+    class _P:
+        def __init__(self):
+            self.tried = []
+
+        def events_by_slug(self, slug):
+            self.tried.append(slug)
+            if slug == ev_base["slug"]:
+                return [ev_base]
+            if slug == ev_dh2["slug"]:
+                return [ev_dh2]
+            return []
+
+    g1 = M.MLBGame("26JUL171335TBBOSG1", "26JUL171335TBBOSG1", "2026-07-17", "TB", "BOS",
+                   "Tampa Bay Rays", "Boston Red Sox", "2026-07-17T17:35:00Z", dh="G1")
+    p1 = _P()
+    assert M.resolve_poly_event(g1, [], {}, p1, log=_CaptureLog()) is ev_base
+    assert p1.tried[0] == "mlb-tb-bos-2026-07-17"                     # G1 tries base FIRST
+
+    g2 = M.MLBGame("26JUL171910TBBOSG2", "26JUL171910TBBOSG2", "2026-07-17", "TB", "BOS",
+                   "Tampa Bay Rays", "Boston Red Sox", "2026-07-17T23:10:00Z", dh="G2")
+    p2 = _P()
+    assert M.resolve_poly_event(g2, [], {}, p2, log=_CaptureLog()) is ev_dh2
+    assert p2.tried[0] == "mlb-tb-bos-2026-07-17-dh2"                 # G2 tries -dh2 FIRST
+
+
+def test_dh_logs_accepted_and_refused_per_candidate():
+    """Every DH game logs a '[MLB][DH] ... (accepted|refused Δmin=<n>)' line for each candidate slug."""
+    ev = {"slug": "mlb-tb-bos-2026-07-17", "startTime": "2026-07-17T23:10:00Z",
+          "title": "Tampa Bay Rays vs. Boston Red Sox", "markets": []}
+
+    class _P:
+        def events_by_slug(self, slug):
+            return [ev]                      # every candidate resolves to the same event
+
+    g1 = M.MLBGame("26JUL171335TBBOSG1", "26JUL171335TBBOSG1", "2026-07-17", "TB", "BOS",
+                   "Tampa Bay Rays", "Boston Red Sox", "2026-07-17T17:35:00Z", dh="G1")
+    log = _CaptureLog()
+    assert M.resolve_poly_event(g1, [], {}, _P(), log=log) is None    # 17:35 vs 23:10 -> refused both
+    dh_lines = [r for r in log.infos if "[MLB][DH]" in r]
+    assert dh_lines and all("refused" in r and "Δmin=" in r for r in dh_lines)

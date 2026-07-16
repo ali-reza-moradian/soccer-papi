@@ -337,17 +337,40 @@ def _within_90min(poly_start: Optional[str], kalshi_utc: str) -> bool:
     return a is not None and b is not None and abs(a - b) <= 90 * 60
 
 
+def _delta_min(poly_start: Optional[str], kalshi_utc: str) -> Any:
+    """|poly_start - kalshi first pitch| in whole minutes (for the DH accept/refuse log), or '?'."""
+    a, b = _parse_iso(poly_start), _parse_iso(kalshi_utc)
+    return "?" if a is None or b is None else int(round(abs(a - b) / 60.0))
+
+
 def resolve_poly_event(game: MLBGame, series_events: list[dict], learned: dict[str, str],
                        poly_client: Any, log: Any = None) -> Optional[dict]:
     """The Polymarket game event for this Kalshi game. Primary: the constructed slug, ACCEPTED only if
     its startTime is within +-90min of the Kalshi first pitch (guards doubleheaders — the wrong game 2
-    is refused). Fallback: scan the mlb series for an event on the same DATE whose two team names match
-    (lesson #3/#9), same +-90min check, WARNING when used. None -> the game stays one-sided."""
-    slug = f"mlb-{poly_code(game.away_code, learned)}-{poly_code(game.home_code, learned)}-{game.date}"
-    game.poly_base_slug = slug
-    ev = _poly_event(poly_client, slug)
-    if ev and _within_90min(ev.get("startTime"), game.kickoff_iso):
-        return ev
+    is refused). DOUBLEHEADERS use an EXPLICIT slug order: dh=='G2' tries '<base>-dh2' FIRST then base;
+    dh=='G1' tries base then '<base>-dh1'; a non-DH game just tries base. Every candidate is still
+    ±90min-verified, and every DH game logs an accepted/refused line per candidate. Fallback: scan the
+    mlb series for an event on the same DATE whose two team names match (same ±90min check, WARNING when
+    used). None -> the game stays one-sided."""
+    base = f"mlb-{poly_code(game.away_code, learned)}-{poly_code(game.home_code, learned)}-{game.date}"
+    game.poly_base_slug = base
+    if game.dh == "G2":
+        candidates = [f"{base}-dh2", base]
+    elif game.dh == "G1":
+        candidates = [base, f"{base}-dh1"]
+    else:
+        candidates = [base]
+    for slug in candidates:
+        ev = _poly_event(poly_client, slug)
+        if not ev:
+            continue
+        ok = _within_90min(ev.get("startTime"), game.kickoff_iso)
+        if game.dh and log:
+            log.info("[MLB][DH] %s -> %s (%s Δmin=%s)", game.game_id, slug,
+                     "accepted" if ok else "refused", _delta_min(ev.get("startTime"), game.kickoff_iso))
+        if ok:
+            game.poly_base_slug = slug
+            return ev
     # Fallback: scan the series for a same-date, same-teams event within the time window.
     want = {_norm(game.away), _norm(game.home)}
     for e in series_events or []:
@@ -362,11 +385,11 @@ def resolve_poly_event(game: MLBGame, series_events: list[dict], learned: dict[s
             game.poly_base_slug = eslug
             if log:
                 log.warning("[MLB] %s %s @ %s: primary slug %s missed — resolved via series scan to %s.",
-                            game.game_id, game.away, game.home, slug, eslug)
+                            game.game_id, game.away, game.home, base, eslug)
             return e
     if log:
         log.warning("[MLB] %s %s @ %s: NO Poly event within 90min of first pitch (tried %s) — one-sided.",
-                    game.game_id, game.away, game.home, slug)
+                    game.game_id, game.away, game.home, base)
     return None
 
 
@@ -426,46 +449,122 @@ def kalshi_mlb_options(game: MLBGame) -> dict[str, dict]:
 # --------------------------------------------------------------------------- #
 _OU_TITLE_RE = re.compile(r"o/?u\s*(\d+(?:\.\d+)?)", re.IGNORECASE)
 
+# IDENTITY BEFORE SHAPE. The Poly game event nests MANY sub-markets that share the full-game
+# moneyline/total SHAPE — 1st-5-innings totals & moneyline, team totals, run lines/spreads (-1.5),
+# NRFI, series, player props. Matching by shape alone mispairs them to the Kalshi full-game legs
+# (verified live: an F5 Over got paired to a full-game >=7, and a run line got paired to the
+# moneyline). We EXCLUDE any sub-market whose identity text names one of those, then require a POSITIVE
+# full-game identity before a survivor is kept. The gate reads title/question/groupItemTitle/slug ONLY
+# (never the resolution description, which legitimately says "innings").
+_MLB_EXCLUDE_RE = re.compile(
+    r"(1st|first)\s*(5|five)|inning|team\s+total|nrfi|spread|run\s*line|[+-]\s*1\.5|"
+    r"series|to\s+hit|strikeout|home\s+run|lead|score\s+first",
+    re.IGNORECASE)
+
 
 def _mkt_text(m: dict) -> str:
     return str(m.get("groupItemTitle") or m.get("question") or m.get("title") or "")
 
 
-def poly_mlb_options(event: dict, game: MLBGame) -> dict[str, dict]:
-    """{twin_key: option} for the game's Polymarket side: moneyline (team outcome tokens) + total_runs
-    (Over/Under tokens per line). Carries each market's fee schedule + description (rain guard)."""
-    opts: dict[str, dict] = {}
+def _mlb_identity_text(m: dict) -> str:
+    """The identity-bearing fields of a Poly market (title/question/groupItemTitle/slug), joined — the
+    ONLY text the exclusion gate reads (the resolution description is deliberately left out)."""
+    return " ".join(str(m.get(k) or "") for k in ("groupItemTitle", "question", "title", "slug"))
+
+
+def _is_ml2_market(title: str, game: MLBGame) -> bool:
+    """Positive MONEYLINE identity: the title says 'moneyline', OR it is exactly '<A> vs/@ <B>' naming
+    THIS game's two teams with NO other qualifier token (a ':' sub-market suffix disqualifies it). The
+    exclusion gate has already removed run lines / F5 / spreads before this runs."""
+    low = title.lower()
+    if "moneyline" in low:
+        return True
+    if ":" in title:                                       # e.g. '<A> vs <B>: O/U 8.5' -> not bare ML
+        return False
+    mm = re.match(r"^\s*(.+?)\s+(?:vs\.?|@)\s+(.+?)\s*$", title, re.IGNORECASE)
+    if not mm:
+        return False
+    return {_role_of_team(mm.group(1), game), _role_of_team(mm.group(2), game)} == {"away", "home"}
+
+
+def _is_total_runs_market(m: dict, game: MLBGame) -> bool:
+    """Positive FULL-GAME TOTAL identity: groupItemTitle is a Totals label, OR the market text says
+    'total runs', OR it names BOTH of this game's teams (so a full-game 'O/U 8.5' — whose question is
+    '<A> vs <B>: O/U 8.5' — pairs, but a bare shape-only Over/Under never does). F5 totals are already
+    excluded by the gate, so this only sees full-game candidates."""
+    git = str(m.get("groupItemTitle") or "").strip().lower()
+    if git in ("totals", "over/under"):
+        return True
+    text = _norm(" ".join(str(m.get(k) or "") for k in ("groupItemTitle", "question", "title")))
+    if "totalruns" in text:
+        return True
+    a, h = _norm(game.away), _norm(game.home)
+    return bool(a) and bool(h) and a in text and h in text
+
+
+def poly_mlb_options(event: dict, game: MLBGame, *, log: Any = None, game_id: str = "") -> dict[str, dict]:
+    """{twin_key: option} for the game's Polymarket side: moneyline (team outcome tokens) + FULL-GAME
+    total_runs (Over/Under tokens per line). IDENTITY BEFORE SHAPE: every sub-market is first run through
+    the exclusion gate (F5 / run line / spread / NRFI / team total / series / props — logged once each),
+    then a survivor must clear the family's POSITIVE identity. If two SURVIVING markets map to the same
+    twin_key the key is AMBIGUOUS and DROPPED (never guessed). Carries each market's fee + description."""
     if not isinstance(event, dict):
-        return opts
+        return {}
+    staged: dict[str, list[tuple[dict, str]]] = {}        # twin_key -> [(option, source_title), ...]
+    excluded_seen: set[str] = set()
+
+    def _stage(key: str, opt: dict, src_title: str) -> None:
+        staged.setdefault(key, []).append((opt, src_title))
+
     for m in event.get("markets") or []:
         if not isinstance(m, dict):
+            continue
+        title = _mkt_text(m)
+        # (a) EXCLUSION GATE — skip any sub-market whose identity names a non-full-game family.
+        if _MLB_EXCLUDE_RE.search(_mlb_identity_text(m)):
+            label = title or (_mlb_identity_text(m).strip()[:60])
+            if log and label not in excluded_seen:
+                excluded_seen.add(label)
+                log.info("[MLB] excluded sub-market: %s", label)
             continue
         outs = pm._as_list(m.get("outcomes"))
         toks = pm._as_list(m.get("clobTokenIds"))
         fee = _poly_market_fee(m)
         desc = str(m.get("description") or "")
-        title = _mkt_text(m)
-        low = title.lower()
-        # Over/Under total-runs market.
-        mm = _OU_TITLE_RE.search(title)
         norm_outs = [str(o).strip().lower() for o in outs]
-        if mm and len(toks) >= 2 and {"over", "under"} <= set(norm_outs):
+        mm = _OU_TITLE_RE.search(title)
+        # (c) total_runs: O/U shape + no exclusion (above) + POSITIVE full-game total identity.
+        if (mm and len(toks) >= 2 and {"over", "under"} <= set(norm_outs)
+                and _is_total_runs_market(m, game)):
             line = float(mm.group(1))
             over_tok = toks[norm_outs.index("over")]
             under_tok = toks[norm_outs.index("under")]
             key = f"total_runs|{line}"
-            opts[f"{key}|over"] = _p_opt("total_runs", key, "over", line, f"O/U {line} Over",
-                                         over_tok, "Over", fee, desc)
-            opts[f"{key}|under"] = _p_opt("total_runs", key, "under", line, f"O/U {line} Under",
-                                          under_tok, "Under", fee, desc)
+            _stage(f"{key}|over", _p_opt("total_runs", key, "over", line, f"O/U {line} Over",
+                                         over_tok, "Over", fee, desc), title)
+            _stage(f"{key}|under", _p_opt("total_runs", key, "under", line, f"O/U {line} Under",
+                                          under_tok, "Under", fee, desc), title)
             continue
-        # Moneyline market: two TEAM outcomes (not Over/Under/Yes/No) matching this game's teams.
-        if len(outs) == 2 and len(toks) >= 2 and not ({"over", "under", "yes", "no"} & set(norm_outs)):
+        # (b) ml2: two TEAM outcomes for THIS game + POSITIVE moneyline identity.
+        if (len(outs) == 2 and len(toks) >= 2 and not ({"over", "under", "yes", "no"} & set(norm_outs))
+                and _is_ml2_market(title, game)):
             roles = [_role_of_team(o, game) for o in outs]
             if set(roles) == {"away", "home"}:
                 for tok, o, role in zip(toks, outs, roles):
                     team = game.away if role == "away" else game.home
-                    opts[f"ml2|{role}"] = _p_opt("ml2", "ml2", role, None, team, tok, str(o), fee, desc)
+                    _stage(f"ml2|{role}", _p_opt("ml2", "ml2", role, None, team, tok, str(o), fee, desc),
+                           title)
+
+    # (d) COLLISION RULE — a twin_key produced by TWO surviving markets is ambiguous; drop it entirely.
+    opts: dict[str, dict] = {}
+    for key, entries in staged.items():
+        if len(entries) > 1:
+            titles = " | ".join(sorted({t for _, t in entries}))
+            if log:
+                log.warning("[MLB] %s twin_key collision on %s — DROPPED (markets: %s).",
+                            game_id or game.game_id, key, titles)
+            continue
+        opts[key] = entries[0][0]
     return opts
 
 
@@ -581,7 +680,7 @@ class MLBSpec:
         learned = poly_ctx.get("learned") or {}
         ev = resolve_poly_event(game, series_events, learned, poly_client, log)
         k_opts = kalshi_mlb_options(game)
-        p_opts = poly_mlb_options(ev, game) if ev else {}
+        p_opts = poly_mlb_options(ev, game, log=log, game_id=game.game_id) if ev else {}
         kickoff = str((ev or {}).get("startTime") or "") or game.kickoff_iso
         if not _parse_iso(kickoff):
             kickoff = game.kickoff_iso

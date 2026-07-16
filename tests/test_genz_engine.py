@@ -739,3 +739,73 @@ def test_poly_leg_fee_rate_helper():
     assert eng._poly_fee_rate(0.51, {"poly_fee_enabled": True, "poly_fee_rate": 0.05}) == 0.05 * 0.49
     assert eng._poly_fee_rate(0.51, {"poly_fee_enabled": False}) == 0.0
     assert eng._poly_fee_rate(0.51, None) == 0.0
+
+
+# --------------------------------------------------------------------------- #
+# FAMILY-DRIVEN totals guard: an Over/Under-on-a-line market is a totals family regardless of its       #
+# market_type string, so MLB total_runs is gated exactly like a soccer total (and soccer is unchanged). #
+# --------------------------------------------------------------------------- #
+def _totals_market(mt, line, sides):
+    from src.genz.engine import Market
+    return Market(game="G", away="A", home="H", market_type=mt, market_key=f"{mt}|{line}", line=line,
+                  kind="2way", confidence="high", sides={s: {} for s in sides})
+
+
+def test_is_totals_node_family_driven_and_legacy_fallback():
+    # Over/Under on a numeric line -> totals family, regardless of market_type (MLB total_runs included).
+    assert eng.is_totals_node(_totals_market("total_runs", 8.5, ("over", "under"))) is True
+    assert eng.is_totals_node(_totals_market("total_goals", 2.5, ("over", "under"))) is True
+    # No line but a legacy totals market_type still counts (frozenset fallback).
+    assert eng.is_totals_node(_totals_market("team_total", None, ("over", "under"))) is True
+    # A yes/no market with no line is NOT a totals family.
+    assert eng.is_totals_node(_totals_market("btts", None, ("yes", "no"))) is False
+
+
+def test_total_runs_mispair_rejected_family_driven():
+    """THE GAP THIS FIX CLOSES: a total_runs whose best-of-both sums to ~0.93 (an F5-vs-full-game
+    mispairing under the implausibility bound) previously ESCAPED every guard — total_runs isn't in the
+    legacy soccer _TOTAL_FAMILIES name set — and would_trade. The family-driven guard now rejects it as
+    rejected_total_mismatch, exactly like a soccer total at the same sum, never would_trade."""
+    tree = {"games": {"NYMPHI": {"away": "New York Mets", "home": "Philadelphia Phillies", "nodes": [
+        _node("total_runs", "total_runs|6.5", "over", 6.5, "2way", "high", "K_O", "YES", "P_O"),
+        _node("total_runs", "total_runs|6.5", "under", 6.5, "2way", "high", "K_U", "NO", "P_U"),
+    ]}}}
+    md = _MD({("kalshi", "K_O"): [(0.46, 100000)], ("poly", "P_O"): [(0.48, 100000)],
+              ("kalshi", "K_U"): [(0.47, 100000)], ("poly", "P_U"): [(0.49, 100000)]})   # best 0.46+0.47=0.93
+    res = eng.run_cycle(tree, md, GZ, ExecConfig(), now=NOW, kalshi=_NoTrade(), poly=_NoTrade(), write=False)
+    assert res.arbs_found == 1 and res.would_trade == 0
+    row = res.rows[0]
+    assert 0.92 < row["implied_cost"] < 0.94 and row["roi_pct"] < GZ.max_plausible_roi_pct  # not "implausible"
+    assert row["exec_status"] == "rejected_total_mismatch" and row["would_trade"] is False
+
+
+def test_total_runs_extreme_mispair_rejected_like_soccer():
+    """An EXTREME total_runs mispairing (sum 0.60 = the live 65% 'arb') is rejected and never traded —
+    caught by the implausibility bound first, exactly as a soccer total at 0.60 would be. Either way it
+    can never auto-trade."""
+    tree = {"games": {"NYMPHI": {"away": "New York Mets", "home": "Philadelphia Phillies", "nodes": [
+        _node("total_runs", "total_runs|6.5", "over", 6.5, "2way", "high", "K_O", "YES", "P_O"),
+        _node("total_runs", "total_runs|6.5", "under", 6.5, "2way", "high", "K_U", "NO", "P_U"),
+    ]}}}
+    md = _MD({("kalshi", "K_O"): [(0.30, 100000)], ("poly", "P_O"): [(0.33, 100000)],
+              ("kalshi", "K_U"): [(0.30, 100000)], ("poly", "P_U"): [(0.34, 100000)]})   # best 0.30+0.30=0.60
+    res = eng.run_cycle(tree, md, GZ, ExecConfig(), now=NOW, kalshi=_NoTrade(), poly=_NoTrade(), write=False)
+    assert res.arbs_found == 1 and res.would_trade == 0
+    row = res.rows[0]
+    assert 0.59 < row["implied_cost"] < 0.61
+    assert row["exec_status"] in ("rejected_implausible", "rejected_total_mismatch")
+    assert row["would_trade"] is False
+
+
+def test_total_runs_valid_shared_line_passes_guard():
+    """A correctly-paired full-game total_runs (over+under ~0.99) is NOT a mispairing — it clears the
+    totals guard and is measured normally (exec_status dryrun)."""
+    tree = {"games": {"NYMPHI": {"away": "New York Mets", "home": "Philadelphia Phillies", "nodes": [
+        _node("total_runs", "total_runs|8.5", "over", 8.5, "2way", "high", "K_O", "YES", "P_O"),
+        _node("total_runs", "total_runs|8.5", "under", 8.5, "2way", "high", "K_U", "NO", "P_U"),
+    ]}}}
+    md = _MD({("kalshi", "K_O"): [(0.49, 100000)], ("poly", "P_O"): [(0.50, 100000)],
+              ("kalshi", "K_U"): [(0.50, 100000)], ("poly", "P_U"): [(0.51, 100000)]})   # best 0.49+0.50=0.99
+    res = eng.run_cycle(tree, md, GZ, ExecConfig(), now=NOW, kalshi=_NoTrade(), poly=_NoTrade(), write=False)
+    assert res.arbs_found == 1
+    assert res.rows[0]["exec_status"] == "dryrun"           # NOT rejected as a mispairing
