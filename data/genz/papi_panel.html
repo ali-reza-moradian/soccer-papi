@@ -40,6 +40,11 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);-webkit-font
 .gtab.active{background:var(--elev);color:var(--text);border-color:var(--accent)}
 .gtab .t{font-weight:600}.gtab .s{font-size:10px;color:var(--faint)}
 .gtab.active .s{color:var(--dim)}.gtab .lv{color:var(--red)}
+.gtab.all{border-left:2px solid var(--accent)}
+.gcell{cursor:pointer;font-weight:600;color:var(--text)}
+.gcell:hover{color:var(--accent);text-decoration:underline}
+td.tcell{font-family:var(--mono);font-size:12px;color:var(--dim);white-space:nowrap}
+.livetag{font-family:var(--mono);font-size:9px;color:var(--red);background:var(--redBg);padding:1px 5px;margin-left:5px;text-transform:uppercase;letter-spacing:.4px}
 .ctrl{display:flex;align-items:center;gap:12px;margin-bottom:10px;flex-wrap:wrap}
 .seg{display:flex;border:1px solid var(--border)}
 .seg button{font-family:var(--mono);font-size:11px;padding:6px 14px;background:var(--panel);color:var(--dim);border:none;cursor:pointer}
@@ -165,6 +170,22 @@ function num(x){var n=parseFloat(x);return isNaN(n)?null:n;}
 function pct(x){return x==null?'-':(x*100).toFixed(1)+'%';}
 function money(x){return x==null?'-':'$'+Number(x).toLocaleString(undefined,{maximumFractionDigits:0});}
 function money2(x){return x==null?'-':'$'+Number(x).toFixed(2);}
+function trunc(s,n){s=String(s==null?'':s);return s.length>n?s.slice(0,n-1)+'…':s;}
+function fmtTime(ts){   // kickoff -> browser-local "Fri 19:10"
+  if(ts==null||isNaN(ts))return '-';
+  var d=new Date(ts),wd=d.toLocaleDateString(undefined,{weekday:'short'});
+  return wd+' '+('0'+d.getHours()).slice(-2)+':'+('0'+d.getMinutes()).slice(-2);
+}
+// The shared market-table header (Market..Status) — the per-game view uses it directly; the ALL view
+// prepends Game + Time columns.
+var MHEAD='<th>Market</th><th>Legs (best of both)</th><th class="num">Sum</th><th class="num">ROI</th><th class="num">Net %</th><th class="num">Fee %</th><th>Bet this</th><th class="num">Profit</th><th>Status</th>';
+// curGame='ALL' (the default overview) OR a specific game id; a null/stale id falls back to ALL.
+function resolveGame(cur,games){
+  if(cur==='ALL')return 'ALL';
+  if(cur&&games&&games[cur])return cur;
+  return 'ALL';
+}
+function selectGame(id){curGame=id;writeHash();tabs();filter();table();}   // chip OR game-cell click
 
 function health(){
   var dot=document.getElementById('dot'),st=document.getElementById('hstate'),age=document.getElementById('hage'),b=document.getElementById('stale');
@@ -187,8 +208,11 @@ function tabs(){
   if(!SNAP||!SNAP.games||typeof SNAP.games!=='object'){el.innerHTML='';return;}
   var ids=Object.keys(SNAP.games);
   if(!ids.length){el.innerHTML='';return;}
-  if(!curGame||!SNAP.games[curGame])curGame=ids[0];
-  var h='';
+  curGame=resolveGame(curGame,SNAP.games);        // ALL by default; a stale id also falls back to ALL
+  // Leading ALL chip: the whole-slate overview (default view), with totals across every game.
+  var totMk=0,totArb=0;
+  ids.forEach(function(id){var mk=SNAP.games[id].markets||[];totMk+=mk.length;totArb+=mk.filter(function(m){return num(m.implied_cost)<1;}).length;});
+  var h='<div class="gtab all '+(curGame==='ALL'?'active':'')+'" data-g="ALL"><span class="t">ALL GAMES</span><span class="s">'+ids.length+' games &middot; '+totMk+' mkts &middot; '+totArb+' arb</span></div>';
   for(var i=0;i<ids.length;i++){
     var id=ids[i],g=SNAP.games[id],mk=g.markets||[];
     var nArb=mk.filter(function(m){return num(m.implied_cost)<1;}).length;
@@ -196,12 +220,15 @@ function tabs(){
   }
   el.innerHTML=h;
   var t=el.querySelectorAll('.gtab');
-  for(var j=0;j<t.length;j++)t[j].onclick=function(){curGame=this.getAttribute('data-g');writeHash();tabs();filter();table();};
+  for(var j=0;j<t.length;j++)t[j].onclick=function(){selectGame(this.getAttribute('data-g'));};
 }
 function filter(){
-  if(!SNAP||!curGame||!SNAP.games||!SNAP.games[curGame])return;
-  var g=SNAP.games[curGame],types=[];
-  (g.markets||[]).forEach(function(m){if(types.indexOf(m.market_type)<0)types.push(m.market_type);});
+  if(!SNAP||!SNAP.games)return;
+  var types=[];
+  function addTypes(g){(g.markets||[]).forEach(function(m){if(types.indexOf(m.market_type)<0)types.push(m.market_type);});}
+  if(curGame==='ALL')Object.keys(SNAP.games).forEach(function(id){addTypes(SNAP.games[id]);});   // union across the slate
+  else if(SNAP.games[curGame])addTypes(SNAP.games[curGame]);
+  else return;
   types.sort();
   var sel=document.getElementById('mfilter'),h='<option value="">All market types</option>';
   types.forEach(function(t){h+='<option value="'+t+'">'+t.replace(/_/g,' ')+'</option>';});
@@ -241,7 +268,52 @@ function rainTitle(m){   // both venues' raw settlement texts for the RAIN RULE 
   return 'RAIN RULE ('+(m.settlement_risk||'')+') — a rain-shortened game may settle differently across '
     +'venues. KALSHI: '+esc(t.kalshi)+'  ||  POLY: '+esc(t.poly);
 }
+function marketCells(m){
+  // The common per-market row: returns {cls, title, cells} where cells is the Market..Status <td>
+  // sequence. Shared by the per-game view and the ALL view (which prepends Game + Time cells) so the
+  // status chips, RAIN RULE flag, and fill-curve "Bet this" sizing are IDENTICAL across both.
+  var sum=num(m.implied_cost),roi=num(m.roi_pct),net=num(m.net_roi_pct),fee=num(m.fee_rate_pct);
+  var arb=sum!=null&&sum<1;
+  var netArb=arb&&net!=null&&net>0;               // a REAL arb (edge survives the Kalshi fee)
+  var feeTrap=arb&&net!=null&&net<=0;             // gross edge, but the fee eats it -> not an arb
+  var va=(String(m.venue_a||'')[0]||'').toLowerCase()==='k'?'k':'p';
+  var vb=(String(m.venue_b||'')[0]||'').toLowerCase()==='k'?'k':'p';
+  var pa=m.price_a!=null?(m.price_a*100).toFixed(0)+'c':'', pb=m.price_b!=null?(m.price_b*100).toFixed(0)+'c':'';
+  var VA=String(m.venue_a||' ')[0].toUpperCase(),VB=String(m.venue_b||' ')[0].toUpperCase();
+  var legs='<span class="'+va+'">'+m.side_a+' '+pa+' <b>'+VA+'</b></span> + <span class="'+vb+'">'+m.side_b+' '+pb+' <b>'+VB+'</b></span>';
+  var tag;
+  if(m.settlement_risk)tag='<span class="rain-tag" title="'+rainTitle(m)+'">RAIN RULE</span>';
+  else if(m.period_mismatch)tag='<span class="trap-tag">extra-time trap</span>';
+  else if(m.would_trade)tag='<span class="tag would">would trade</span>';
+  else if(/rejected/.test(m.exec_status||''))tag='<span class="tag rej">'+String(m.exec_status).replace('rejected_','rej: ')+'</span>';
+  else if(netArb)tag='<span class="tag would">NET +'+net.toFixed(1)+'%</span>';   // positive net, below trade floor -> still GREEN
+  else if(feeTrap)tag='<span class="tag flag">FEE &gt; EDGE</span>';               // gross<1 but net<=0 -> not an arb
+  else tag='<span class="tag noarb">NO ARB</span>';                                // only when sum >= 100%
+  var xnet=num(m.exec_net_edge_pct);
+  var xcap=(xnet!=null)?'<span class="cap">net@$10 '+xnet.toFixed(1)+'%</span>':'';
+  var betCell='<span class="bet none">-</span>',profCell='<span class="roi neg">-</span>';
+  if(m.settlement_risk)betCell='<span class="bet none">do not bet (rain rule)</span>';
+  else if(arb&&m.period_mismatch)betCell='<span class="bet none">do not bet</span>';
+  else if(netArb){
+    var s=sizing(m);
+    if(s){
+      var kA=(va==='k'?'KALSHI':'POLY'),kB=(vb==='k'?'KALSHI':'POLY');
+      betCell='<span class="bet"><span class="amt">'+money2(s.sa)+'</span> <span class="v">'+kA+' '+m.side_a+' '+pa+'</span>'+fillTag(num(m.price_a),s.avgA)
+        +'<br><span class="amt">'+money2(s.sb)+'</span> <span class="v">'+kB+' '+m.side_b+' '+pb+'</span>'+fillTag(num(m.price_b),s.avgB)
+        +'<br><span class="v">total '+money(s.total)+' &middot; '+Math.round(s.shares)+' sh &middot; capped by '+s.boundBy+'</span></span>';
+      profCell='<span class="prof">'+money2(s.profit)+'<span class="cap">net on '+money(s.total)+'</span>'+xcap+'</span>';
+    }
+  }
+  else if(feeTrap)betCell='<span class="bet none">gross only</span>';
+  var netCell=(net!=null)?'<span class="net '+(net>0?'pos':'neg')+'">'+net.toFixed(1)+'%</span>':'<span class="net neg">-</span>';
+  var feeCell=(fee!=null)?'<span class="fee">'+fee.toFixed(1)+'%</span>':'-';
+  var cls=m.settlement_risk?'rainrow':(m.period_mismatch?'trap':(feeTrap?'feetrap':''));
+  var title=feeTrap?' title="gross edge inside Kalshi fee — not an arb"':'';
+  var cells='<td class="mtype">'+String(m.market_type||'').replace(/_/g,' ')+' <span class="ln">'+(m.line||'')+'</span></td><td class="leg">'+legs+'</td><td class="num"><span class="sum '+(arb?'arb':'no')+'">'+pct(sum)+'</span></td><td class="num"><span class="roi '+(roi>0?'pos':'neg')+'">'+(roi!=null?roi.toFixed(1)+'%':'-')+'</span></td><td class="num">'+netCell+'</td><td class="num">'+feeCell+'</td><td>'+betCell+'</td><td class="num">'+profCell+'</td><td>'+tag+'</td>';
+  return {cls:cls,title:title,cells:cells};
+}
 function table(){
+  if(curGame==='ALL')return tableAll();
   var g=(SNAP&&curGame&&SNAP.games)?SNAP.games[curGame]:null,body=document.getElementById('body');
   if(!g){body.innerHTML='<div class="empty">No data yet.<br>Is the bot loop running? <b>python -m src.genz.cli run --loop --interval 20</b></div>';document.getElementById('count').textContent='';return;}
   if(g.started){body.innerHTML='<div class="empty">'+(g.teams||curGame)+' has kicked off.<br>GenZ is pre-game only — it stopped pricing this game.</div>';document.getElementById('count').textContent='live - not priced';return;}
@@ -251,48 +323,51 @@ function table(){
   mk.sort(function(a,b){var na=num(a.net_roi_pct),nb=num(b.net_roi_pct);na=na==null?-1e9:na;nb=nb==null?-1e9:nb;return nb-na;});  // default: Net % desc
   document.getElementById('count').textContent=mk.length+' shown';
   if(!mk.length){body.innerHTML='<div class="empty">'+(view==='arbs'?'No arbs right now - flip to All markets.':'No markets.')+'</div>';return;}
-  var h='<table><thead><tr><th>Market</th><th>Legs (best of both)</th><th class="num">Sum</th><th class="num">ROI</th><th class="num">Net %</th><th class="num">Fee %</th><th>Bet this</th><th class="num">Profit</th><th>Status</th></tr></thead><tbody>';
-  for(var i=0;i<mk.length;i++){
-    var m=mk[i],sum=num(m.implied_cost),roi=num(m.roi_pct),net=num(m.net_roi_pct),fee=num(m.fee_rate_pct);
-    var arb=sum!=null&&sum<1;
-    var netArb=arb&&net!=null&&net>0;               // a REAL arb (edge survives the Kalshi fee)
-    var feeTrap=arb&&net!=null&&net<=0;             // gross edge, but the fee eats it -> not an arb
-    var va=(String(m.venue_a||'')[0]||'').toLowerCase()==='k'?'k':'p';
-    var vb=(String(m.venue_b||'')[0]||'').toLowerCase()==='k'?'k':'p';
-    var pa=m.price_a!=null?(m.price_a*100).toFixed(0)+'c':'', pb=m.price_b!=null?(m.price_b*100).toFixed(0)+'c':'';
-    var VA=String(m.venue_a||' ')[0].toUpperCase(),VB=String(m.venue_b||' ')[0].toUpperCase();
-    var legs='<span class="'+va+'">'+m.side_a+' '+pa+' <b>'+VA+'</b></span> + <span class="'+vb+'">'+m.side_b+' '+pb+' <b>'+VB+'</b></span>';
-    var tag;
-    if(m.settlement_risk)tag='<span class="rain-tag" title="'+rainTitle(m)+'">RAIN RULE</span>';
-    else if(m.period_mismatch)tag='<span class="trap-tag">extra-time trap</span>';
-    else if(m.would_trade)tag='<span class="tag would">would trade</span>';
-    else if(/rejected/.test(m.exec_status||''))tag='<span class="tag rej">'+String(m.exec_status).replace('rejected_','rej: ')+'</span>';
-    else if(netArb)tag='<span class="tag would">NET +'+net.toFixed(1)+'%</span>';   // positive net, below trade floor -> still GREEN
-    else if(feeTrap)tag='<span class="tag flag">FEE &gt; EDGE</span>';               // gross<1 but net<=0 -> not an arb
-    else tag='<span class="tag noarb">NO ARB</span>';                                // only when sum >= 100%
-    var xnet=num(m.exec_net_edge_pct);
-    var xcap=(xnet!=null)?'<span class="cap">net@$10 '+xnet.toFixed(1)+'%</span>':'';
-    var betCell='<span class="bet none">-</span>',profCell='<span class="roi neg">-</span>';
-    if(m.settlement_risk)betCell='<span class="bet none">do not bet (rain rule)</span>';
-    else if(arb&&m.period_mismatch)betCell='<span class="bet none">do not bet</span>';
-    else if(netArb){
-      var s=sizing(m);
-      if(s){
-        var kA=(va==='k'?'KALSHI':'POLY'),kB=(vb==='k'?'KALSHI':'POLY');
-        betCell='<span class="bet"><span class="amt">'+money2(s.sa)+'</span> <span class="v">'+kA+' '+m.side_a+' '+pa+'</span>'+fillTag(num(m.price_a),s.avgA)
-          +'<br><span class="amt">'+money2(s.sb)+'</span> <span class="v">'+kB+' '+m.side_b+' '+pb+'</span>'+fillTag(num(m.price_b),s.avgB)
-          +'<br><span class="v">total '+money(s.total)+' &middot; '+Math.round(s.shares)+' sh &middot; capped by '+s.boundBy+'</span></span>';
-        profCell='<span class="prof">'+money2(s.profit)+'<span class="cap">net on '+money(s.total)+'</span>'+xcap+'</span>';
-      }
-    }
-    else if(feeTrap)betCell='<span class="bet none">gross only</span>';
-    var netCell=(net!=null)?'<span class="net '+(net>0?'pos':'neg')+'">'+net.toFixed(1)+'%</span>':'<span class="net neg">-</span>';
-    var feeCell=(fee!=null)?'<span class="fee">'+fee.toFixed(1)+'%</span>':'-';
-    var rowCls=m.settlement_risk?'rainrow':(m.period_mismatch?'trap':(feeTrap?'feetrap':''));
-    var rowTitle=feeTrap?' title="gross edge inside Kalshi fee — not an arb"':'';
-    h+='<tr class="'+rowCls+'"'+rowTitle+'><td class="mtype">'+String(m.market_type||'').replace(/_/g,' ')+' <span class="ln">'+(m.line||'')+'</span></td><td class="leg">'+legs+'</td><td class="num"><span class="sum '+(arb?'arb':'no')+'">'+pct(sum)+'</span></td><td class="num"><span class="roi '+(roi>0?'pos':'neg')+'">'+(roi!=null?roi.toFixed(1)+'%':'-')+'</span></td><td class="num">'+netCell+'</td><td class="num">'+feeCell+'</td><td>'+betCell+'</td><td class="num">'+profCell+'</td><td>'+tag+'</td></tr>';
+  var h='<table><thead><tr>'+MHEAD+'</tr></thead><tbody>';
+  for(var i=0;i<mk.length;i++){var rc=marketCells(mk[i]);h+='<tr class="'+rc.cls+'"'+rc.title+'>'+rc.cells+'</tr>';}
+  body.innerHTML=h+'</tbody></table>';
+}
+function collectAllRows(snap,viewMode,mf){
+  // EVERY market row from EVERY game in the sport's snapshot, filtered + globally sorted: Net % desc
+  // (nulls last), tie-break SUM ascending — best opportunity on the whole slate first.
+  var rows=[];
+  if(!snap||!snap.games)return rows;
+  Object.keys(snap.games).forEach(function(id){
+    var g=snap.games[id];
+    (g.markets||[]).forEach(function(m){rows.push({id:id,teams:g.teams||id,kickoff:g.kickoff_utc,started:!!g.started,m:m});});
+  });
+  if(viewMode==='arbs')rows=rows.filter(function(r){return num(r.m.implied_cost)<1;});
+  if(mf)rows=rows.filter(function(r){return r.m.market_type===mf;});
+  rows.sort(function(a,b){
+    var na=num(a.m.net_roi_pct),nb=num(b.m.net_roi_pct);
+    if(na==null&&nb!=null)return 1;                 // nulls last
+    if(nb==null&&na!=null)return -1;
+    if(na!=null&&nb!=null&&nb!==na)return nb-na;     // Net % descending
+    var sa=num(a.m.implied_cost),sb=num(b.m.implied_cost);
+    sa=sa==null?Infinity:sa;sb=sb==null?Infinity:sb;
+    return sa-sb;                                    // tie-break: SUM ascending
+  });
+  return rows;
+}
+function tableAll(){
+  var body=document.getElementById('body');
+  var rows=collectAllRows(SNAP,view,mFilter);
+  document.getElementById('count').textContent=rows.length+' shown';
+  if(!rows.length){body.innerHTML='<div class="empty">'+(view==='arbs'?'No arbs on the slate — flip to All markets.':'No markets yet.')+'</div>';return;}
+  var now=Date.now();
+  var h='<table><thead><tr><th>Game</th><th>Time</th>'+MHEAD+'</tr></thead><tbody>';
+  for(var i=0;i<rows.length;i++){
+    var r=rows[i],rc=marketCells(r.m),ts=Date.parse(r.kickoff||'');
+    ts=isNaN(ts)?null:ts;
+    var past=r.started||(ts!=null&&ts<=now);
+    var gcell='<td class="gcell" data-g="'+esc(r.id)+'" title="'+esc(r.teams)+'">'+esc(trunc(r.teams,24))+'</td>';
+    var tcell='<td class="tcell">'+fmtTime(ts)+(past?' <span class="livetag">live</span>':'')+'</td>';
+    h+='<tr class="'+rc.cls+'"'+rc.title+'>'+gcell+tcell+rc.cells+'</tr>';
   }
   body.innerHTML=h+'</tbody></table>';
+  // Clicking a GAME cell drills into that game's chip view.
+  var gc=body.querySelectorAll('.gcell');
+  for(var j=0;j<gc.length;j++)gc[j].onclick=function(){selectGame(this.getAttribute('data-g'));};
 }
 
 /* ---------- OG ---------- */

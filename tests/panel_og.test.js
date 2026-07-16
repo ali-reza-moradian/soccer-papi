@@ -93,4 +93,49 @@ sandbox.BANK = 1;                                       // a leg stake*scale < $
 line = strip(ogBetLine(funded));
 assert.ok(/below \$1 legs — raise bankroll/.test(line), 'below-$1 guard: ' + line);
 
+// ================= GENZ ALL-GAMES overview (default view) =================
+// (1) default-to-ALL: an absent or stale game resolves to ALL; a valid id is kept; ALL round-trips.
+assert.strictEqual(sandbox.resolveGame(null, { G1: {} }), 'ALL', 'absent game -> ALL');
+assert.strictEqual(sandbox.resolveGame('GONE', { G1: {} }), 'ALL', 'stale game (not in snapshot) -> ALL');
+assert.strictEqual(sandbox.resolveGame('G1', { G1: {} }), 'G1', 'valid game kept');
+assert.strictEqual(sandbox.resolveGame('ALL', { G1: {} }), 'ALL', 'ALL kept');
+assert.strictEqual(sandbox.resolveGame('G1', {}), 'ALL', 'empty snapshot -> ALL even for a named id');
+// hash without genz.game leaves curGame untouched (tabs() resolves the default to ALL at render time)
+loc.hash = '#tab=genz&genz.sport=mlb'; sandbox.curGame = 'ZZZ'; sandbox.readHash();
+assert.strictEqual(sandbox.curGame, 'ZZZ', 'readHash: no genz.game -> curGame untouched');
+// ALL round-trips through the hash
+sandbox.curGame = 'ALL'; sandbox.writeHash();
+assert.ok(/genz\.game=ALL/.test(loc.hash), 'writeHash emits genz.game=ALL: ' + loc.hash);
+loc.hash = '#tab=genz&genz.game=ALL'; sandbox.curGame = 'x'; sandbox.readHash();
+assert.strictEqual(sandbox.curGame, 'ALL', 'readHash restores genz.game=ALL');
+
+// (2) global sort across EVERY game: Net % desc (nulls last), tie-break SUM ascending.
+const slate = { games: {
+  G1: { teams: 'Mets vs Phillies', kickoff_utc: '2026-07-16T23:10:00Z', markets: [
+    { market_type: 'ml2', implied_cost: 1.001, net_roi_pct: null },
+    { market_type: 'total_runs', line: 8.5, implied_cost: 0.95, net_roi_pct: 2.5 } ] },
+  G2: { teams: 'Rays vs Yankees', kickoff_utc: '2026-07-16T20:05:00Z', started: true, markets: [
+    { market_type: 'ml2', implied_cost: 0.99, net_roi_pct: 1.0 },
+    { market_type: 'total_runs', line: 9.5, implied_cost: 0.90, net_roi_pct: null } ] } } };
+const rows = sandbox.collectAllRows(slate, 'all', '');
+const nets = []; for (let i = 0; i < rows.length; i++) nets.push(rows[i].m.net_roi_pct);
+assert.deepStrictEqual(nets, [2.5, 1.0, null, null], 'Net % desc, nulls last: ' + nets);
+assert.strictEqual(rows[2].m.implied_cost, 0.90, 'null tie-break by SUM asc -> 0.90 first');
+assert.strictEqual(rows[3].m.implied_cost, 1.001, 'null tie-break by SUM asc -> 1.001 last');
+// every game (incl. a started one) contributes rows; each carries game id/teams/kickoff for GAME+TIME
+assert.strictEqual(rows.length, 4, 'ALL view = every market from every game (started included)');
+assert.ok(rows[0].id && rows[0].teams && rows[0].kickoff, 'ALL row carries id/teams/kickoff');
+// the All-markets/Arbs-only toggle + market-type filter apply across the whole slate
+assert.strictEqual(sandbox.collectAllRows(slate, 'arbs', '').length, 3, 'arbs-only (<1) across the slate = 3');
+const mlOnly = sandbox.collectAllRows(slate, 'all', 'ml2');
+assert.ok(mlOnly.length === 2 && mlOnly.every(function (r) { return r.m.market_type === 'ml2'; }), 'mfilter across slate');
+assert.strictEqual(sandbox.collectAllRows(null, 'all', '').length, 0, 'no snapshot -> no rows');
+
+// (3) clicking a GAME cell switches to that game's chip view (sets curGame + writes the hash).
+Object.assign(sandbox, { SNAP: slate, tab: 'genz', view: 'all', mFilter: '', curGame: 'ALL' });
+sandbox.SNAPS.mlb = slate;
+sandbox.selectGame('G2');
+assert.strictEqual(sandbox.curGame, 'G2', 'GAME-cell click sets curGame to that game');
+assert.ok(/genz\.game=G2/.test(loc.hash), 'GAME-cell click writes genz.game=G2: ' + loc.hash);
+
 console.log('panel_og.test.js: all assertions passed');
