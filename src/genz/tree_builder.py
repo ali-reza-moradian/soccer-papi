@@ -744,31 +744,40 @@ def join_game(k_opts: dict[str, dict], p_opts: dict[str, dict],
     return nodes, unmatched
 
 
-def build_tree(kalshi_client: Any, poly_client: Any, cfg: gz_config.GenzConfig, *,
-               now: Optional[datetime] = None, log: Any = None) -> dict[str, Any]:
-    """Discover games and build the full match tree dict (does not write). Pure-ish: all network goes
-    through the injected clients, so tests pass fakes."""
-    now = now or datetime.now(timezone.utc)
-    games = discover_games(kalshi_client, now=now, lookahead_hours=cfg.lookahead_hours, log=log)
-    # Enumerate the whole soccer-fifwc series ONCE; each game's events are filtered out by slug prefix.
-    series_events = fetch_series_events(poly_client, cfg.poly_series_slug, log)
-    tree: dict[str, Any] = {"games": {}}
-    for game in games:
-        # A PARTIAL tree is fine: an unexpected error on one game must not kill the rest of the build.
-        try:
-            # Correct the Poly slug for Kalshi<->Poly 3-letter-code mismatches (POR/PRT, SUI/CHE, …)
-            # BEFORE reading the Poly side, so a code mismatch can never silently drop a game.
-            resolve_poly_slug(game, series_events, log)
-            kickoff = _game_kickoff(game, series_events)   # PRECISE Poly kickoff, else provisional noon
-            k_opts, k_cov = kalshi_options(kalshi_client, game, cfg.kalshi_series, log)
-            p_opts, p_cov = poly_options(series_events, game, log)
-            nodes, unmatched = join_game(k_opts, p_opts, log=log, game_id=game.game_id)
-        except Exception as exc:  # noqa: BLE001 - never abort the whole build for one game
-            if log:
-                log.warning("[GENZ] %s build failed: %s — skipping this game.", game.game_id, exc)
-            continue
+# --------------------------------------------------------------------------- #
+# SOCCER sport adapter — wraps the functions above verbatim (byte-identical output)#
+# --------------------------------------------------------------------------- #
+class SoccerSpec:
+    """The World Cup adapter: delegates to this module's discovery/pairing functions unchanged, so a
+    tree built via ``build_tree(..., spec=SoccerSpec())`` is byte-for-byte identical to the original."""
+
+    name = "soccer"
+
+    def paths(self) -> gz_config.SportPaths:
+        return gz_config.paths_for_sport("soccer")
+
+    def game_id(self, game: "Game") -> str:
+        return game.game_id
+
+    def discover_games(self, kalshi_client: Any, poly_client: Any, cfg: gz_config.GenzConfig, *,
+                       now: datetime, log: Any = None) -> tuple[list["Game"], list[dict]]:
+        games = discover_games(kalshi_client, now=now, lookahead_hours=cfg.lookahead_hours, log=log)
+        # Enumerate the whole soccer-fifwc series ONCE; each game's events are filtered by slug prefix.
+        series_events = fetch_series_events(poly_client, cfg.poly_series_slug, log)
+        return games, series_events
+
+    def pair_markets(self, kalshi_client: Any, poly_client: Any, game: "Game",
+                     series_events: list[dict], cfg: gz_config.GenzConfig, *,
+                     log: Any = None) -> dict[str, Any]:
+        # Correct the Poly slug for Kalshi<->Poly 3-letter-code mismatches (POR/PRT, SUI/CHE, …) BEFORE
+        # reading the Poly side, so a code mismatch can never silently drop a game.
+        resolve_poly_slug(game, series_events, log)
+        kickoff = _game_kickoff(game, series_events)       # PRECISE Poly kickoff, else provisional noon
+        k_opts, k_cov = kalshi_options(kalshi_client, game, cfg.kalshi_series, log)
+        p_opts, p_cov = poly_options(series_events, game, log)
+        nodes, unmatched = join_game(k_opts, p_opts, log=log, game_id=game.game_id)
         period_dropped = sum(1 for u in unmatched if u.get("reason") == "settlement_period_mismatch") // 2
-        tree["games"][game.game_id] = {
+        entry = {
             "kalshi_suffix": game.kalshi_suffix, "poly_base_slug": game.poly_base_slug,
             "home": game.home, "away": game.away, "date": game.date, "kickoff_utc": kickoff,
             "nodes": nodes, "unmatched": unmatched,
@@ -784,6 +793,31 @@ def build_tree(kalshi_client: Any, poly_client: Any, cfg: gz_config.GenzConfig, 
                      "kalshi %d ok/%d failed, poly %d ok/%d failed.",
                      game.game_id, game.away, game.home, len(nodes), two_way, len(unmatched),
                      k_cov["ok"], len(k_cov["failed"]), p_cov["ok"], len(p_cov["failed"]))
+        return entry
+
+
+SOCCER_SPEC = SoccerSpec()
+
+
+def build_tree(kalshi_client: Any, poly_client: Any, cfg: gz_config.GenzConfig, *,
+               now: Optional[datetime] = None, log: Any = None, spec: Any = None) -> dict[str, Any]:
+    """Discover games and build the full match tree dict (does not write). Pure-ish: all network goes
+    through the injected clients, so tests pass fakes. ``spec`` selects the sport adapter (default
+    soccer, which is byte-identical to the pre-refactor builder)."""
+    spec = spec or SOCCER_SPEC
+    now = now or datetime.now(timezone.utc)
+    games, poly_ctx = spec.discover_games(kalshi_client, poly_client, cfg, now=now, log=log)
+    tree: dict[str, Any] = {"games": {}}
+    for game in games:
+        # A PARTIAL tree is fine: an unexpected error on one game must not kill the rest of the build.
+        try:
+            entry = spec.pair_markets(kalshi_client, poly_client, game, poly_ctx, cfg, log=log)
+        except Exception as exc:  # noqa: BLE001 - never abort the whole build for one game
+            if log:
+                log.warning("[GENZ] %s build failed: %s — skipping this game.", spec.game_id(game), exc)
+            continue
+        if entry is not None:
+            tree["games"][spec.game_id(game)] = entry
     return tree
 
 

@@ -43,13 +43,20 @@ if ($others.Count -gt 0) {
     exit 1
 }
 
-# name -> (match substring [mirrors scripts\ops.py COMPONENTS], inner command to launch it)
-$components = [ordered]@{
-    http = @{ match = 'http.server 8080'; cmd = "Set-Location '$data'; & '$py' -m http.server 8080" }
-    tree = @{ match = 'run_tree_loop.ps1'; cmd = "& '$repo\scripts\run_tree_loop.ps1'" }
-    genz = @{ match = 'run_genz_loop.ps1'; cmd = "& '$repo\scripts\run_genz_loop.ps1'" }
-    og   = @{ match = 'run_og_loop.ps1';  cmd = "& '$repo\scripts\run_og_loop.ps1'" }
+# The component list (name + match substring + launch command) is OWNED by scripts\ops.py so ADDING a
+# component (e.g. the MLB loops) needs NO edit here. Fetch the specs once and fill the path placeholders.
+$components = [ordered]@{}
+try {
+    $specs = (& $py -m scripts.ops specs) | ConvertFrom-Json
+    foreach ($s in $specs) {
+        $cmd = $s.cmd.Replace('{py}', $py).Replace('{repo}', $repo).Replace('{data}', $data)
+        $components[$s.name] = @{ match = $s.match; cmd = $cmd }
+    }
+} catch {
+    Log "FATAL: could not load component specs from ops.py ($($_.Exception.Message)) - exiting."
+    exit 1
 }
+if ($components.Count -eq 0) { Log 'FATAL: ops.py returned no components - exiting.'; exit 1 }
 
 function Start-Component($name) {
     $c = $components[$name]

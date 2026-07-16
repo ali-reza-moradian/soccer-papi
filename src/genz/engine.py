@@ -305,6 +305,16 @@ def _period_disagrees(market: Market) -> bool:
     return False
 
 
+def _market_settlement_risk(market: Market) -> str:
+    """The settlement_risk flag carried on any side-node (the MLB rain rule), or '' if none. A flagged
+    market is not the same bet across venues, so it is excluded from would_trade (and the paper maker)."""
+    for node in market.sides.values():
+        risk = node.get("settlement_risk")
+        if risk:
+            return str(risk)
+    return ""
+
+
 def _venues_desynced(market: Market, priced: dict[tuple, "PricedVenue"]) -> bool:
     """True if, for any side, ONE venue's market is settled/closed (open=False) while the other is
     open — the two venues are pricing different states, so the node must be skipped, never traded."""
@@ -350,11 +360,14 @@ def run_cycle(tree: dict[str, Any], md: Any, gz_cfg: gz_config.GenzConfig,
               exec_cfg: exec_config.ExecConfig, *, now: Optional[datetime] = None,
               kalshi: Any = None, poly: Any = None, ledger: Any = None, guard: Any = None,
               write: bool = True, arbs_path: Optional[str] = None, heartbeat_path: Optional[str] = None,
-              snapshot_path: Optional[str] = None, log: Any = None) -> CycleResult:
+              snapshot_path: Optional[str] = None, log: Any = None,
+              paths: Optional[gz_config.SportPaths] = None) -> CycleResult:
     """One price cycle: price every tree token, find best-of-both 2-outcome arbs, and (for high-
     confidence ones) hand them to the executor — AT MOST ONE live attempt per cycle. Records every
-    detected arb to genz_arbs.csv and writes the heartbeat. Pure w.r.t. injected md/kalshi/poly."""
+    detected arb to genz_arbs.csv and writes the heartbeat. Pure w.r.t. injected md/kalshi/poly.
+    ``paths`` selects the sport's isolated runtime files (default = the sport on gz_cfg / soccer)."""
     now = now or datetime.now(timezone.utc)
+    paths = paths or gz_config.paths_for_sport(getattr(gz_cfg, "sport", "soccer"))
     markets = collect_markets(tree)
 
     # ELIGIBILITY GATE 1 (BEFORE pricing): GenZ trades PRE-GAME only. Skip ALL nodes of a started game
@@ -393,6 +406,18 @@ def run_cycle(tree: dict[str, Any], md: Any, gz_cfg: gz_config.GenzConfig,
     for c in arbs:
         m = c.market
         row = _base_row(c, now)
+        # SETTLEMENT-RISK GUARD (MLB rain rule) — checked FIRST: a total_runs node whose venues can
+        # settle a rain-shortened game differently is NOT the same bet. Never trade it, and label it
+        # settlement_risk (clearer than the implausible catch-all it would otherwise hit).
+        risk = _market_settlement_risk(m)
+        if risk:
+            if log:
+                log.warning("[GENZ] REJECTED settlement_risk %s %s (%s) — venues may settle a shortened "
+                            "game differently (rain rule); not the same bet.", m.game, m.market_key, risk)
+            row.update(would_trade=False, exec_status="rejected_settlement_risk",
+                       note=f"settlement_risk ({risk}) — venues may settle a shortened game differently")
+            rows.append(row)
+            continue
         # SANITY GUARD: a 2-outcome arb on these markets is low-single-digit %; an ROI above the
         # plausible bound (or an implied cost < 0.5) is almost certainly a PAIRING bug, not a real
         # arb. Reject it: never auto-trade, flag would_trade=False, and log a warning for review.
@@ -454,15 +479,16 @@ def run_cycle(tree: dict[str, Any], md: Any, gz_cfg: gz_config.GenzConfig,
                       markets_skipped=markets_skipped, rows=rows)
     if write:
         if rows:
-            # Rotate daily: append to genz_arbs_YYYYMMDD.csv (unless a path is given explicitly).
-            append_arbs(rows, arbs_path or gz_config.arbs_path_for(now))
-        write_heartbeat(res, now=now, path=heartbeat_path)
+            # Rotate daily: append to <arbs_prefix>_YYYYMMDD.csv (unless a path is given explicitly).
+            append_arbs(rows, arbs_path or paths.arbs_path_for(now))
+        write_heartbeat(res, now=now, path=heartbeat_path or paths.heartbeat_path)
         # Full-market snapshot: EVERY priced market (arb + non-arb) for the dashboard.
         rows_by_key = {(r.get("game"), r.get("market_key")): r for r in rows}
-        write_snapshot(build_snapshot(tree, markets, priced, rows_by_key, now), snapshot_path)
+        write_snapshot(build_snapshot(tree, markets, priced, rows_by_key, now, sport=paths.sport),
+                       snapshot_path or paths.snapshot_path)
         # PAPER MAKER (dry-run): synthetic maker quotes on the PRE-GAME markets — measures the maker-side
         # edge; NEVER places an order or touches the executor.
-        papermaker.run(eligible, priced, md, now, gz_cfg, log)
+        papermaker.run(eligible, priced, md, now, gz_cfg, log, paths=paths)
     if log:
         log.info("[GENZ] cycle: %d game(s), %d node(s) priced (%d unpriced), %d market(s) skipped, "
                  "%d arb(s), %d would-trade.", res.games, res.nodes_priced, res.nodes_unpriced,
@@ -712,6 +738,7 @@ def _market_snapshot(market: Market, priced: dict[tuple, "PricedVenue"]) -> Opti
         return None                                        # not both sides priced this cycle
     implied = qa.price + qb.price
     roi = ((1.0 / implied) - 1.0) * 100.0 if implied > 0 else 0.0
+    risk = na.get("settlement_risk") or nb.get("settlement_risk") or ""
     snap = {
         "market_type": market.market_type, "market_key": market.market_key,
         "line": "" if market.line is None else str(market.line),
@@ -721,16 +748,21 @@ def _market_snapshot(market: Market, priced: dict[tuple, "PricedVenue"]) -> Opti
         "confidence": market.confidence,
         "kalshi_period": na.get("kalshi_period"), "poly_period": na.get("poly_period"),
         "period_mismatch": _period_disagrees(market),
+        # MLB rain rule: a settlement_risk market is NOT the same bet across venues (excluded from
+        # would_trade); the raw texts ride along so the panel can show them in the row's expando.
+        "settlement_risk": risk,
+        "settlement_texts": (na.get("settlement_texts") or nb.get("settlement_texts")) if risk else None,
     }
     snap.update(_sizing(qa, qb, implied))                  # depth/stake sizing (None for non-arbs)
     return snap
 
 
 def build_snapshot(tree: dict[str, Any], markets: list[Market], priced: dict[tuple, "PricedVenue"],
-                   rows_by_key: dict[tuple, dict], now: datetime) -> dict[str, Any]:
+                   rows_by_key: dict[tuple, dict], now: datetime, *, sport: str = "soccer") -> dict[str, Any]:
     """A full-market snapshot for the dashboard: EVERY priced 2-outcome market per game (arb AND
     non-arb, incl. implied>1.0), with best-of-both prices, the arb-loop's would_trade/exec_status when
-    it produced a row (else 'no_arb'), and the settlement-period fields + a period_mismatch flag."""
+    it produced a row (else 'no_arb'), and the settlement-period fields + a period_mismatch flag.
+    ``sport`` is stamped so the panel can label/route the snapshot (schema 3, new optional field)."""
     by_game: dict[str, list[Market]] = {}
     for m in markets:
         by_game.setdefault(m.game, []).append(m)
@@ -758,7 +790,7 @@ def build_snapshot(tree: dict[str, Any], markets: list[Market], priced: dict[tup
             "started": _started(str(g.get("kickoff_utc", "")), now),
             "markets": mkts,
         }
-    return {"schema": SNAPSHOT_SCHEMA_VERSION,
+    return {"schema": SNAPSHOT_SCHEMA_VERSION, "sport": sport,
             "cycle_utc": now.strftime("%Y-%m-%dT%H:%M:%SZ"), "games": games_out}
 
 
@@ -778,19 +810,24 @@ def write_snapshot(snapshot: dict[str, Any], path: Optional[str] = None) -> None
 # --------------------------------------------------------------------------- #
 def run_loop(gz_cfg: gz_config.GenzConfig, exec_cfg: exec_config.ExecConfig, *,
              interval: Optional[float] = None, once: bool = False, log: Any = None,
-             md: Any = None, kalshi: Any = None, poly: Any = None) -> None:
+             md: Any = None, kalshi: Any = None, poly: Any = None,
+             paths: Optional[gz_config.SportPaths] = None) -> None:
     """Read the tree and run cycles forever (or once). The tree is RELOADED each cycle so a fresh
     hourly build (Job 1) is picked up without a restart. Books are read via the executor's read-only
-    MarketData (the src/kalshi.py + src/polymarket.py readers)."""
+    MarketData (the src/kalshi.py + src/polymarket.py readers). ``paths`` selects the sport's isolated
+    runtime files (defaults to the sport named on gz_cfg, i.e. soccer for the existing pipeline)."""
     gz_config.ensure_dirs()
+    paths = paths or gz_config.paths_for_sport(getattr(gz_cfg, "sport", "soccer"))
     # Build the read-only book source with the GenZ (fail-fast) HTTP timeout so a hung call can't
-    # stall a cycle. MarketData accepts injected clients; tests pass their own md.
+    # stall a cycle. MarketData accepts injected clients; tests pass their own md. The Kalshi client
+    # uses this sport's per-process throttle (genz.mlb.kalshi_min_interval) when set.
     if md is None:
         from .. import kalshi as _ks
         from .. import polymarket as _pm
+        kks = {} if gz_cfg.kalshi_min_interval is None else {"min_interval": float(gz_cfg.kalshi_min_interval)}
         md = MarketData(
             kalshi_client=_ks.KalshiClient(base_url=gz_cfg.kalshi_base_url,
-                                           timeout=gz_cfg.http_timeout_seconds),
+                                           timeout=gz_cfg.http_timeout_seconds, **kks),
             poly_client=_pm.PolymarketClient(gamma_base=gz_cfg.gamma_base, clob_base=gz_cfg.clob_base,
                                              timeout=gz_cfg.http_timeout_seconds))
     ledger = Ledger()
@@ -804,9 +841,9 @@ def run_loop(gz_cfg: gz_config.GenzConfig, exec_cfg: exec_config.ExecConfig, *,
             return
         start = time.monotonic()
         try:
-            tree = tree_builder.load_tree()
+            tree = tree_builder.load_tree(paths.tree_path)
             run_cycle(tree, md, gz_cfg, exec_cfg, kalshi=kalshi, poly=poly, ledger=ledger,
-                      guard=guard, log=log)
+                      guard=guard, log=log, paths=paths)
         except Exception as exc:  # noqa: BLE001 - a cycle error must never kill the loop
             if log:
                 log.warning("[GENZ] cycle error (%s) — continuing to next cycle.", exc)

@@ -402,6 +402,17 @@ genz:
   http_timeout_seconds: 15          # per-call HTTP timeout — fail fast so one hung call can't stall a cycle
   poly_series_slug: soccer-fifwc    # Polymarket WC series; siblings discovered by game-slug prefix
 
+  # MLB — a SECOND sport, fully isolated (its own tree/snapshot/heartbeat/arbs/papermaker files). Only
+  # the keys below differ from the soccer defaults above; everything else (walk_stake_usd, min_edge_pct,
+  # max_plausible_roi_pct, min_total_implied, http_timeout_seconds, max_workers, poly_fee_rate) is
+  # INHERITED. Driven by `--sport mlb`; the soccer pipeline is untouched. See src/genz/sports_mlb.py.
+  mlb:
+    lookahead_hours: 24             # MLB games post ~a day out; a shorter window keeps the token count sane
+    interval_seconds: 45            # slower cycle than soccer (fewer, slower-moving pre-game books)
+    kalshi_series: [KXMLBGAME, KXMLBTOTAL]   # moneyline (ml2) + total runs ladder
+    poly_slug_prefix: mlb           # Polymarket MLB series slug; event slug = mlb-<away>-<home>-<YYYY-MM-DD>
+    kalshi_min_interval: 0.5        # per-process Kalshi request spacing (separate process from soccer)
+
 # PAPER MAKER — DRY-RUN measurement of the maker-side edge with SYNTHETIC quotes. It NEVER places an
 # order and NEVER touches the executor/order API; it just measures whether a passive (maker-fee-free)
 # leg + an aggressive hedge would clear the target net. Driven from the genz price cycle. See

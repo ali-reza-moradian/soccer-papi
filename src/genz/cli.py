@@ -31,7 +31,19 @@ def _logger():
 
 
 def _kalshi_client(gz_cfg: gz_config.GenzConfig):
-    return ks.KalshiClient(base_url=gz_cfg.kalshi_base_url, timeout=gz_cfg.http_timeout_seconds)
+    # A per-sport process gets its own Kalshi throttle (genz.mlb.kalshi_min_interval) so MLB's separate
+    # process doesn't contend with soccer's on the tight public read limit. None -> the client default.
+    kw = {} if gz_cfg.kalshi_min_interval is None else {"min_interval": float(gz_cfg.kalshi_min_interval)}
+    return ks.KalshiClient(base_url=gz_cfg.kalshi_base_url, timeout=gz_cfg.http_timeout_seconds, **kw)
+
+
+def _spec_for(sport: str):
+    """The tree-builder sport adapter for ``sport`` (soccer default). MLB is imported lazily so the
+    soccer path never pulls MLB code in."""
+    if sport == "mlb":
+        from . import sports_mlb
+        return sports_mlb.MLB_SPEC
+    return tree_builder.SOCCER_SPEC
 
 
 def _poly_client(gz_cfg: gz_config.GenzConfig):
@@ -45,11 +57,15 @@ def _poly_client(gz_cfg: gz_config.GenzConfig):
 def cmd_build_tree(args) -> int:
     log = _logger()
     gz_config.ensure_dirs()
-    gz_cfg = gz_config.load_genz_config(overrides={"lookahead_hours": args.lookahead})
+    sport = getattr(args, "sport", "soccer")
+    gz_cfg = gz_config.load_genz_config(overrides={"lookahead_hours": args.lookahead}, sport=sport)
+    paths = gz_config.paths_for_sport(sport)
+    spec = _spec_for(sport)
     now = datetime.now(timezone.utc)
-    log.info("[GENZ] build-tree: discovering games within %.0fh ...", gz_cfg.lookahead_hours)
-    tree = tree_builder.build_tree(_kalshi_client(gz_cfg), _poly_client(gz_cfg), gz_cfg, now=now, log=log)
-    tp, mp = tree_builder.write_tree(tree, now=now)
+    log.info("[GENZ] build-tree (%s): discovering games within %.0fh ...", sport, gz_cfg.lookahead_hours)
+    tree = tree_builder.build_tree(_kalshi_client(gz_cfg), _poly_client(gz_cfg), gz_cfg,
+                                   now=now, log=log, spec=spec)
+    tp, mp = tree_builder.write_tree(tree, now=now, tree_path=paths.tree_path, meta_path=paths.meta_path)
     games = tree.get("games", {})
     nodes = sum(len(g.get("nodes") or []) for g in games.values())
     log.info("[GENZ] wrote %d game(s), %d node(s) -> %s (meta: %s)", len(games), nodes, tp, mp)
@@ -62,8 +78,10 @@ def cmd_build_tree(args) -> int:
 def cmd_run(args) -> int:
     log = _logger()
     gz_config.ensure_dirs()
+    sport = getattr(args, "sport", "soccer")
     gz_cfg = gz_config.load_genz_config(
-        overrides={k: v for k, v in (("interval_seconds", args.interval),) if v is not None})
+        overrides={k: v for k, v in (("interval_seconds", args.interval),) if v is not None}, sport=sport)
+    paths = gz_config.paths_for_sport(sport)
     exec_cfg = exec_config.load_exec_config()
 
     # --debug-gate: print, per game, kickoff_utc / now_utc / started, plus each totals node's exact
@@ -73,9 +91,9 @@ def cmd_run(args) -> int:
         from ..executor.resolve import MarketData
         from .. import kalshi as ks2
         from .. import polymarket as pm2
-        tree = tree_builder.load_tree()
+        tree = tree_builder.load_tree(paths.tree_path)
         md = MarketData(
-            kalshi_client=ks2.KalshiClient(base_url=gz_cfg.kalshi_base_url, timeout=gz_cfg.http_timeout_seconds),
+            kalshi_client=_kalshi_client(gz_cfg),
             poly_client=pm2.PolymarketClient(gamma_base=gz_cfg.gamma_base, clob_base=gz_cfg.clob_base,
                                              timeout=gz_cfg.http_timeout_seconds))
         gz_engine.debug_gate(tree, now=datetime.now(timezone.utc), md=md, gz_cfg=gz_cfg)
@@ -93,9 +111,9 @@ def cmd_run(args) -> int:
                  exec_cfg.enabled, exec_cfg.dry_run)
 
     once = not args.loop                       # default = a single cycle; --loop runs continuously
-    log.info("[GENZ] run: interval=%.0fs loop=%s", gz_cfg.interval_seconds, args.loop)
+    log.info("[GENZ] run (%s): interval=%.0fs loop=%s", sport, gz_cfg.interval_seconds, args.loop)
     gz_engine.run_loop(gz_cfg, exec_cfg, interval=args.interval, once=once,
-                       log=log, kalshi=kalshi, poly=poly)
+                       log=log, kalshi=kalshi, poly=poly, paths=paths)
     return 0
 
 
@@ -141,12 +159,16 @@ def build_parser() -> argparse.ArgumentParser:
 
     bt = sub.add_parser("build-tree", help="JOB 1: rebuild the static match tree (hourly).")
     bt.add_argument("--lookahead", type=float, default=None, help="hours ahead to discover games (default 48).")
+    bt.add_argument("--sport", choices=("soccer", "mlb"), default="soccer",
+                    help="which sport to build (default soccer — the existing WC pipeline).")
     bt.set_defaults(func=cmd_build_tree)
 
     rn = sub.add_parser("run", help="JOB 2: fast price + arb loop.")
     rn.add_argument("--loop", action="store_true", help="run continuously (default one cycle).")
     rn.add_argument("--once", action="store_true", help="run exactly one cycle and exit.")
     rn.add_argument("--interval", type=float, default=None, help="seconds between cycles (default 20).")
+    rn.add_argument("--sport", choices=("soccer", "mlb"), default="soccer",
+                    help="which sport to price (default soccer — the existing WC pipeline).")
     rn.add_argument("--debug-gate", dest="debug_gate", action="store_true",
                     help="print per-game kickoff/now/started + each totals node's exact legs; then exit.")
     rn.set_defaults(func=cmd_run)

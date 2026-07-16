@@ -448,20 +448,34 @@ def _rest_mid(priced: dict, md: Any, q: Quote) -> Optional[float]:
 
 
 def run(markets, priced: dict, md: Any, now: datetime, cfg: gz_config.GenzConfig,
-        log: Any = None) -> None:
+        log: Any = None, paths: Optional[gz_config.SportPaths] = None) -> None:
     """Drive one paper-maker cycle from the genz loop: load cross-cycle state, observe the pre-game
     markets, persist state + the daily CSV + the summary. Fully drop-safe (a dry-run measurement must
-    never break the price cycle). Disabled via papermaker.enabled=false."""
+    never break the price cycle). Disabled via papermaker.enabled=false. ``paths`` selects the sport's
+    isolated papermaker files (soccer default). Nodes flagged settlement_risk (the MLB rain rule) are
+    NEVER quoted."""
     if not getattr(cfg, "papermaker_enabled", True):
         return
+    paths = paths or gz_config.paths_for_sport(getattr(cfg, "sport", "soccer"))
     try:
-        pm = PaperMaker.load(gz_config.PAPERMAKER_STATE_PATH,
+        # Exclude settlement-risk markets (e.g. MLB rain-rule totals) from maker quoting entirely.
+        quotable = [m for m in markets if not _market_settlement_risk(m)]
+        pm = PaperMaker.load(paths.papermaker_state_path,
                              target_net_pct=float(getattr(cfg, "papermaker_target_net_pct", DEFAULT_TARGET_NET_PCT)),
                              ref_shares=float(getattr(cfg, "papermaker_ref_shares", DEFAULT_REF_SHARES)),
                              poly_rate=float(getattr(cfg, "poly_fee_rate", DEFAULT_POLY_FEE_RATE)))
-        pm.observe(markets, priced, md, now, log,
-                   csv_path=gz_config.papermaker_path_for(now), summary_path=gz_config.PAPERMAKER_SUMMARY_PATH)
-        pm.save_state(gz_config.PAPERMAKER_STATE_PATH)
+        pm.observe(quotable, priced, md, now, log,
+                   csv_path=paths.papermaker_path_for(now), summary_path=paths.papermaker_summary_path)
+        pm.save_state(paths.papermaker_state_path)
     except Exception as exc:  # noqa: BLE001 - never let the paper maker break the cycle
         if log:
             log.warning("[PAPER] paper-maker run failed (%s) — skipped.", exc)
+
+
+def _market_settlement_risk(m: Any) -> bool:
+    """True when any side-node of the market carries a settlement_risk flag (the MLB rain rule) — such a
+    market is not the same bet across venues, so the paper maker must never quote it."""
+    try:
+        return any((n or {}).get("settlement_risk") for n in getattr(m, "sides", {}).values())
+    except Exception:  # noqa: BLE001
+        return False

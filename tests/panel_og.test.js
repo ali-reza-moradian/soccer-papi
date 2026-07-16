@@ -31,17 +31,19 @@ const { ogShadowBooks, ogBetLine, schemaStale } = sandbox;
 const strip = s => String(s).replace(/<[^>]+>/g, '');
 
 // --- UI state round-trips through the URL hash (refresh restores tab + every sub-segment) ---
-Object.assign(sandbox, { tab: 'og', ogSrc: 'current', ogView: 'funded', view: 'arbs', curGame: '26JUL15FRAESP', mFilter: 'corners' });
+Object.assign(sandbox, { tab: 'og', ogSrc: 'current', ogView: 'funded', view: 'arbs', curGame: '26JUL15FRAESP', mFilter: 'corners', sport: 'mlb' });
 sandbox.writeHash();
 assert.ok(/tab=og/.test(loc.hash) && /og\.view=current/.test(loc.hash) && /og\.scope=funded/.test(loc.hash)
-  && /genz\.filter=arbs/.test(loc.hash) && /genz\.game=26JUL15FRAESP/.test(loc.hash) && /genz\.mfilter=corners/.test(loc.hash),
-  'writeHash emits all state: ' + loc.hash);
-Object.assign(sandbox, { tab: 'genz', ogSrc: 'history', ogView: 'all', view: 'all', curGame: null, mFilter: '' });
-loc.hash = '#tab=og&og.view=current&og.scope=funded&genz.filter=arbs&genz.game=G1&genz.mfilter=totals';
+  && /genz\.filter=arbs/.test(loc.hash) && /genz\.game=26JUL15FRAESP/.test(loc.hash) && /genz\.mfilter=corners/.test(loc.hash)
+  && /genz\.sport=mlb/.test(loc.hash),
+  'writeHash emits all state incl. sport: ' + loc.hash);
+Object.assign(sandbox, { tab: 'genz', ogSrc: 'history', ogView: 'all', view: 'all', curGame: null, mFilter: '', sport: 'soccer' });
+loc.hash = '#tab=og&og.view=current&og.scope=funded&genz.filter=arbs&genz.game=G1&genz.mfilter=totals&genz.sport=mlb';
 sandbox.readHash();
 assert.strictEqual(sandbox.tab, 'og'); assert.strictEqual(sandbox.ogSrc, 'current');
 assert.strictEqual(sandbox.ogView, 'funded'); assert.strictEqual(sandbox.view, 'arbs');
 assert.strictEqual(sandbox.curGame, 'G1'); assert.strictEqual(sandbox.mFilter, 'totals');
+assert.strictEqual(sandbox.sport, 'mlb', 'readHash restores genz.sport');
 // a bad/empty hash leaves state untouched
 loc.hash = ''; Object.assign(sandbox, { tab: 'og' }); sandbox.readHash();
 assert.strictEqual(sandbox.tab, 'og', 'empty hash -> no change');

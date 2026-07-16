@@ -29,6 +29,12 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);-webkit-font
 .clock{font-family:var(--mono);font-size:12px;color:var(--dim);min-width:64px;text-align:right}
 .stale{display:none;background:var(--redBg);border:1px solid var(--red);border-left:3px solid var(--red);padding:10px 16px;margin-bottom:12px;font-family:var(--mono);font-size:13px;color:var(--red)}
 .stale.show{display:block}
+.sportchips{display:flex;gap:6px;margin-bottom:10px;align-items:center}
+.sportchips .lbl{font-family:var(--mono);font-size:10px;color:var(--faint);letter-spacing:1px;margin-right:4px}
+.schip{font-family:var(--mono);font-size:11px;font-weight:600;letter-spacing:1px;padding:6px 14px;background:var(--panel);border:1px solid var(--border);cursor:pointer;color:var(--dim)}
+.schip.active{background:var(--elev);color:var(--text);border-color:var(--accent)}
+.schip.off{cursor:default;color:var(--faint);opacity:.55}
+.schip .n{font-weight:400;font-size:9px;color:var(--faint);margin-left:6px}
 .gtabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px}
 .gtab{font-family:var(--mono);font-size:12px;padding:9px 15px;background:var(--panel);border:1px solid var(--border);cursor:pointer;color:var(--dim);display:flex;flex-direction:column;gap:2px;min-width:150px}
 .gtab.active{background:var(--elev);color:var(--text);border-color:var(--accent)}
@@ -66,6 +72,8 @@ tr:hover td{background:var(--panel2)}
 .tag.flag{background:var(--amberBg);color:var(--amber)}
 .trap{background:var(--redBg)!important}
 .trap-tag{font-family:var(--mono);font-size:9px;color:var(--red);padding:2px 6px;background:var(--redBg)}
+.rain-tag{font-family:var(--mono);font-size:9px;color:var(--red);padding:2px 6px;background:var(--redBg);cursor:help}
+.rainrow{background:var(--redBg)!important}
 .feetrap{background:var(--amberBg)!important}
 .net{font-family:var(--mono);font-weight:600}
 .net.pos{color:var(--green)}.net.neg{color:var(--amber)}
@@ -109,6 +117,7 @@ tr.betrow td{border-bottom:1px solid var(--border);padding-top:2px}
 
 <!-- ===== GENZ ===== -->
 <div id="tab-genz">
+  <div class="sportchips" id="sportchips"></div>
   <div class="gtabs" id="gtabs"></div>
   <div class="ctrl">
     <div class="seg" id="viewSeg"><button data-v="all" class="on">All markets</button><button data-v="arbs">Arbs only</button></div>
@@ -125,6 +134,11 @@ tr.betrow td{border-bottom:1px solid var(--border);padding-top:2px}
 
 <!-- ===== OG ===== -->
 <div id="tab-og" class="hide">
+  <div class="sportchips">
+    <span class="lbl">SPORT</span>
+    <span class="schip active">SOCCER</span>
+    <span class="schip off" title="4-book scanner: soccer only — MLB coming">MLB<span class="n">coming</span></span>
+  </div>
   <div class="stale" id="ogstale">▲ OG FEED STALE — no scan in over 2× the interval. Is scripts\run_og_loop.ps1 running?</div>
   <div class="ctrl">
     <div class="seg" id="ogSrcSeg"><button data-s="current" class="on">Current</button><button data-s="history">History</button></div>
@@ -140,6 +154,12 @@ tr.betrow td{border-bottom:1px solid var(--border);padding-top:2px}
 
 <script>
 var SNAP=null,HB=null,OG=[],OGC=null,PM=null,curGame=null,view='all',mFilter='',BANK=3000,tab='genz',ogView='funded',ogSrc='current';
+// GENZ is now MULTI-SPORT: one snapshot/heartbeat/papermaker per sport. SNAP/HB/PM always point at the
+// ACTIVE sport's data (so every existing reference keeps working); the per-sport stores hold both.
+var sport='soccer';
+var SNAPS={soccer:null,mlb:null}, HBS={soccer:null,mlb:null}, PMS={soccer:null,mlb:null};
+var SPORTS=[['soccer','SOCCER'],['mlb','MLB']];
+function useSport(){SNAP=SNAPS[sport];HB=HBS[sport];PM=PMS[sport];}
 var EXPECTED_SCHEMA=3;   // must match src/genz/engine.py SNAPSHOT_SCHEMA_VERSION
 function num(x){var n=parseFloat(x);return isNaN(n)?null:n;}
 function pct(x){return x==null?'-':(x*100).toFixed(1)+'%';}
@@ -216,6 +236,11 @@ function fillTag(top,avg){   // show avg fill next to top price when they differ
   if(top==null||avg==null||Math.abs(avg-top)<0.005)return '';
   return ' <span class="v">(fills '+(avg*100).toFixed(1)+'c)</span>';
 }
+function rainTitle(m){   // both venues' raw settlement texts for the RAIN RULE chip tooltip
+  var t=m.settlement_texts||{},esc=function(s){return String(s||'').replace(/"/g,'&quot;').slice(0,400);};
+  return 'RAIN RULE ('+(m.settlement_risk||'')+') — a rain-shortened game may settle differently across '
+    +'venues. KALSHI: '+esc(t.kalshi)+'  ||  POLY: '+esc(t.poly);
+}
 function table(){
   var g=(SNAP&&curGame&&SNAP.games)?SNAP.games[curGame]:null,body=document.getElementById('body');
   if(!g){body.innerHTML='<div class="empty">No data yet.<br>Is the bot loop running? <b>python -m src.genz.cli run --loop --interval 20</b></div>';document.getElementById('count').textContent='';return;}
@@ -238,7 +263,8 @@ function table(){
     var VA=String(m.venue_a||' ')[0].toUpperCase(),VB=String(m.venue_b||' ')[0].toUpperCase();
     var legs='<span class="'+va+'">'+m.side_a+' '+pa+' <b>'+VA+'</b></span> + <span class="'+vb+'">'+m.side_b+' '+pb+' <b>'+VB+'</b></span>';
     var tag;
-    if(m.period_mismatch)tag='<span class="trap-tag">extra-time trap</span>';
+    if(m.settlement_risk)tag='<span class="rain-tag" title="'+rainTitle(m)+'">RAIN RULE</span>';
+    else if(m.period_mismatch)tag='<span class="trap-tag">extra-time trap</span>';
     else if(m.would_trade)tag='<span class="tag would">would trade</span>';
     else if(/rejected/.test(m.exec_status||''))tag='<span class="tag rej">'+String(m.exec_status).replace('rejected_','rej: ')+'</span>';
     else if(netArb)tag='<span class="tag would">NET +'+net.toFixed(1)+'%</span>';   // positive net, below trade floor -> still GREEN
@@ -247,7 +273,8 @@ function table(){
     var xnet=num(m.exec_net_edge_pct);
     var xcap=(xnet!=null)?'<span class="cap">net@$10 '+xnet.toFixed(1)+'%</span>':'';
     var betCell='<span class="bet none">-</span>',profCell='<span class="roi neg">-</span>';
-    if(arb&&m.period_mismatch)betCell='<span class="bet none">do not bet</span>';
+    if(m.settlement_risk)betCell='<span class="bet none">do not bet (rain rule)</span>';
+    else if(arb&&m.period_mismatch)betCell='<span class="bet none">do not bet</span>';
     else if(netArb){
       var s=sizing(m);
       if(s){
@@ -261,7 +288,7 @@ function table(){
     else if(feeTrap)betCell='<span class="bet none">gross only</span>';
     var netCell=(net!=null)?'<span class="net '+(net>0?'pos':'neg')+'">'+net.toFixed(1)+'%</span>':'<span class="net neg">-</span>';
     var feeCell=(fee!=null)?'<span class="fee">'+fee.toFixed(1)+'%</span>':'-';
-    var rowCls=m.period_mismatch?'trap':(feeTrap?'feetrap':'');
+    var rowCls=m.settlement_risk?'rainrow':(m.period_mismatch?'trap':(feeTrap?'feetrap':''));
     var rowTitle=feeTrap?' title="gross edge inside Kalshi fee — not an arb"':'';
     h+='<tr class="'+rowCls+'"'+rowTitle+'><td class="mtype">'+String(m.market_type||'').replace(/_/g,' ')+' <span class="ln">'+(m.line||'')+'</span></td><td class="leg">'+legs+'</td><td class="num"><span class="sum '+(arb?'arb':'no')+'">'+pct(sum)+'</span></td><td class="num"><span class="roi '+(roi>0?'pos':'neg')+'">'+(roi!=null?roi.toFixed(1)+'%':'-')+'</span></td><td class="num">'+netCell+'</td><td class="num">'+feeCell+'</td><td>'+betCell+'</td><td class="num">'+profCell+'</td><td>'+tag+'</td></tr>';
   }
@@ -430,11 +457,27 @@ function paperStrip(){   // PAPER-MAKER dry-run summary strip at the bottom of t
     +'</b> &middot; hedge slip <b>'+(PM.mean_hedge_slippage_c==null?'&mdash;':Number(PM.mean_hedge_slippage_c).toFixed(2)+'c')
     +'</b> &middot; expired <b>'+(PM.expired_unfilled||0)+'</b>'+(stale?' &middot; <span class="v">stale</span>':'');
 }
-function renderAll(){health();if(tab==='genz'){tabs();filter();table();paperStrip();}else{ogTable();}}
+function sportChips(){   // SOCCER | MLB selector on the GENZ tab; a sport with no snapshot is greyed
+  var el=document.getElementById('sportchips');if(!el)return;
+  var h='<span class="lbl">SPORT</span>';
+  SPORTS.forEach(function(sp){
+    var key=sp[0],lbl=sp[1],snap=SNAPS[key],has=!!(snap&&snap.games&&Object.keys(snap.games).length);
+    if(key===sport)h+='<span class="schip active" data-sp="'+key+'">'+lbl+'</span>';
+    else if(has)h+='<span class="schip" data-sp="'+key+'">'+lbl+'<span class="n">'+Object.keys(snap.games).length+' games</span></span>';
+    else h+='<span class="schip off" title="no data yet — is the '+key+' loop running?">'+lbl+'<span class="n">no data yet</span></span>';
+  });
+  el.innerHTML=h;
+  el.querySelectorAll('.schip[data-sp]').forEach(function(c){c.onclick=function(){setSport(this.getAttribute('data-sp'));};});
+}
+function setSport(s){
+  if(s===sport||!SNAPS.hasOwnProperty(s))return;
+  sport=s;curGame=null;useSport();writeHash();renderAll();
+}
+function renderAll(){useSport();health();if(tab==='genz'){sportChips();tabs();filter();table();paperStrip();}else{ogTable();}}
 
 // --- ALL UI state lives in the URL hash so a refresh restores tab + every sub-segment (no reload) ---
 function writeHash(){
-  var p=['tab='+tab,'og.view='+ogSrc,'og.scope='+ogView,'genz.filter='+view];
+  var p=['tab='+tab,'og.view='+ogSrc,'og.scope='+ogView,'genz.filter='+view,'genz.sport='+sport];
   if(curGame)p.push('genz.game='+encodeURIComponent(curGame));
   if(mFilter)p.push('genz.mfilter='+encodeURIComponent(mFilter));
   try{history.replaceState(null,'','#'+p.join('&'));}catch(e){}
@@ -446,6 +489,7 @@ function readHash(){
   if(kv['og.view']==='current'||kv['og.view']==='history')ogSrc=kv['og.view'];
   if(kv['og.scope']==='funded'||kv['og.scope']==='all')ogView=kv['og.scope'];
   if(kv['genz.filter']==='all'||kv['genz.filter']==='arbs')view=kv['genz.filter'];
+  if(kv['genz.sport']==='soccer'||kv['genz.sport']==='mlb')sport=kv['genz.sport'];
   if(kv['genz.game'])curGame=kv['genz.game'];
   if(kv['genz.mfilter'])mFilter=kv['genz.mfilter'];
 }
@@ -472,22 +516,27 @@ document.getElementById('viewSeg').querySelectorAll('button').forEach(function(b
 document.getElementById('mfilter').onchange=function(e){mFilter=e.target.value;writeHash();table();};
 setInterval(function(){document.getElementById('clock').textContent=new Date().toLocaleTimeString();health();},1000);
 
+// Fetch one sport's snapshot/heartbeat/papermaker into the per-sport stores; re-render if it's active.
+function pollSport(key, snapFile, hbFile, pmFile){
+  fetch(snapFile+'?t='+Date.now(),{cache:'no-store'}).then(function(r){return r.ok?r.text():null;}).then(function(t){
+    if(!t)return;var j;try{j=JSON.parse(t);}catch(e){return;}
+    if(j&&j.games&&typeof j.games==='object'){SNAPS[key]=j;if(tab==='genz'){if(key===sport)renderAll();else sportChips();}}
+  }).catch(function(){});
+  fetch(hbFile+'?t='+Date.now(),{cache:'no-store'}).then(function(r){return r.ok?r.text():null;}).then(function(t){
+    if(!t)return;var j;try{j=JSON.parse(t);}catch(e){return;}
+    HBS[key]=j;if(key===sport)health();
+  }).catch(function(){});
+  fetch(pmFile+'?t='+Date.now(),{cache:'no-store'}).then(function(r){return r.ok?r.text():null;}).then(function(t){
+    if(!t)return;var j;try{j=JSON.parse(t);}catch(e){return;}
+    PMS[key]=j;if(tab==='genz'&&key===sport)paperStrip();
+  }).catch(function(){});
+}
 function poll(){
-  fetch('genz_snapshot.json?t='+Date.now(),{cache:'no-store'}).then(function(r){return r.ok?r.text():null;}).then(function(t){
-    if(!t)return;var j;try{j=JSON.parse(t);}catch(e){return;}
-    if(j&&j.games&&typeof j.games==='object'){SNAP=j;renderAll();}
-  }).catch(function(){});
-  fetch('genz_heartbeat.json?t='+Date.now(),{cache:'no-store'}).then(function(r){return r.ok?r.text():null;}).then(function(t){
-    if(!t)return;var j;try{j=JSON.parse(t);}catch(e){return;}
-    HB=j;health();
-  }).catch(function(){});
+  pollSport('soccer','genz_snapshot.json','genz_heartbeat.json','papermaker_summary.json');
+  pollSport('mlb','genz_snapshot_mlb.json','genz_heartbeat_mlb.json','papermaker_summary_mlb.json');
   fetch('../og_current.json?t='+Date.now(),{cache:'no-store'}).then(function(r){return r.ok?r.text():null;}).then(function(t){
     if(!t)return;var j;try{j=JSON.parse(t);}catch(e){return;}
     if(j&&j.arbs){OGC=j;if(tab==='og')ogTable();}
-  }).catch(function(){});
-  fetch('papermaker_summary.json?t='+Date.now(),{cache:'no-store'}).then(function(r){return r.ok?r.text():null;}).then(function(t){
-    if(!t)return;var j;try{j=JSON.parse(t);}catch(e){return;}
-    PM=j;if(tab==='genz')paperStrip();
   }).catch(function(){});
   fetch('../arbitrage_opportunities.csv?t='+Date.now(),{cache:'no-store'}).then(function(r){return r.ok?r.text():null;}).then(function(t){
     if(!t)return;OG=parseCSV(t);if(tab==='og')ogTable();

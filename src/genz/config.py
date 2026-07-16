@@ -46,6 +46,50 @@ def arbs_csv_paths() -> list[str]:
     """Every genz_arbs csv (the legacy base + all dated files), sorted — the full evidence base."""
     return sorted(glob.glob(os.path.join(GENZ_DIR, "genz_arbs*.csv")))
 
+
+# --------------------------------------------------------------------------- #
+# Per-SPORT runtime artifact paths (soccer = the current filenames, byte-for-byte;   #
+# every other sport gets its OWN files so nothing shared is ever overwritten).   #
+# --------------------------------------------------------------------------- #
+@dataclass(frozen=True)
+class SportPaths:
+    """The isolated set of runtime files for one sport. Soccer maps to the EXISTING constants so its
+    output is unchanged; MLB (and any future sport) gets a distinct file per artifact."""
+    sport: str
+    tree_path: str
+    meta_path: str
+    snapshot_path: str
+    heartbeat_path: str
+    papermaker_summary_path: str
+    papermaker_state_path: str
+    arbs_prefix: str            # dated arbs file stem, e.g. 'genz_arbs' -> genz_arbs_YYYYMMDD.csv
+    papermaker_prefix: str      # dated papermaker file stem, e.g. 'papermaker' -> papermaker_YYYYMMDD.csv
+
+    def arbs_path_for(self, now: Optional[datetime] = None) -> str:
+        now = now or datetime.now(timezone.utc)
+        return os.path.join(GENZ_DIR, f"{self.arbs_prefix}_{now.strftime('%Y%m%d')}.csv")
+
+    def papermaker_path_for(self, now: Optional[datetime] = None) -> str:
+        now = now or datetime.now(timezone.utc)
+        return os.path.join(GENZ_DIR, f"{self.papermaker_prefix}_{now.strftime('%Y%m%d')}.csv")
+
+
+_SOCCER_PATHS = SportPaths(
+    "soccer", MATCH_TREE_PATH, TREE_META_PATH, SNAPSHOT_PATH, HEARTBEAT_PATH,
+    PAPERMAKER_SUMMARY_PATH, PAPERMAKER_STATE_PATH, "genz_arbs", "papermaker")
+_MLB_PATHS = SportPaths(
+    "mlb",
+    os.path.join(GENZ_DIR, "mlb_tree.json"), os.path.join(GENZ_DIR, "mlb_tree_meta.json"),
+    os.path.join(GENZ_DIR, "genz_snapshot_mlb.json"), os.path.join(GENZ_DIR, "genz_heartbeat_mlb.json"),
+    os.path.join(GENZ_DIR, "papermaker_summary_mlb.json"), os.path.join(GENZ_DIR, "papermaker_state_mlb.json"),
+    "genz_arbs_mlb", "papermaker_mlb")
+SPORT_PATHS: dict[str, SportPaths] = {"soccer": _SOCCER_PATHS, "mlb": _MLB_PATHS}
+
+
+def paths_for_sport(sport: str = "soccer") -> SportPaths:
+    """The runtime-file set for a sport (defaults to soccer's existing filenames)."""
+    return SPORT_PATHS.get(sport, _SOCCER_PATHS)
+
 # Every per-type Kalshi WC series we enumerate per game (KXWCGAME first = the 1x2 spine). Any other
 # KXWC* series discovered for a game's event suffix is pulled too (tree_builder is not limited to
 # this list); this is the seed set.
@@ -84,6 +128,10 @@ class GenzConfig:
     papermaker_enabled: bool = True
     papermaker_target_net_pct: float = 1.0   # min net edge (%) a hedged maker combo must clear
     papermaker_ref_shares: float = 100.0     # shares to walk the hedge book to when marking a fill
+    # MULTI-SPORT: which sport this config drives + its Kalshi throttle. soccer is unchanged; mlb reads
+    # the genz.mlb sub-block (lookahead/interval/series/slug), inheriting everything else from genz.
+    sport: str = "soccer"
+    kalshi_min_interval: Optional[float] = None   # per-process Kalshi request spacing (None = client default)
 
 
 def _raw(config_path: str | None) -> dict[str, Any]:
@@ -100,8 +148,42 @@ def _block(config_path: str | None) -> dict[str, Any]:
     return blk if isinstance(blk, dict) else {}
 
 
-def load_genz_config(config_path: str | None = None, *, overrides: dict[str, Any] | None = None) -> GenzConfig:
-    """Load ``genz:`` from config.yaml into a :class:`GenzConfig`. ``overrides`` (CLI flags) win."""
+# MLB defaults when the genz.mlb sub-block is absent/partial (spec section 0). Everything NOT listed
+# here (walk_stake_usd / min_edge_pct / max_plausible_roi_pct / min_total_implied / http_timeout /
+# max_workers / poly_fee_rate / papermaker_*) is INHERITED from the base genz block unchanged.
+_MLB_DEFAULTS: dict[str, Any] = {
+    "lookahead_hours": 24.0,
+    "interval_seconds": 45.0,
+    "kalshi_series": ["KXMLBGAME", "KXMLBTOTAL"],
+    "poly_series_slug": "mlb",     # from genz.mlb.poly_slug_prefix
+}
+
+
+def _apply_mlb_block(cfg: GenzConfig, config_path: str | None) -> None:
+    """Overlay the genz.mlb sub-block onto a base (genz-defaults) config: MLB lookahead/interval/series/
+    slug + optional inherited-override keys and the per-process Kalshi throttle. Missing keys fall back
+    to _MLB_DEFAULTS, then to whatever the base genz block already set."""
+    cfg.sport = "mlb"
+    mlb = _block(config_path).get("mlb")
+    mlb = mlb if isinstance(mlb, dict) else {}
+    cfg.lookahead_hours = float(mlb.get("lookahead_hours", _MLB_DEFAULTS["lookahead_hours"]))
+    cfg.interval_seconds = float(mlb.get("interval_seconds", _MLB_DEFAULTS["interval_seconds"]))
+    series = mlb.get("kalshi_series") or _MLB_DEFAULTS["kalshi_series"]
+    cfg.kalshi_series = list(series)
+    cfg.poly_series_slug = str(mlb.get("poly_slug_prefix") or _MLB_DEFAULTS["poly_series_slug"])
+    # Inherited-but-overridable knobs: use the mlb value only when present, else keep the genz base.
+    for key in ("walk_stake_usd", "min_edge_pct", "max_plausible_roi_pct", "min_total_implied",
+                "http_timeout_seconds", "max_workers"):
+        if mlb.get(key) is not None:
+            setattr(cfg, key, (int if key == "max_workers" else float)(mlb[key]))
+    if mlb.get("kalshi_min_interval") is not None:
+        cfg.kalshi_min_interval = float(mlb["kalshi_min_interval"])
+
+
+def load_genz_config(config_path: str | None = None, *, overrides: dict[str, Any] | None = None,
+                     sport: str = "soccer") -> GenzConfig:
+    """Load ``genz:`` from config.yaml into a :class:`GenzConfig`. ``overrides`` (CLI flags) win.
+    ``sport='mlb'`` overlays the genz.mlb sub-block on top of the genz defaults (soccer is unchanged)."""
     data = dict(_block(config_path))
     if overrides:
         data.update({k: v for k, v in overrides.items() if v is not None})
@@ -130,4 +212,8 @@ def load_genz_config(config_path: str | None = None, *, overrides: dict[str, Any
         cfg.papermaker_target_net_pct = float(pm["target_net_pct"])
     if pm.get("ref_shares") is not None:
         cfg.papermaker_ref_shares = float(pm["ref_shares"])
+    # MLB: overlay the genz.mlb sub-block LAST (after the base genz block is fully loaded), so MLB
+    # inherits every unspecified knob from genz and only overrides what it lists.
+    if sport == "mlb":
+        _apply_mlb_block(cfg, config_path)
     return cfg
