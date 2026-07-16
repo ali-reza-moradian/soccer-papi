@@ -138,4 +138,16 @@ sandbox.selectGame('G2');
 assert.strictEqual(sandbox.curGame, 'G2', 'GAME-cell click sets curGame to that game');
 assert.ok(/genz\.game=G2/.test(loc.hash), 'GAME-cell click writes genz.game=G2: ' + loc.hash);
 
+// ================= MAKER RT v2 strip =================
+const mstrip = strip(sandbox.makerStripHtml({
+  mode: 'shadow', sockets: { poly_market: true, kalshi: true, poly_user: false },
+  quotes: 12, fills: 3, fill_rate: 0.25, at_best_share: 0.5, median_net_at_fill: 1.2,
+  drift_median_1: 0.1, drift_median_5: 0.2, drift_median_30: -0.3, behind_best: 4 }));
+assert.ok(/MAKER RT/.test(mstrip) && /shadow/i.test(mstrip), 'strip shows label + mode: ' + mstrip);
+assert.ok(/quotes 12/.test(mstrip) && /fills 3/.test(mstrip) && /fill-rate 25%/.test(mstrip), 'metrics: ' + mstrip);
+assert.ok(/median net 1\.20%/.test(mstrip) && /at-best 50%/.test(mstrip), 'net/at-best: ' + mstrip);
+assert.ok(/behind 4/.test(mstrip), 'behind-best count: ' + mstrip);
+// LIVE mode badge flips
+assert.ok(/live/i.test(sandbox.makerStripHtml({ mode: 'live', sockets: {} })), 'live badge');
+
 console.log('panel_og.test.js: all assertions passed');

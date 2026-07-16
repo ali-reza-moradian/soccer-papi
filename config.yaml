@@ -407,7 +407,7 @@ genz:
   # max_plausible_roi_pct, min_total_implied, http_timeout_seconds, max_workers, poly_fee_rate) is
   # INHERITED. Driven by `--sport mlb`; the soccer pipeline is untouched. See src/genz/sports_mlb.py.
   mlb:
-    lookahead_hours: 24             # MLB games post ~a day out; a shorter window keeps the token count sane
+    lookahead_hours: 72             # MLB games post ~a day out; a shorter window keeps the token count sane
     interval_seconds: 45            # slower cycle than soccer (fewer, slower-moving pre-game books)
     kalshi_series: [KXMLBGAME, KXMLBTOTAL]   # moneyline (ml2) + total runs ladder
     poly_slug_prefix: mlb           # Polymarket MLB series slug; event slug = mlb-<away>-<home>-<YYYY-MM-DD>
@@ -421,3 +421,33 @@ papermaker:
   enabled: true
   target_net_pct: 1.0               # min net edge (%) a hedged maker combo must clear at the quote price
   ref_shares: 100                   # shares to walk the hedge book to when marking a synthetic fill
+
+# ===========================================================================
+# maker_rt — the REALTIME maker/hedger (src/genz/maker_rt/). A single asyncio process on real
+# websockets (Poly market + Kalshi orderbook) that rests PAPER maker quotes and shadow-fills them from
+# public trade prints, marking the fee-inclusive hedge on the live book. SHADOW is the default: it
+# places NOTHING. The live-order path is fully built + unit-tested but HARD-LOCKED behind live.enabled
+# (false here) AND an on-disk arm file AND a startup self-check. Run: python -m src.genz.maker_rt.
+# ===========================================================================
+maker_rt:
+  max_games: 20                     # nearest-by-kickoff games to quote across BOTH sports combined
+  quote_usd: 100                    # shadow quote notional per node/direction
+  target_net: 0.010                 # min net edge a hedged maker combo must clear at the quote price
+  debounce_ms: 250                  # quote-engine debounce
+  expire_before_kickoff_s: 120      # cancel/expire every quote at kickoff - this
+  poly_fee_rate: 0.05               # Polymarket sports taker rate (hedge-fee model)
+  head_poll_s: 60                   # stale-code guard: exit 0 on git HEAD change (wrapper restarts fresh)
+  ping_s: 10                        # Poly market-socket keepalive PING cadence
+  drift_marks_s: [1, 5, 30]         # adverse-selection hedge-drift reads after each shadow fill
+  kalshi_maker_fee_series: []       # Kalshi series that charge a MAKER fee -> never rest on that side
+  # LIVE — BUILT, LOCKED. Refuses unless enabled AND the arm file exists AND the startup self-check
+  # (balances on both venues, poly allowance/approvals, tick sizes) passes. DO NOT flip enabled here.
+  live:
+    enabled: false
+    arm_file: data/ops/ARM_MAKER
+    quote_usd_max: 25               # hard cap on live quote notional
+    max_open_quotes: 2
+    max_fills_per_day: 6
+    max_daily_loss_usd: 25
+    hedge_timeout_ms: 3000          # miss/partial after this -> market-unwind the fill + freeze market
+    unwind_on_hedge_fail: true

@@ -10,6 +10,12 @@ tzdata>=2024.1
 # available in every terminal without manual sourcing. Real env vars still take precedence.
 python-dotenv>=1.0
 
+# --- maker_rt (src/genz/maker_rt/) realtime maker/hedger ------------------------
+# The single asyncio process runs on real websockets (Poly market + Kalshi orderbook) in SHADOW mode.
+# certifi (a transitive dep of requests) supplies the CA bundle the venue TLS handshakes need on hosts
+# whose system store lacks the roots. cryptography (above) signs the Kalshi WS handshake.
+websockets>=12
+
 # dev / test
 pytest>=7.4
 
