@@ -48,3 +48,10 @@ data/cache/group_slugmap.json
 .claude/
 # Supervisor runtime: logs, heartbeat, STOP_ALL flag (scripts/run_all.ps1). Machine-local, never commit.
 data/ops/
+
+data/cache/
+data/arbitrage_opportunities.csv
+data/arbs_log.xlsx
+data/og_current.json
+data/genz/*
+!data/genz/*.html
