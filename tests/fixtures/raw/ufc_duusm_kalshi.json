@@ -1,0 +1,154 @@
+{
+  "sport": "ufc",
+  "suffix": "26JUL18DUUSM",
+  "series": {
+    "KXUFCFIGHT": [
+      {
+        "event_ticker": "KXUFCFIGHT-26JUL18DUUSM",
+        "ticker": "KXUFCFIGHT-26JUL18DUUSM-USM",
+        "title": "Will Kamaru Usman win the Du Plessis vs Usman professional MMA fight scheduled for Jul 18, 2026?",
+        "yes_sub_title": "Kamaru Usman",
+        "no_sub_title": "Kamaru Usman",
+        "rules_primary": "If Kamaru Usman wins the Du Plessis vs Usman professional MMA fight originally scheduled for Jul 18, 2026, then the market resolves to Yes.",
+        "rules_secondary": "The following market refers to the Du Plessis vs Usman professional MMA fight originally scheduled for Jul 18, 2026. If this fight is postponed or delayed, the market will remain open and close after the rescheduled fight has finished (within two weeks). If the fight is declared a tie or no contest, the market will resolve to 50/50 for both fighters. If the fight is cancelled or rescheduled to over two weeks away, the market will resolve to a fair price in accordance with the rules.\n\nThis market and these products have not been endorsed by Zuffa LLC, d/b/a Ultimate Fighting Championship, UFC. Any references to the “UFC,” or any other associated marks are descriptive only, and do not indicate an endorsement of this product or any affiliation between Zuffa and Kalshi.\n\nKalshi is not affiliated, associated, authorized, endorsed by, or in any way officially connected with the Governing League. All trademarks, logos, and brand names are the property of their respective owners.",
+        "status": "active"
+      },
+      {
+        "event_ticker": "KXUFCFIGHT-26JUL18DUUSM",
+        "ticker": "KXUFCFIGHT-26JUL18DUUSM-DU",
+        "title": "Will Dricus Du Plessis win the Du Plessis vs Usman professional MMA fight scheduled for Jul 18, 2026?",
+        "yes_sub_title": "Dricus Du Plessis",
+        "no_sub_title": "Dricus Du Plessis",
+        "rules_primary": "If Dricus Du Plessis wins the Du Plessis vs Usman professional MMA fight originally scheduled for Jul 18, 2026, then the market resolves to Yes.",
+        "rules_secondary": "The following market refers to the Du Plessis vs Usman professional MMA fight originally scheduled for Jul 18, 2026. If this fight is postponed or delayed, the market will remain open and close after the rescheduled fight has finished (within two weeks). If the fight is declared a tie or no contest, the market will resolve to 50/50 for both fighters. If the fight is cancelled or rescheduled to over two weeks away, the market will resolve to a fair price in accordance with the rules.\n\nThis market and these products have not been endorsed by Zuffa LLC, d/b/a Ultimate Fighting Championship, UFC. Any references to the “UFC,” or any other associated marks are descriptive only, and do not indicate an endorsement of this product or any affiliation between Zuffa and Kalshi.\n\nKalshi is not affiliated, associated, authorized, endorsed by, or in any way officially connected with the Governing League. All trademarks, logos, and brand names are the property of their respective owners.",
+        "status": "active"
+      }
+    ],
+    "KXUFCDISTANCE": [
+      {
+        "event_ticker": "KXUFCDISTANCE-26JUL18DUUSM",
+        "ticker": "KXUFCDISTANCE-26JUL18DUUSM-DIST",
+        "title": "Will the fight go the distance?",
+        "yes_sub_title": "Fight goes the distance",
+        "no_sub_title": "Fight goes the distance",
+        "rules_primary": "If the Dricus Du Plessis vs. Kamaru Usman UFC Fight Night fight originally scheduled for Jul 18, 2026 goes the distance, then the market resolves to Yes.",
+        "rules_secondary": "Kalshi is not affiliated, associated, authorized, endorsed by, or in any way officially connected with the Governing League. All trademarks, logos, and brand names are the property of their respective owners.",
+        "status": "active"
+      }
+    ],
+    "KXUFCMOV": [
+      {
+        "event_ticker": "KXUFCMOV-26JUL18DUUSM",
+        "ticker": "KXUFCMOV-26JUL18DUUSM-USMSUB",
+        "title": "Will Kamaru Usman win the Dricus Du Plessis vs. Kamaru Usman UFC Fight Night fight by Submission?",
+        "yes_sub_title": "Kamaru Usman by Submission",
+        "no_sub_title": "Kamaru Usman by Submission",
+        "rules_primary": "If Kamaru Usman wins by Submission during the Dricus Du Plessis vs. Kamaru Usman UFC Fight Night fight originally scheduled for Jul 18, 2026, then the market resolves to Yes.",
+        "rules_secondary": "Kalshi is not affiliated, associated, authorized, endorsed by, or in any way officially connected with the Governing League. All trademarks, logos, and brand names are the property of their respective owners.",
+        "status": "active"
+      },
+      {
+        "event_ticker": "KXUFCMOV-26JUL18DUUSM",
+        "ticker": "KXUFCMOV-26JUL18DUUSM-USMKOTKODQ",
+        "title": "Will Kamaru Usman win the Dricus Du Plessis vs. Kamaru Usman UFC Fight Night fight by KO/TKO/DQ?",
+        "yes_sub_title": "Kamaru Usman by KO/TKO/DQ",
+        "no_sub_title": "Kamaru Usman by KO/TKO/DQ",
+        "rules_primary": "If Kamaru Usman wins by KO/TKO/DQ during the Dricus Du Plessis vs. Kamaru Usman UFC Fight Night fight originally scheduled for Jul 18, 2026, then the market resolves to Yes.",
+        "rules_secondary": "Kalshi is not affiliated, associated, authorized, endorsed by, or in any way officially connected with the Governing League. All trademarks, logos, and brand names are the property of their respective owners.",
+        "status": "active"
+      },
+      {
+        "event_ticker": "KXUFCMOV-26JUL18DUUSM",
+        "ticker": "KXUFCMOV-26JUL18DUUSM-USMDEC",
+        "title": "Will Kamaru Usman win the Dricus Du Plessis vs. Kamaru Usman UFC Fight Night fight by Decision?",
+        "yes_sub_title": "Kamaru Usman by Decision",
+        "no_sub_title": "Kamaru Usman by Decision",
+        "rules_primary": "If Kamaru Usman wins by Decision during the Dricus Du Plessis vs. Kamaru Usman UFC Fight Night fight originally scheduled for Jul 18, 2026, then the market resolves to Yes.",
+        "rules_secondary": "Kalshi is not affiliated, associated, authorized, endorsed by, or in any way officially connected with the Governing League. All trademarks, logos, and brand names are the property of their respective owners.",
+        "status": "active"
+      },
+      {
+        "event_ticker": "KXUFCMOV-26JUL18DUUSM",
+        "ticker": "KXUFCMOV-26JUL18DUUSM-DUSUB",
+        "title": "Will Dricus Du Plessis win the Dricus Du Plessis vs. Kamaru Usman UFC Fight Night fight by Submission?",
+        "yes_sub_title": "Dricus Du Plessis by Submission",
+        "no_sub_title": "Dricus Du Plessis by Submission",
+        "rules_primary": "If Dricus Du Plessis wins by Submission during the Dricus Du Plessis vs. Kamaru Usman UFC Fight Night fight originally scheduled for Jul 18, 2026, then the market resolves to Yes.",
+        "rules_secondary": "Kalshi is not affiliated, associated, authorized, endorsed by, or in any way officially connected with the Governing League. All trademarks, logos, and brand names are the property of their respective owners.",
+        "status": "active"
+      },
+      {
+        "event_ticker": "KXUFCMOV-26JUL18DUUSM",
+        "ticker": "KXUFCMOV-26JUL18DUUSM-DUKOTKODQ",
+        "title": "Will Dricus Du Plessis win the Dricus Du Plessis vs. Kamaru Usman UFC Fight Night fight by KO/TKO/DQ?",
+        "yes_sub_title": "Dricus Du Plessis by KO/TKO/DQ",
+        "no_sub_title": "Dricus Du Plessis by KO/TKO/DQ",
+        "rules_primary": "If Dricus Du Plessis wins by KO/TKO/DQ during the Dricus Du Plessis vs. Kamaru Usman UFC Fight Night fight originally scheduled for Jul 18, 2026, then the market resolves to Yes.",
+        "rules_secondary": "Kalshi is not affiliated, associated, authorized, endorsed by, or in any way officially connected with the Governing League. All trademarks, logos, and brand names are the property of their respective owners.",
+        "status": "active"
+      },
+      {
+        "event_ticker": "KXUFCMOV-26JUL18DUUSM",
+        "ticker": "KXUFCMOV-26JUL18DUUSM-DUDEC",
+        "title": "Will Dricus Du Plessis win the Dricus Du Plessis vs. Kamaru Usman UFC Fight Night fight by Decision?",
+        "yes_sub_title": "Dricus Du Plessis by Decision",
+        "no_sub_title": "Dricus Du Plessis by Decision",
+        "rules_primary": "If Dricus Du Plessis wins by Decision during the Dricus Du Plessis vs. Kamaru Usman UFC Fight Night fight originally scheduled for Jul 18, 2026, then the market resolves to Yes.",
+        "rules_secondary": "Kalshi is not affiliated, associated, authorized, endorsed by, or in any way officially connected with the Governing League. All trademarks, logos, and brand names are the property of their respective owners.",
+        "status": "active"
+      },
+      {
+        "event_ticker": "KXUFCMOV-26JUL18DUUSM",
+        "ticker": "KXUFCMOV-26JUL18DUUSM-DRAWDRAW",
+        "title": "Will the fight between Dricus Du Plessis and Kamaru Usman end in a draw or no contest?",
+        "yes_sub_title": "Draw/No Contest",
+        "no_sub_title": "Draw/No Contest",
+        "rules_primary": "If  the result is Draw/No Contest during the Dricus Du Plessis vs. Kamaru Usman UFC Fight Night fight originally scheduled for Jul 18, 2026, then the market resolves to Yes.",
+        "rules_secondary": "Kalshi is not affiliated, associated, authorized, endorsed by, or in any way officially connected with the Governing League. All trademarks, logos, and brand names are the property of their respective owners.",
+        "status": "active"
+      }
+    ],
+    "KXUFCROUNDS": [
+      {
+        "event_ticker": "KXUFCROUNDS-26JUL18DUUSM",
+        "ticker": "KXUFCROUNDS-26JUL18DUUSM-5",
+        "title": "Will the Fight end before round 5?",
+        "yes_sub_title": "Fight ends before round 5",
+        "no_sub_title": "Fight ends before round 5",
+        "rules_primary": "If the Dricus Du Plessis vs. Kamaru Usman UFC Fight Night fight originally scheduled for Jul 18, 2026 ends before round 5, then the market resolves to Yes.",
+        "rules_secondary": "Kalshi is not affiliated, associated, authorized, endorsed by, or in any way officially connected with the Governing League. All trademarks, logos, and brand names are the property of their respective owners.",
+        "status": "active"
+      },
+      {
+        "event_ticker": "KXUFCROUNDS-26JUL18DUUSM",
+        "ticker": "KXUFCROUNDS-26JUL18DUUSM-4",
+        "title": "Will the Fight end before round 4?",
+        "yes_sub_title": "Fight ends before round 4",
+        "no_sub_title": "Fight ends before round 4",
+        "rules_primary": "If the Dricus Du Plessis vs. Kamaru Usman UFC Fight Night fight originally scheduled for Jul 18, 2026 ends before round 4, then the market resolves to Yes.",
+        "rules_secondary": "Kalshi is not affiliated, associated, authorized, endorsed by, or in any way officially connected with the Governing League. All trademarks, logos, and brand names are the property of their respective owners.",
+        "status": "active"
+      },
+      {
+        "event_ticker": "KXUFCROUNDS-26JUL18DUUSM",
+        "ticker": "KXUFCROUNDS-26JUL18DUUSM-3",
+        "title": "Will the Fight end before round 3?",
+        "yes_sub_title": "Fight ends before round 3",
+        "no_sub_title": "Fight ends before round 3",
+        "rules_primary": "If the Dricus Du Plessis vs. Kamaru Usman UFC Fight Night fight originally scheduled for Jul 18, 2026 ends before round 3, then the market resolves to Yes.",
+        "rules_secondary": "Kalshi is not affiliated, associated, authorized, endorsed by, or in any way officially connected with the Governing League. All trademarks, logos, and brand names are the property of their respective owners.",
+        "status": "active"
+      },
+      {
+        "event_ticker": "KXUFCROUNDS-26JUL18DUUSM",
+        "ticker": "KXUFCROUNDS-26JUL18DUUSM-2",
+        "title": "Will the Fight end before round 2?",
+        "yes_sub_title": "Fight ends before round 2",
+        "no_sub_title": "Fight ends before round 2",
+        "rules_primary": "If the Dricus Du Plessis vs. Kamaru Usman UFC Fight Night fight originally scheduled for Jul 18, 2026 ends before round 2, then the market resolves to Yes.",
+        "rules_secondary": "Kalshi is not affiliated, associated, authorized, endorsed by, or in any way officially connected with the Governing League. All trademarks, logos, and brand names are the property of their respective owners.",
+        "status": "active"
+      }
+    ]
+  }
+}

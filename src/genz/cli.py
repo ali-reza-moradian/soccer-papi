@@ -140,6 +140,24 @@ def cmd_report(args) -> int:
     return 0
 
 
+def cmd_dump_raw(args) -> int:
+    """Write the full raw Kalshi + Poly evidence for one game to data/genz/raw/ (see rawdump.py)."""
+    from . import rawdump
+    log = _logger()
+    gz_config.ensure_dirs()
+    sport = getattr(args, "sport", "ufc")
+    gz_cfg = gz_config.load_genz_config(sport=sport)
+    res = rawdump.dump_raw(sport, args.game, _kalshi_client(gz_cfg), _poly_client(gz_cfg), gz_cfg, log=log)
+    if not res.get("found"):
+        print(f"game {args.game!r} not found for sport {sport}. Available game ids:")
+        for gid in res.get("available", []):
+            print(f"  {gid}")
+        return 1
+    print(f"wrote {res['kalshi_path']} ({res['kalshi_market_count']} kalshi market(s))")
+    print(f"wrote {res['poly_path']} ({res['poly_market_count']} poly market(s))")
+    return 0
+
+
 def cmd_status(args) -> int:
     gz_config.ensure_dirs()
     exec_cfg = exec_config.load_exec_config()
@@ -182,6 +200,11 @@ def build_parser() -> argparse.ArgumentParser:
     rp = sub.add_parser("report", help="print UNIQUE arbs from the feed, ranked by persistence.")
     rp.add_argument("--limit", type=int, default=50, help="max unique arbs to show (default 50).")
     rp.set_defaults(func=cmd_report)
+
+    dr = sub.add_parser("dump-raw", help="write full raw Kalshi + Poly evidence for one game to data/genz/raw/.")
+    dr.add_argument("--sport", choices=("soccer", "mlb", "tennis", "ufc"), default="ufc")
+    dr.add_argument("--game", required=True, help="the game id (Kalshi event ticker/suffix); omit-value lists available.")
+    dr.set_defaults(func=cmd_dump_raw)
 
     st = sub.add_parser("status", help="print config + last heartbeat.")
     st.set_defaults(func=cmd_status)

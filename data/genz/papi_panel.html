@@ -79,6 +79,7 @@ tr:hover td{background:var(--panel2)}
 .trap{background:var(--redBg)!important}
 .trap-tag{font-family:var(--mono);font-size:9px;color:var(--red);padding:2px 6px;background:var(--redBg)}
 .rain-tag{font-family:var(--mono);font-size:9px;color:var(--red);padding:2px 6px;background:var(--redBg);cursor:help}
+.gtab .rf{font-family:var(--mono);font-size:9px;color:var(--red);background:var(--redBg);padding:1px 5px;margin-left:5px;letter-spacing:.3px}
 .wo-tag{font-family:var(--mono);font-size:9px;color:var(--amber);padding:2px 6px;background:var(--amberBg);cursor:help}
 .rainrow{background:var(--redBg)!important}
 .feetrap{background:var(--amberBg)!important}
@@ -228,6 +229,14 @@ function schemaStale(snap, hb, expected){   // true when data exists but its sch
   var sc=(snap&&snap.schema!=null)?snap.schema:((hb&&hb.schema!=null)?hb.schema:null);
   return !!((snap||hb) && (sc==null || sc<expected));
 }
+function refusedTitle(g){   // per-game tooltip: which families refused to pair, and why
+  var r=(g&&g.refusals)||[], n=(g&&g.refused_families)||r.length;
+  if(!n)return '';
+  var esc=function(s){return String(s||'').replace(/"/g,'&quot;');};
+  var detail=r.map(function(x){return esc(x.family)+' ('+esc(x.reason)+')';}).join('; ');
+  return n+' family pairing(s) REFUSED on a settlement-definition mismatch'+(detail?': '+detail:'')
+    +'. A refused family is NEVER traded (a definition mismatch would lose both hedge legs).';
+}
 function tabs(){
   var el=document.getElementById('gtabs');
   if(!SNAP||!SNAP.games||typeof SNAP.games!=='object'){el.innerHTML='';return;}
@@ -242,7 +251,10 @@ function tabs(){
     var id=ids[i],g=SNAP.games[id],mk=g.markets||[];
     var nArb=mk.filter(function(m){return num(m.implied_cost)<1;}).length;
     var live=(g.phase==='inplay')?' <span class="lv">LIVE</span>':'';   // in-play = shadow collection
-    h+='<div class="gtab '+(id===curGame?'active':'')+'" data-g="'+id+'"><span class="t">'+(g.teams||id)+'</span><span class="s">'+mk.length+' mkts &middot; '+nArb+' arb'+live+'</span></div>';
+    // Family registry: how many families REFUSED to pair on a definition mismatch (UFC KO/TKO-vs-DQ,
+    // GTD facet divergence). Shown as a red chip + a tooltip listing each refused family + reason.
+    var rf=g.refused_families||0, rfChip=rf>0?' <span class="rf">'+rf+' refused</span>':'';
+    h+='<div class="gtab '+(id===curGame?'active':'')+'" data-g="'+id+'" title="'+refusedTitle(g)+'"><span class="t">'+(g.teams||id)+'</span><span class="s">'+mk.length+' mkts &middot; '+nArb+' arb'+live+rfChip+'</span></div>';
   }
   el.innerHTML=h;
   var t=el.querySelectorAll('.gtab');
@@ -289,10 +301,17 @@ function fillTag(top,avg){   // show avg fill next to top price when they differ
   if(top==null||avg==null||Math.abs(avg-top)<0.005)return '';
   return ' <span class="v">(fills '+(avg*100).toFixed(1)+'c)</span>';
 }
-function rainTitle(m){   // both venues' raw settlement texts for the RAIN RULE chip tooltip
+// settlement_risk chips: a family EXCLUDED from trading because the two venues can settle it
+// differently. Each risk key gets its own label + tooltip; unknown keys fall back to a generic chip.
+var RISK_CHIPS={
+  mlb_rain_rule:{label:'RAIN RULE',lead:'RAIN RULE — a rain-shortened game may settle differently across venues (Kalshi official/final vs Poly). EXCLUDED (never traded).'},
+  forfeit_rule:{label:'FORFEIT RULE',lead:'FORFEIT / RETIREMENT — a mid-match retirement leaves NO official set score for the synthesized Over/Under while Polymarket resolves 50-50, so the legs settle differently. EXCLUDED (never traded).'},
+  unparsed_settlement:{label:'SETTLEMENT RISK',lead:'UNPARSED SETTLEMENT — a resolution text could not be classified on one side; conservatively EXCLUDED (never traded).'}
+};
+function riskChip(m){return RISK_CHIPS[m.settlement_risk]||{label:'SETTLEMENT RISK',lead:'venues may settle this market differently — EXCLUDED (never traded).'};}
+function rainTitle(m){   // both venues' raw settlement texts for the settlement-risk chip tooltip
   var t=m.settlement_texts||{},esc=function(s){return String(s||'').replace(/"/g,'&quot;').slice(0,400);};
-  return 'RAIN RULE ('+(m.settlement_risk||'')+') — a rain-shortened game may settle differently across '
-    +'venues. KALSHI: '+esc(t.kalshi)+'  ||  POLY: '+esc(t.poly);
+  return riskChip(m).lead+'  KALSHI: '+esc(t.kalshi)+'  ||  POLY: '+esc(t.poly);
 }
 // The informational 50-50 settlement notes: tennis walkover + UFC draw/NoContest/cancel. Both settle
 // the Poly leg 50c vs a Kalshi last-price refund on a rare pre-event event; NOT a risk exclusion.
@@ -319,7 +338,7 @@ function marketCells(m){
   var VA=String(m.venue_a||' ')[0].toUpperCase(),VB=String(m.venue_b||' ')[0].toUpperCase();
   var legs='<span class="'+va+'">'+m.side_a+' '+pa+' <b>'+VA+'</b></span> + <span class="'+vb+'">'+m.side_b+' '+pb+' <b>'+VB+'</b></span>';
   var tag;
-  if(m.settlement_risk)tag='<span class="rain-tag" title="'+rainTitle(m)+'">RAIN RULE</span>';
+  if(m.settlement_risk)tag='<span class="rain-tag" title="'+rainTitle(m)+'">'+riskChip(m).label+'</span>';
   else if(m.period_mismatch)tag='<span class="trap-tag">extra-time trap</span>';
   else if(m.would_trade)tag='<span class="tag would">would trade</span>';
   else if(/rejected/.test(m.exec_status||''))tag='<span class="tag rej">'+String(m.exec_status).replace('rejected_','rej: ')+'</span>';
@@ -336,7 +355,7 @@ function marketCells(m){
   var xnet=num(m.exec_net_edge_pct);
   var xcap=(xnet!=null)?'<span class="cap">net@$10 '+xnet.toFixed(1)+'%</span>':'';
   var betCell='<span class="bet none">-</span>',profCell='<span class="roi neg">-</span>';
-  if(m.settlement_risk)betCell='<span class="bet none">do not bet (rain rule)</span>';
+  if(m.settlement_risk)betCell='<span class="bet none">do not bet ('+riskChip(m).label.toLowerCase()+')</span>';
   else if(arb&&m.period_mismatch)betCell='<span class="bet none">do not bet</span>';
   else if(netArb){
     var s=sizing(m);

@@ -843,12 +843,17 @@ def build_snapshot(tree: dict[str, Any], markets: list[Market], priced: dict[tup
                 snap["exec_net_edge_pct"] = ""
             mkts.append(snap)
         ko = str(g.get("kickoff_utc", ""))
+        cov = g.get("coverage") or {}
         games_out[game_id] = {
             "teams": f"{g.get('away', '?')} vs {g.get('home', '?')}",
             "kickoff_utc": ko,
             "started": _started(ko, now),
             "phase": market_phase(ko, now, horizon_hours),   # pre | inplay | expired
             "markets": mkts,
+            # Family registry (UFC/tennis): how many families REFUSED to pair on a definition mismatch
+            # (e.g. the KO/TKO-vs-DQ bucket), shown in the game tooltip. 0/absent for soccer/mlb.
+            "refused_families": int(cov.get("refused_families") or 0),
+            "refusals": g.get("refusals") or [],
         }
     return {"schema": SNAPSHOT_SCHEMA_VERSION, "sport": sport,
             "cycle_utc": now.strftime("%Y-%m-%dT%H:%M:%SZ"), "games": games_out}

@@ -567,6 +567,13 @@ class TennisSpec:
         if not _parse_iso(kickoff):
             kickoff = match.kickoff_iso
         nodes, unmatched = join_tennis(k_opts, p_opts, log=log, game_id=match.event_ticker)
+        # ADDITIVE family registry (total_sets): SCOPED to the total-sets markets on each venue so the
+        # winner path stays byte-identical and the many other tennis markets keep their existing inventory
+        # logging. Today Kalshi lists no set market -> total_sets is Poly-only inventory; the synthesis +
+        # forfeit-risk path activates automatically if/when Kalshi posts one.
+        reg_nodes, reg_unmatched, reg_refusals = _run_family_registry(match, ev, log=log)
+        nodes = nodes + reg_nodes
+        unmatched = unmatched + reg_unmatched
         risk = sum(1 for n in nodes if n.get("settlement_risk"))
         note = sum(1 for n in nodes if n.get("settlement_note"))
         if log:
@@ -576,17 +583,29 @@ class TennisSpec:
             "poly_base_slug": match.poly_base_slug, "tour": match.tour,
             "away": match.player_a, "home": match.player_b, "date": match.date,
             "kickoff_utc": kickoff, "sport": "tennis", "poly_match_method": method,
-            "nodes": nodes, "unmatched": unmatched,
+            "nodes": nodes, "unmatched": unmatched, "refusals": reg_refusals,
             "coverage": {"kalshi_ok": 1, "kalshi_failed": [], "poly_ok": 1 if ev else 0,
                          "poly_failed": [] if ev else [match.poly_base_slug or match.event_ticker],
                          "settlement_risk_nodes": risk, "settlement_note_nodes": note,
-                         "period_mismatch_dropped": 0},
+                         "refused_families": len(reg_refusals), "period_mismatch_dropped": 0},
         }
         if log:
             log.info("[TENNIS] %s %s vs %s: %d node(s) (%d risk, %d W/O-note), %d unmatched | poly=%s (%s).",
                      match.event_ticker, match.player_a, match.player_b, len(nodes), risk, note,
                      len(unmatched), "yes" if ev else "NO", method)
         return entry
+
+
+def _run_family_registry(match: TennisMatch, ev: Optional[dict], *, log: Any = None
+                         ) -> tuple[list, list, list]:
+    """Drive the tennis family registry (total_sets), SCOPED to the total-sets markets on each venue —
+    the winner path and all other markets are untouched. Returns (nodes, unmatched, refusals)."""
+    from .families_tennis import is_registry_kalshi, is_registry_poly, tennis_families
+    from .sports_base import run_registry
+    k_reg = [m for m in match.markets if is_registry_kalshi(m)]
+    p_reg = [m for m in (ev or {}).get("markets") or [] if isinstance(m, dict) and is_registry_poly(m)]
+    ctx = {"player_a": match.player_a, "player_b": match.player_b, "surname": surname}
+    return run_registry(tennis_families(), k_reg, p_reg, ctx=ctx, log=log, game_id=match.event_ticker)
 
 
 TENNIS_SPEC = TennisSpec()

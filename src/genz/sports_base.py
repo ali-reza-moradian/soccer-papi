@@ -13,9 +13,96 @@ kalshi_side, poly_token_id, poly_side, + optional poly_fee_*/settlement fields).
 """
 from __future__ import annotations
 
-from typing import Any, Optional, Protocol, runtime_checkable
+from dataclasses import dataclass, field
+from typing import Any, Callable, Optional, Protocol, runtime_checkable
 
 from . import config as gz_config
+
+
+# --------------------------------------------------------------------------- #
+# FAMILY REGISTRY — evidence-first, per-sport market-family pairing               #
+# --------------------------------------------------------------------------- #
+# A market FAMILY (moneyline, total_runs, go_the_distance, method-by-KO, total_sets, ...) is claimed by
+# a FamilySpec whose selectors recognize its markets on each venue from the REAL texts. The builder
+# emits paired tree nodes, per-family REFUSALS (a definition mismatch that would lose both legs — the
+# corners-class trap, e.g. Kalshi 'KO/TKO/DQ' vs Poly 'KO or TKO'), or INVENTORY (one venue only /
+# incompatible convention). A market no FamilySpec claims -> inventory reason='no_family'. Existing
+# ml2/match_winner/fight_winner/total_runs pairing is unchanged (its adapters ARE its registry entry);
+# NEW families are added as FamilySpecs so every pairing rule is written against a committed raw dump.
+
+
+@dataclass
+class FamilyResult:
+    """One family's contribution to a game's tree: paired nodes, refusals (definition mismatch),
+    inventory (unpaired-for-a-reason), and which venue markets it CLAIMED (so the residual can be
+    inventoried as 'no_family')."""
+    nodes: list = field(default_factory=list)
+    refusals: list = field(default_factory=list)      # [{family, reason, kalshi, poly}]
+    inventory: list = field(default_factory=list)      # [{venue, family, title, reason}]
+    claimed_k: set = field(default_factory=set)        # kalshi tickers this family consumed
+    claimed_p: set = field(default_factory=set)        # poly market slugs/ids this family consumed
+
+
+@dataclass
+class FamilySpec:
+    """One market family's pairing rule, written against the dumped texts. ``build`` receives the raw
+    markets this family CLAIMS on each venue (via the selectors) and returns a FamilyResult. Selectors
+    return True for a market that belongs to this family (title/question/rules text), so the registry
+    can compute the residual (claimed-by-none -> 'no_family')."""
+    family: str
+    mece_shape: str                                    # "2way"
+    kalshi_selector: Callable[[dict], bool]
+    poly_selector: Callable[[dict], bool]
+    build: Callable[[list, list, dict], FamilyResult]
+    settlement_axes: tuple = ()                        # named facets that MUST match to pair (doc/tests)
+
+
+def run_registry(families: list, kalshi_markets: list, poly_markets: list, *,
+                 ctx: Optional[dict] = None, log: Any = None, game_id: str = ""
+                 ) -> tuple[list, list, list]:
+    """Registry-driven pairing: each FamilySpec claims its markets on both venues and builds its nodes/
+    refusals/inventory. Markets no family claims -> inventory reason='no_family'. Returns
+    (nodes, unmatched, refusals) where ``unmatched`` merges every family's inventory + the residual."""
+    ctx = ctx or {}
+    nodes: list = []
+    unmatched: list = []
+    refusals: list = []
+    claimed_k: set = set()
+    claimed_p: set = set()
+    for fam in families:
+        k_claim = [m for m in kalshi_markets if _safe(fam.kalshi_selector, m)]
+        p_claim = [m for m in poly_markets if _safe(fam.poly_selector, m)]
+        if not k_claim and not p_claim:
+            continue
+        res = fam.build(k_claim, p_claim, ctx)
+        nodes.extend(res.nodes)
+        unmatched.extend(res.inventory)
+        refusals.extend(res.refusals)
+        claimed_k |= res.claimed_k
+        claimed_p |= res.claimed_p
+        if log:
+            for r in res.refusals:
+                log.warning("[%s] REFUSED %s: %s (kalshi=%r poly=%r)", game_id, fam.family,
+                            r.get("reason"), r.get("kalshi"), r.get("poly"))
+    # Residual: any market no family claimed at all -> inventory 'no_family'.
+    for m in kalshi_markets:
+        if str(m.get("ticker")) not in claimed_k and not any(_safe(f.kalshi_selector, m) for f in families):
+            unmatched.append({"venue": "kalshi", "family": None, "market_type": "other",
+                              "title": m.get("title"), "identifier": m.get("ticker"), "reason": "no_family"})
+    for m in poly_markets:
+        pid = str(m.get("slug") or m.get("id") or "")
+        if pid not in claimed_p and not any(_safe(f.poly_selector, m) for f in families):
+            unmatched.append({"venue": "polymarket", "family": None, "market_type": "other",
+                              "title": m.get("question") or m.get("groupItemTitle"),
+                              "identifier": pid, "reason": "no_family"})
+    return nodes, unmatched, refusals
+
+
+def _safe(fn: Callable, m: dict) -> bool:
+    try:
+        return bool(fn(m))
+    except Exception:  # noqa: BLE001 - a selector must never crash the build
+        return False
 
 
 @runtime_checkable

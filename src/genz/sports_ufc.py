@@ -143,13 +143,18 @@ class UFCFight:
     fighter_b: str
     kickoff_iso: str             # provisional; refined from Poly startTime when paired
     card: str = ""               # Poly card name ('UFC Fight Night: ...'), filled when paired
-    markets: list = field(default_factory=list)   # the 1-or-2 Kalshi per-fighter markets
+    markets: list = field(default_factory=list)   # the 1-or-2 Kalshi per-fighter fight-WINNER markets
+    extra_markets: list = field(default_factory=list)  # KXUFCDISTANCE/MOV/ROUNDS markets (same suffix)
     poly_base_slug: str = ""
 
     @property
     def game_id(self) -> str:
         return self.event_ticker
 
+
+# The fight WINNER lives in KXUFCFIGHT (discovered as the fight). The family registry's NEW families are
+# fed from these SIBLING series (same date+fragment suffix): distance / method-of-victory / round totals.
+_UFC_EXTRA_SERIES = ("KXUFCDISTANCE", "KXUFCMOV", "KXUFCROUNDS")
 
 _SUFFIX_RE = re.compile(r"^(\d{2}[A-Z]{3}\d{2})([A-Z0-9]+)$")   # date + a variable fragment concat
 _TITLE_VS_RE = re.compile(r"\bvs\.?\b", re.IGNORECASE)
@@ -240,6 +245,32 @@ def discover_ufc_fights(kalshi_client: Any, *, now: datetime, lookahead_hours: f
         log.info("[UFC] discovered %d fight(s); kalshi market shape (markets/event -> count): %s",
                  len(out), dict(sorted(shapes.items())))
     return out
+
+
+def discover_ufc_extra_markets(kalshi_client: Any, wanted_suffixes: set, *,
+                               series: tuple = _UFC_EXTRA_SERIES, log: Any = None) -> dict[str, list]:
+    """Every open market in the sibling series (distance/method/rounds), grouped by the SAME date+fragment
+    suffix the fight uses (KXUFCMOV-26JUL18DUUSM -> '26JUL18DUUSM'). Only suffixes in ``wanted_suffixes``
+    are kept, so we never fetch method/round markets for fights outside the window. A failed series fetch
+    is logged and skipped — the winner path is unaffected (families are purely additive)."""
+    by_suffix: dict[str, list] = {}
+    counts: dict[str, int] = {}
+    for s in series:
+        try:
+            for m in kalshi_client.iter_markets(series_ticker=s, status="open"):
+                if not isinstance(m, dict):
+                    continue
+                suf = _suffix_of(m)
+                if suf in wanted_suffixes:
+                    by_suffix.setdefault(suf, []).append(m)
+                    counts[s] = counts.get(s, 0) + 1
+        except Exception as exc:  # noqa: BLE001 - a failed sibling fetch must not abort the build
+            if log:
+                log.warning("[UFC] %s discovery failed: %s — that family absent this build.", s, exc)
+    if log and counts:
+        log.info("[UFC] sibling markets fetched: %s (grouped onto %d fight suffix(es)).",
+                 counts, len(by_suffix))
+    return by_suffix
 
 
 # --------------------------------------------------------------------------- #
@@ -511,6 +542,12 @@ class UFCSpec:
                        now: datetime, log: Any = None) -> tuple[list[UFCFight], dict[str, Any]]:
         fights = discover_ufc_fights(kalshi_client, now=now, lookahead_hours=cfg.lookahead_hours,
                                      series=list(cfg.kalshi_series), log=log)
+        # Attach the sibling-series markets (distance/method/rounds) that feed the family registry.
+        suffixes = {_suffix_of(f.markets[0]) for f in fights if f.markets}
+        if suffixes:
+            extras = discover_ufc_extra_markets(kalshi_client, suffixes, log=log)
+            for f in fights:
+                f.extra_markets = list(extras.get(_suffix_of(f.markets[0]), [])) if f.markets else []
         poly_sport = getattr(cfg, "poly_sport", "ufc")
         try:
             series_events = poly_client.events_by_series(poly_sport, closed=False)
@@ -533,6 +570,12 @@ class UFCSpec:
         if not _parse_iso(kickoff):
             kickoff = fight.kickoff_iso
         nodes, unmatched = join_ufc(k_opts, p_opts, log=log, game_id=fight.event_ticker)
+        # ADDITIVE family registry: the NEW families (go_the_distance / method_by_kotko / round_totals)
+        # run over the sibling-series Kalshi markets + the NON-winner Poly markets. fight_winner stays
+        # entirely native above (byte-identical), so its nodes are unaffected.
+        reg_nodes, reg_unmatched, reg_refusals = _run_family_registry(fight, ev, log=log)
+        nodes = nodes + reg_nodes
+        unmatched = unmatched + reg_unmatched
         risk = sum(1 for n in nodes if n.get("settlement_risk"))
         note = sum(1 for n in nodes if n.get("settlement_note"))
         if log:
@@ -542,17 +585,33 @@ class UFCSpec:
             "poly_base_slug": fight.poly_base_slug, "card": fight.card,
             "away": fight.fighter_a, "home": fight.fighter_b, "date": fight.date,
             "kickoff_utc": kickoff, "sport": "ufc", "poly_match_method": method,
-            "nodes": nodes, "unmatched": unmatched,
+            "nodes": nodes, "unmatched": unmatched, "refusals": reg_refusals,
             "coverage": {"kalshi_ok": 1, "kalshi_failed": [], "poly_ok": 1 if ev else 0,
                          "poly_failed": [] if ev else [fight.poly_base_slug or fight.event_ticker],
                          "settlement_risk_nodes": risk, "settlement_note_nodes": note,
-                         "period_mismatch_dropped": 0},
+                         "refused_families": len(reg_refusals), "period_mismatch_dropped": 0},
         }
         if log:
-            log.info("[UFC] %s %s vs %s: %d node(s) (%d risk, %d DNC-note), %d unmatched | poly=%s (%s).",
-                     fight.event_ticker, fight.fighter_a, fight.fighter_b, len(nodes), risk, note,
-                     len(unmatched), "yes" if ev else "NO", method)
+            log.info("[UFC] %s %s vs %s: %d node(s) (%d risk, %d DNC-note), %d unmatched, %d refused | "
+                     "poly=%s (%s).", fight.event_ticker, fight.fighter_a, fight.fighter_b, len(nodes),
+                     risk, note, len(unmatched), len(reg_refusals), "yes" if ev else "NO", method)
         return entry
+
+
+def _run_family_registry(fight: UFCFight, ev: Optional[dict], *, log: Any = None
+                         ) -> tuple[list, list, list]:
+    """Drive the UFC family registry for one fight (NEW families only). Kalshi side = the sibling markets;
+    Poly side = every event market EXCEPT the fight-winner (slug == event slug, handled natively). Returns
+    (nodes, unmatched, refusals)."""
+    from .families_ufc import ufc_families
+    from .sports_base import run_registry
+    eslug = str((ev or {}).get("slug") or "")
+    poly_reg = [m for m in (ev or {}).get("markets") or []
+                if isinstance(m, dict) and str(m.get("slug")) != eslug]
+    ctx = {"fighter_a": fight.fighter_a, "fighter_b": fight.fighter_b,
+           "surname": surname, "same_fighter": _same_fighter}
+    return run_registry(ufc_families(), list(fight.extra_markets), poly_reg,
+                        ctx=ctx, log=log, game_id=fight.event_ticker)
 
 
 UFC_SPEC = UFCSpec()

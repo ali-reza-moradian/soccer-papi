@@ -181,4 +181,20 @@ const ipRows = sandbox.collectAllRows(ipSlate, 'all', '');
 assert.strictEqual(ipRows.length, 1, 'in-play market collected');
 assert.strictEqual(ipRows[0].phase, 'inplay', 'row carries game phase for the live tag');
 
+// --- family registry: FORFEIT RULE chip (distinct from RAIN RULE) + refused-family game tooltip ---
+const forfeitRow = { market_type: 'total_sets', line: '2.5', side_a: 'over', venue_a: 'kalshi',
+  price_a: 0.5, side_b: 'under', venue_b: 'polymarket', price_b: 0.5, implied_cost: 1.0, roi_pct: 0,
+  settlement_risk: 'forfeit_rule', settlement_texts: { kalshi: 'k', poly: 'p' } };
+const fc = sandbox.marketCells(forfeitRow);
+assert.ok(/FORFEIT RULE/.test(fc.cells) && !/RAIN RULE/.test(fc.cells), 'forfeit_rule -> FORFEIT RULE chip: ' + fc.cells);
+assert.ok(/do not bet \(forfeit rule\)/.test(fc.cells), 'forfeit row: do-not-bet reason: ' + fc.cells);
+const rainRow = Object.assign({}, forfeitRow, { market_type: 'total_runs', settlement_risk: 'mlb_rain_rule' });
+assert.ok(/RAIN RULE/.test(sandbox.marketCells(rainRow).cells), 'mlb_rain_rule still -> RAIN RULE chip');
+assert.strictEqual(sandbox.riskChip({ settlement_risk: 'forfeit_rule' }).label, 'FORFEIT RULE', 'riskChip label');
+// refused-family tooltip: names each refused family + reason; empty when none
+const rt = sandbox.refusedTitle({ refused_families: 2, refusals: [
+  { family: 'method_by_kotko', reason: 'bucket_mismatch_dq' }, { family: 'method_by_kotko', reason: 'bucket_mismatch_dq' }] });
+assert.ok(/2 family pairing\(s\) REFUSED/.test(rt) && /method_by_kotko \(bucket_mismatch_dq\)/.test(rt), 'refusedTitle detail: ' + rt);
+assert.strictEqual(sandbox.refusedTitle({ refused_families: 0, refusals: [] }), '', 'no refusals -> empty tooltip');
+
 console.log('panel_og.test.js: all assertions passed');
