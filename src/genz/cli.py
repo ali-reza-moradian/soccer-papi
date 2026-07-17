@@ -46,6 +46,9 @@ def _spec_for(sport: str):
     if sport == "tennis":
         from . import sports_tennis
         return sports_tennis.TENNIS_SPEC
+    if sport == "ufc":
+        from . import sports_ufc
+        return sports_ufc.UFC_SPEC
     return tree_builder.SOCCER_SPEC
 
 
@@ -162,7 +165,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     bt = sub.add_parser("build-tree", help="JOB 1: rebuild the static match tree (hourly).")
     bt.add_argument("--lookahead", type=float, default=None, help="hours ahead to discover games (default 48).")
-    bt.add_argument("--sport", choices=("soccer", "mlb", "tennis"), default="soccer",
+    bt.add_argument("--sport", choices=("soccer", "mlb", "tennis", "ufc"), default="soccer",
                     help="which sport to build (default soccer — the existing WC pipeline).")
     bt.set_defaults(func=cmd_build_tree)
 
@@ -170,7 +173,7 @@ def build_parser() -> argparse.ArgumentParser:
     rn.add_argument("--loop", action="store_true", help="run continuously (default one cycle).")
     rn.add_argument("--once", action="store_true", help="run exactly one cycle and exit.")
     rn.add_argument("--interval", type=float, default=None, help="seconds between cycles (default 20).")
-    rn.add_argument("--sport", choices=("soccer", "mlb", "tennis"), default="soccer",
+    rn.add_argument("--sport", choices=("soccer", "mlb", "tennis", "ufc"), default="soccer",
                     help="which sport to price (default soccer — the existing WC pipeline).")
     rn.add_argument("--debug-gate", dest="debug_gate", action="store_true",
                     help="print per-game kickoff/now/started + each totals node's exact legs; then exit.")

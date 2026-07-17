@@ -423,6 +423,16 @@ genz:
     poly_tours: [atp, wta]          # Polymarket series slugs scanned per build; event slug <tour>-<s1>-<s2>-<date>
     kalshi_min_interval: 0.5        # per-process Kalshi request spacing (separate process)
 
+  # UFC — a FOURTH sport, fully isolated (ufc_tree.json + genz_*_ufc files). fight_winner ONLY in v1
+  # (method/round/distance markets are the corners trap across venues). Driven by `--sport ufc`; the
+  # other three sports are untouched. See src/genz/sports_ufc.py. Everything not listed is INHERITED.
+  ufc:
+    lookahead_hours: 168            # cards are WEEKLY — a short window is empty most days
+    interval_seconds: 90            # pre-fight winner books move slowly
+    kalshi_series: [KXUFCFIGHT]     # one event per fight, 2 per-fighter YES markets
+    poly_sport: ufc                 # Polymarket series slug scanned per build (slugs are UNDERIVABLE -> scan only)
+    kalshi_min_interval: 0.5        # per-process Kalshi request spacing (separate process)
+
 # PAPER MAKER — DRY-RUN measurement of the maker-side edge with SYNTHETIC quotes. It NEVER places an
 # order and NEVER touches the executor/order API; it just measures whether a passive (maker-fee-free)
 # leg + an aggressive hedge would clear the target net. Driven from the genz price cycle. See
@@ -450,8 +460,10 @@ maker_rt:
   ping_s: 10                        # Poly market-socket keepalive PING cadence
   drift_marks_s: [1, 5, 30]         # adverse-selection hedge-drift reads after each shadow fill
   kalshi_maker_fee_series: []       # Kalshi series that charge a MAKER fee -> never rest on that side
-  tennis_max_poly_leg: 0.65         # tennis: skip a direction if the Polymarket leg price exceeds this
-                                    # (pre-ball walkover tail: Poly settles 50c, Kalshi refunds ~last price)
+  poly_leg_cap:                     # PER-SPORT: skip a direction whose Polymarket leg price exceeds the cap
+    tennis: 0.65                    #   pre-ball walkover tail: Poly settles 50c, Kalshi refunds ~last price
+    ufc: 0.65                       #   pre-event cancel/draw/NC tail (HIGHER frequency than tennis walkovers)
+  # (legacy `tennis_max_poly_leg: <x>` is still read as a back-compat alias for poly_leg_cap.tennis)
   # LIVE — BUILT, LOCKED. Refuses unless enabled AND the arm file exists AND the startup self-check
   # (balances on both venues, poly allowance/approvals, tick sizes) passes. DO NOT flip enabled here.
   live:

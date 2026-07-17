@@ -37,7 +37,10 @@ COMPONENTS: list[Component] = [
     # TENNIS — a THIRD sport, fully isolated (own tree/price loops, own data files, own logs).
     Component("tennis_tree", "run_tennis_tree_loop.ps1", "& '{repo}\\scripts\\run_tennis_tree_loop.ps1'"),
     Component("tennis", "run_tennis_loop.ps1", "& '{repo}\\scripts\\run_tennis_loop.ps1'"),
-    # maker_rt (#8) — the realtime maker/hedger (SHADOW: real sockets, paper quotes, zero orders).
+    # UFC — a FOURTH sport, fully isolated (own tree/price loops, own data files, own logs).
+    Component("ufc_tree", "run_ufc_tree_loop.ps1", "& '{repo}\\scripts\\run_ufc_tree_loop.ps1'"),
+    Component("ufc", "run_ufc_loop.ps1", "& '{repo}\\scripts\\run_ufc_loop.ps1'"),
+    # maker_rt (#11) — the realtime maker/hedger (SHADOW: real sockets, paper quotes, zero orders).
     Component("maker_rt", "run_maker_rt_loop.ps1", "& '{repo}\\scripts\\run_maker_rt_loop.ps1'"),
 ]
 STOP_FLAG = "STOP_ALL"

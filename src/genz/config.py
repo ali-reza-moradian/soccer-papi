@@ -89,7 +89,14 @@ _TENNIS_PATHS = SportPaths(
     os.path.join(GENZ_DIR, "genz_snapshot_tennis.json"), os.path.join(GENZ_DIR, "genz_heartbeat_tennis.json"),
     os.path.join(GENZ_DIR, "papermaker_summary_tennis.json"), os.path.join(GENZ_DIR, "papermaker_state_tennis.json"),
     "genz_arbs_tennis", "papermaker_tennis")
-SPORT_PATHS: dict[str, SportPaths] = {"soccer": _SOCCER_PATHS, "mlb": _MLB_PATHS, "tennis": _TENNIS_PATHS}
+_UFC_PATHS = SportPaths(
+    "ufc",
+    os.path.join(GENZ_DIR, "ufc_tree.json"), os.path.join(GENZ_DIR, "ufc_tree_meta.json"),
+    os.path.join(GENZ_DIR, "genz_snapshot_ufc.json"), os.path.join(GENZ_DIR, "genz_heartbeat_ufc.json"),
+    os.path.join(GENZ_DIR, "papermaker_summary_ufc.json"), os.path.join(GENZ_DIR, "papermaker_state_ufc.json"),
+    "genz_arbs_ufc", "papermaker_ufc")
+SPORT_PATHS: dict[str, SportPaths] = {"soccer": _SOCCER_PATHS, "mlb": _MLB_PATHS,
+                                      "tennis": _TENNIS_PATHS, "ufc": _UFC_PATHS}
 
 
 def paths_for_sport(sport: str = "soccer") -> SportPaths:
@@ -139,6 +146,7 @@ class GenzConfig:
     sport: str = "soccer"
     kalshi_min_interval: Optional[float] = None   # per-process Kalshi request spacing (None = client default)
     poly_tours: list = field(default_factory=lambda: ["atp", "wta"])   # tennis: Poly series slugs to scan
+    poly_sport: str = "ufc"                                             # ufc: the Poly series slug scanned per build
 
 
 def _raw(config_path: str | None) -> dict[str, Any]:
@@ -216,6 +224,35 @@ def _apply_tennis_block(cfg: GenzConfig, config_path: str | None) -> None:
         cfg.kalshi_min_interval = float(ten["kalshi_min_interval"])
 
 
+# UFC defaults when the genz.ufc sub-block is absent/partial. Everything NOT listed is INHERITED from
+# genz (mirrors the MLB/tennis overlays).
+_UFC_DEFAULTS: dict[str, Any] = {
+    "lookahead_hours": 168.0,          # cards are weekly — a short window is empty most days
+    "interval_seconds": 90.0,
+    "kalshi_series": ["KXUFCFIGHT"],
+    "poly_sport": "ufc",
+}
+
+
+def _apply_ufc_block(cfg: GenzConfig, config_path: str | None) -> None:
+    """Overlay the genz.ufc sub-block: lookahead/interval/series/poly_sport + optional inherited-override
+    knobs and the per-process Kalshi throttle. Missing keys fall back to _UFC_DEFAULTS then genz."""
+    cfg.sport = "ufc"
+    ufc = _block(config_path).get("ufc")
+    ufc = ufc if isinstance(ufc, dict) else {}
+    cfg.lookahead_hours = float(ufc.get("lookahead_hours", _UFC_DEFAULTS["lookahead_hours"]))
+    cfg.interval_seconds = float(ufc.get("interval_seconds", _UFC_DEFAULTS["interval_seconds"]))
+    cfg.kalshi_series = list(ufc.get("kalshi_series") or _UFC_DEFAULTS["kalshi_series"])
+    cfg.poly_sport = str(ufc.get("poly_sport") or _UFC_DEFAULTS["poly_sport"])
+    cfg.poly_series_slug = cfg.poly_sport                                   # nominal; discovery uses poly_sport
+    for key in ("walk_stake_usd", "min_edge_pct", "max_plausible_roi_pct", "min_total_implied",
+                "http_timeout_seconds", "max_workers"):
+        if ufc.get(key) is not None:
+            setattr(cfg, key, (int if key == "max_workers" else float)(ufc[key]))
+    if ufc.get("kalshi_min_interval") is not None:
+        cfg.kalshi_min_interval = float(ufc["kalshi_min_interval"])
+
+
 def load_genz_config(config_path: str | None = None, *, overrides: dict[str, Any] | None = None,
                      sport: str = "soccer") -> GenzConfig:
     """Load ``genz:`` from config.yaml into a :class:`GenzConfig`. ``overrides`` (CLI flags) win.
@@ -254,4 +291,6 @@ def load_genz_config(config_path: str | None = None, *, overrides: dict[str, Any
         _apply_mlb_block(cfg, config_path)
     elif sport == "tennis":
         _apply_tennis_block(cfg, config_path)
+    elif sport == "ufc":
+        _apply_ufc_block(cfg, config_path)
     return cfg

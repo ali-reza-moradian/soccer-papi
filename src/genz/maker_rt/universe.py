@@ -110,7 +110,7 @@ def kalshi_tickers(universe: list) -> list:
     return list(seen)
 
 
-_SPORTS = ("soccer", "mlb", "tennis")
+_SPORTS = ("soccer", "mlb", "tennis", "ufc")
 
 
 def load_trees(paths_by_sport: Optional[dict] = None) -> dict:

@@ -602,7 +602,7 @@ def test_tennis_driver_skips_direction_when_poly_leg_over_cap():
 
     def restpoly_dzumhur_quoted(cap):
         st = _RecState()
-        cfg = _cfg(); cfg.tennis_max_poly_leg = cap
+        cfg = _cfg(); cfg.poly_leg_cap = {"tennis": cap}
         drv = QuoteDriver(cfg, st); drv.set_universe(uni)
         drv.refresh_quotes(_fav_books(), now, now_ts=100.0)
         return any(r["event"] == "quote" and r["direction"] == "rest-poly" and r["side"] == "dzumhur"
@@ -632,3 +632,77 @@ def test_tennis_start_utc_refresh_reanchors_expiry():
     drv.set_universe(uni_b)
     kb = drv._cands[0].kickoff_ts
     assert abs((kb - ka) - 7200.0) < 1.0                                     # +2h re-anchor
+
+
+# --------------------------------------------------------------------------- #
+# UFC coverage: per-sport cap map, universe admission, CHURN disarm on reload     #
+# --------------------------------------------------------------------------- #
+def _ufc_tree(kickoff, game="KXUFCFIGHT-A", note="dnc_50_50", risk=None):
+    n = lambda side, tok, kt: {   # noqa: E731
+        "market_type": "fight_winner", "market_key": "fight_winner", "side": side, "line": None,
+        "kind": "2way", "poly_token_id": tok, "poly_side": side.title(), "poly_fee_rate": 0.05,
+        "kalshi_ticker": kt, "kalshi_side": "YES",
+        **({"settlement_note": note} if note else {}), **({"settlement_risk": risk} if risk else {})}
+    return {"games": {game: {"away": "Usman", "home": "Du Plessis", "kickoff_utc": kickoff,
+            "sport": "ufc", "nodes": [n("usman", "U_U", game + "-USM"),
+                                      n("du plessis", "U_D", game + "-DU")]}}}
+
+
+def test_ufc_per_sport_cap_from_map():
+    from src.genz.maker_rt.quotes import poly_leg_exceeds_cap
+    cap = {"tennis": 0.65, "ufc": 0.70}
+    assert poly_leg_exceeds_cap("polymarket", 0.72, None, cap["ufc"]) is True    # ufc rest-poly 0.72 > 0.70
+    assert poly_leg_exceeds_cap("kalshi", 0.48, 0.72, cap["ufc"]) is True         # ufc hedge-poly 0.72
+    assert poly_leg_exceeds_cap("polymarket", 0.60, None, cap["ufc"]) is False    # 0.60 admitted
+
+
+def test_ufc_dnc_note_nodes_enter_universe():
+    from src.genz.maker_rt.universe import build_universe, poly_tokens
+    uni = build_universe({"ufc": _ufc_tree("2027-01-01T00:00:00Z")}, now_ts=0.0,
+                         max_games=20, expire_before_kickoff_s=120)
+    assert len(uni) == 1 and uni[0].sport == "ufc"                               # dnc_50_50 note ADMITTED
+    assert set(poly_tokens(uni)) == {"U_U", "U_D"}
+    risk = build_universe({"ufc": _ufc_tree("2027-01-01T00:00:00Z", note=None,
+                          risk="ufc_unparsed_settlement")}, now_ts=0.0, max_games=20,
+                          expire_before_kickoff_s=120)
+    assert risk == []
+
+
+def test_ufc_driver_uses_ufc_cap():
+    """The driver reads the per-sport cap from cfg.poly_leg_cap['ufc'] for a ufc market."""
+    from datetime import datetime, timezone
+    from src.genz.maker_rt.driver import QuoteDriver
+    from src.genz.maker_rt.universe import build_universe
+    uni = build_universe({"ufc": _ufc_tree("2027-01-01T00:00:00Z")}, now_ts=0.0,
+                         max_games=20, expire_before_kickoff_s=120)
+    st = _RecState()
+    cfg = _cfg(); cfg.poly_leg_cap = {"ufc": 0.65}
+    drv = QuoteDriver(cfg, st); drv.set_universe(uni)
+    assert all(c.poly_leg_cap == 0.65 for c in drv._cands)                       # ufc candidates carry the cap
+
+
+def test_churn_disarms_quotes_for_dropped_fight_on_reload():
+    """CHURN: a UFC fight that vanishes (cancel/opponent swap) between rebuilds must have its shadow
+    quote DISARMED on set_universe, so a later print can NEVER fill it on a stale book."""
+    from datetime import datetime, timezone
+    from src.genz.maker_rt.driver import QuoteDriver
+    from src.genz.maker_rt.universe import build_universe
+    st = _RecState()
+    drv = QuoteDriver(_cfg(), st)
+    uni_a = build_universe({"ufc": _ufc_tree("2027-01-01T00:00:00Z", game="KXUFCFIGHT-A")},
+                           now_ts=0.0, max_games=20, expire_before_kickoff_s=120)
+    drv.set_universe(uni_a)
+    # Arm a shadow quote for the Usman rest-poly candidate directly.
+    key = ("ufc", "KXUFCFIGHT-A", "fight_winner", "usman", "rest-poly")
+    ref = ("polymarket", "U_U", "BUY")
+    drv.fills.arm(key, ref, 0.46, 50, queue_ahead=0, at_best=True, ts=0.0,
+                  hedge_ctx={"lookup": {}, "hedge_venue": "kalshi", "poly_rate": 0.05})
+    assert key in drv.fills.quotes
+    # Reload with the fight GONE (a different fight replaces it) -> churn disarm fires.
+    uni_b = build_universe({"ufc": _ufc_tree("2027-01-01T00:00:00Z", game="KXUFCFIGHT-B")},
+                           now_ts=0.0, max_games=20, expire_before_kickoff_s=120)
+    drv.set_universe(uni_b, now=datetime(2026, 7, 17, 6, 0, 0, tzinfo=timezone.utc))
+    assert key not in drv.fills.quotes                                          # disarmed
+    assert any(r["event"] == "expire" and r["reason"] == "churn_gone" for r in st.rows)
+    # A print at the old level can no longer fill it (it's gone).
+    assert drv.fills.consume_print(ref, 0.45, 999, ts=1.0) == []

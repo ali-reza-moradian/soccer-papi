@@ -65,12 +65,16 @@ class MakerRtConfig:
     drift_marks_s: tuple = (1, 5, 30)      # adverse-selection hedge-drift marks after a shadow fill
     # Kalshi series that charge a MAKER fee — never rest on the Kalshi side of these (verified list).
     kalshi_maker_fee_series: tuple = ()
-    # TENNIS walkover cap: skip a direction whenever the Polymarket leg's price (rest price when resting
-    # Poly; hedge best ask when hedging Poly) exceeds this. On a PRE-BALL walkover the Poly leg settles
-    # 50c while the Kalshi leg refunds ~last price, so the hedged pair's tail loss ~= max(0, poly-0.50)
-    # on ~2-5% of matches. Capping at 0.65 bounds that tail to ~15c on a rare event (<0.5c expected) vs
-    # the ~1c target edge. match_winner nodes only; other sports unaffected.
-    tennis_max_poly_leg: float = 0.65
+    # PER-SPORT POLY-LEG CAP: skip a direction whenever the Polymarket leg's price (rest price when
+    # resting Poly; hedge best ask when hedging Poly) exceeds the sport's cap. On a pre-event walkover
+    # (tennis) or a cancel/draw/NC (ufc) the Poly leg settles 50c while the Kalshi leg refunds ~last
+    # price, so the hedged pair's tail loss ~= max(0, poly-0.50) on that rare event. Capping at 0.65
+    # bounds the tail to ~15c on a <0.5c-expected event vs the ~1c target edge. UFC's pre-event
+    # cancellation frequency is HIGHER than tennis walkovers, so the cap is NOT optional for ufc. Only
+    # the match_winner/fight_winner sports are in the map; other sports are uncapped.
+    poly_leg_cap: dict = field(default_factory=lambda: {"tennis": 0.65, "ufc": 0.65})
+    # DEPRECATED alias for poly_leg_cap['tennis'] — read at load for back-compat, logged once.
+    tennis_max_poly_leg: Optional[float] = None
     live: LiveConfig = field(default_factory=LiveConfig)
 
 
@@ -92,7 +96,7 @@ def load_maker_rt_config(config_path: Optional[str] = None,
         blk.update({k: v for k, v in overrides.items() if v is not None})
     cfg = MakerRtConfig()
     for name in ("max_games", "quote_usd", "target_net", "debounce_ms", "expire_before_kickoff_s",
-                 "poly_fee_rate", "head_poll_s", "ping_s", "tennis_max_poly_leg"):
+                 "poly_fee_rate", "head_poll_s", "ping_s"):
         if blk.get(name) is not None:
             setattr(cfg, name, blk[name])
     cfg.max_games = int(cfg.max_games)
@@ -103,7 +107,17 @@ def load_maker_rt_config(config_path: Optional[str] = None,
     cfg.poly_fee_rate = float(cfg.poly_fee_rate)
     cfg.head_poll_s = int(cfg.head_poll_s)
     cfg.ping_s = int(cfg.ping_s)
-    cfg.tennis_max_poly_leg = float(cfg.tennis_max_poly_leg)
+    # PER-SPORT poly-leg cap map, with the DEPRECATED tennis_max_poly_leg scalar as a back-compat alias.
+    cap = dict(cfg.poly_leg_cap)
+    if isinstance(blk.get("poly_leg_cap"), dict):
+        cap.update({str(k): float(v) for k, v in blk["poly_leg_cap"].items()})
+    if blk.get("tennis_max_poly_leg") is not None:
+        cap["tennis"] = float(blk["tennis_max_poly_leg"])
+        import logging
+        logging.getLogger("maker_rt").warning(
+            "[MAKER_RT] config maker_rt.tennis_max_poly_leg is DEPRECATED — use "
+            "maker_rt.poly_leg_cap: {tennis: %.2f, ...}; honoring it for tennis.", cap["tennis"])
+    cfg.poly_leg_cap = cap
     if blk.get("drift_marks_s"):
         cfg.drift_marks_s = tuple(int(x) for x in blk["drift_marks_s"])
     if blk.get("kalshi_maker_fee_series"):

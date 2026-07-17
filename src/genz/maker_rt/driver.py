@@ -14,6 +14,7 @@ from typing import Any, Optional
 from . import hedge as hedge_mod
 from .fills import ShadowFillModel
 from .quotes import compute_quote, needs_reprice, poly_leg_exceeds_cap
+from .state import utcnow
 
 
 @dataclass
@@ -32,7 +33,7 @@ class Candidate:
     poly_rate: float
     hedge_lookup: dict        # how to fetch the hedge SideView from the store at any moment
     kickoff_ts: float
-    poly_leg_cap: Optional[float] = None   # tennis walkover cap (None = no cap for non-tennis)
+    poly_leg_cap: Optional[float] = None   # per-sport poly-leg cap (None = uncapped sport)
 
 
 class QuoteDriver:
@@ -48,17 +49,33 @@ class QuoteDriver:
         self._cands: list = []
 
     # -- universe ----------------------------------------------------------
-    def set_universe(self, universe: list) -> None:
+    def set_universe(self, universe: list, now: Any = None) -> None:
+        """Adopt a new universe (on tree reload). CHURN SAFETY: a fight/match that vanished or swapped an
+        opponent leaves its old candidate key absent from the rebuilt set — disarm any lingering shadow
+        quote / prev / drift for that key so it can never fill on a stale book (UFC fights cancel late)."""
         self.universe = universe
         self._cands = [c for qm in universe for c in self._candidates(qm)]
+        live = {c.key for c in self._cands}
+        for key in list(self.fills.quotes):
+            if key not in live:                         # a node no longer in the tree -> disarm it
+                self.fills.disarm(key)
+                sport, game, mkey, side, direction = key
+                self.state.record({"event": "expire", "mode": "shadow", "sport": sport, "game": game,
+                                   "market_key": mkey, "side": side, "direction": direction,
+                                   "reason": "churn_gone"}, now or utcnow())
+        for key in list(self.prev):
+            if key not in live:
+                self.prev.pop(key, None)
+                self.last_event.pop(key, None)
+        self.drift_pending = [d for d in self.drift_pending if d["key"] in live]
 
     def _candidates(self, qm: Any) -> list:
         out: list = []
         sides = list(qm.sides.items())
         if len(sides) != 2:
             return out
-        # TENNIS walkover cap applies to a tennis (match_winner) market only.
-        cap = self.cfg.tennis_max_poly_leg if getattr(qm, "sport", "") == "tennis" else None
+        # PER-SPORT poly-leg cap (tennis walkover / ufc cancel-draw-NC tail). None for uncapped sports.
+        cap = (getattr(self.cfg, "poly_leg_cap", None) or {}).get(getattr(qm, "sport", ""))
         for i in (0, 1):
             rest_side, rest_node = sides[i]
             hedge_node = sides[1 - i][1]
