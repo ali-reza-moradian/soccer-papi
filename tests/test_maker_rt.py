@@ -418,11 +418,19 @@ def test_read_head_sha_ref_and_detached(tmp_path):
 # --------------------------------------------------------------------------- #
 # CONFIG + STATE + UNIVERSE                                                       #
 # --------------------------------------------------------------------------- #
-def test_config_defaults_and_live_locked():
-    cfg = mrt_config.load_maker_rt_config()
+def test_config_defaults_and_live_locked(tmp_path):
+    # CONFIG-PIN BAN: build the config from an EMPTY yaml, NEVER the live config.yaml (whose tunable
+    # values — max_games, caps, horizons — drift and must not be pinned in a test). Assert the DATACLASS
+    # DEFAULTS instead. Any test asserting a specific config value must load from an empty/fixture file.
+    empty = tmp_path / "empty.yaml"
+    empty.write_text("{}\n")
+    cfg = mrt_config.load_maker_rt_config(config_path=str(empty))
     assert cfg.max_games == 20 and cfg.quote_usd == 100.0 and cfg.target_net == 0.010
     assert cfg.live.enabled is False                              # ships LOCKED
     assert cfg.live.quote_usd_max == 25.0 and cfg.live.max_open_quotes == 2
+    # in-play rail defaults come from the dataclass, not the live file
+    assert cfg.inplay.fresh_s == 10.0 and cfg.inplay.shock_move == 0.05 and cfg.inplay.persist_ms == 1500
+    assert cfg.poly_leg_cap == {"tennis": 0.65, "ufc": 0.65}
 
 
 def test_state_summary_and_heartbeat(tmp_path):
@@ -436,7 +444,8 @@ def test_state_summary_and_heartbeat(tmp_path):
     summ = st.summary("shadow", {"poly_market": True, "kalshi": True, "poly_user": False}, now)
     assert summ["quotes"] == 1 and summ["fills"] == 1 and summ["behind_best"] == 1
     assert summ["at_best_share"] == 1.0 and summ["median_net_at_fill"] == 1.5
-    assert summ["mode"] == "shadow" and summ["schema"] == 1
+    assert summ["mode"] == "shadow" and summ["schema"] == 2      # schema 2: by_sport/by_phase/achievable
+    assert "by_sport" in summ and "by_phase" in summ
     hb = st.heartbeat("shadow", {"poly_market": True}, 3, now)
     assert hb["open_quotes"] == 3 and hb["fills_today"] == 1
 
@@ -464,9 +473,13 @@ def test_build_universe_filters_settlement_and_pregame():
 class _RecState:
     def __init__(self):
         self.rows = []
+        self.achv = []                                   # (sport, phase, value) achievable accumulations
 
     def record(self, row, now):
         self.rows.append(row)
+
+    def record_achievable(self, sport, phase, value, now):
+        self.achv.append((sport, phase, value))
 
 
 def test_driver_quotes_and_shadow_fills_end_to_end():

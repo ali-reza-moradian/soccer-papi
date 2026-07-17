@@ -98,6 +98,18 @@ def compute_quote(rest: SideView, hedge: SideView, *, hedge_venue: str, tick: fl
                          would_be_behind=False, hedge_best_ask=hedge_ask, net_at_quote=net)
 
 
+def achievable_net(rest_best_bid: Optional[float], hedge_best_ask: Optional[float], hedge_venue: str,
+                   poly_rate: float = 0.05) -> Optional[float]:
+    """The net edge if we simply JOINED the current best bid (no improvement, independent of target_net):
+        achievable = 1 − rest_best_bid − hedge_best_ask − hedge_fee(hedge_best_ask)
+    This is what the market ACTUALLY supports right now — aggregated per sport/phase into the summary so
+    we can learn what target the book will bear (vs the fixed target_net). None if either side is
+    missing a price."""
+    if rest_best_bid is None or hedge_best_ask is None:
+        return None
+    return 1.0 - rest_best_bid - hedge_best_ask - hedge_taker_fee(hedge_venue, hedge_best_ask, poly_rate)
+
+
 def poly_leg_exceeds_cap(rest_venue: str, quote_price: Optional[float],
                          hedge_best_ask: Optional[float], cap: Optional[float]) -> bool:
     """TENNIS walkover guard: True when the POLYMARKET leg of a direction prices above ``cap`` -> skip.

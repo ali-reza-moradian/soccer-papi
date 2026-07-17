@@ -52,6 +52,21 @@ class LiveConfig:
 
 
 @dataclass
+class InplayConfig:
+    """The ``maker_rt.inplay:`` sub-block — admission horizon + the anti-phantom rails for in-play
+    shadow quoting. Live is HARD-refused in-play regardless (see LiveGate)."""
+    horizon_hours: dict = field(default_factory=lambda: {"soccer": 3.0, "mlb": 4.5, "tennis": 4.5, "ufc": 1.5})
+    fresh_s: float = 10.0          # (a) both venues' books must have updated within this to quote/fill
+    shock_move: float = 0.05       # (b) a mid move >= this within shock_window_s freezes the node
+    shock_window_s: float = 10.0
+    freeze_s: float = 30.0         #     freeze duration after a shock (disarm + no quotes)
+    persist_ms: int = 1500         # (c) a direction must be continuously viable this long before arming
+
+    def horizon_for(self, sport: str) -> float:
+        return float(self.horizon_hours.get(sport, 3.0))
+
+
+@dataclass
 class MakerRtConfig:
     """Typed view of the ``maker_rt:`` block (missing keys -> safe defaults)."""
     max_games: int = 20                    # nearest-by-kickoff games to quote across both sports
@@ -75,6 +90,7 @@ class MakerRtConfig:
     poly_leg_cap: dict = field(default_factory=lambda: {"tennis": 0.65, "ufc": 0.65})
     # DEPRECATED alias for poly_leg_cap['tennis'] — read at load for back-compat, logged once.
     tennis_max_poly_leg: Optional[float] = None
+    inplay: InplayConfig = field(default_factory=InplayConfig)
     live: LiveConfig = field(default_factory=LiveConfig)
 
 
@@ -122,6 +138,18 @@ def load_maker_rt_config(config_path: Optional[str] = None,
         cfg.drift_marks_s = tuple(int(x) for x in blk["drift_marks_s"])
     if blk.get("kalshi_maker_fee_series"):
         cfg.kalshi_maker_fee_series = tuple(str(x) for x in blk["kalshi_maker_fee_series"])
+    # IN-PLAY rails sub-block.
+    ip_blk = blk.get("inplay")
+    ip_blk = dict(ip_blk) if isinstance(ip_blk, dict) else {}
+    ic = InplayConfig()
+    if isinstance(ip_blk.get("horizon_hours"), dict):
+        ic.horizon_hours = {str(k): float(v) for k, v in ip_blk["horizon_hours"].items()}
+    for name in ("fresh_s", "shock_move", "shock_window_s", "freeze_s"):
+        if ip_blk.get(name) is not None:
+            setattr(ic, name, float(ip_blk[name]))
+    if ip_blk.get("persist_ms") is not None:
+        ic.persist_ms = int(ip_blk["persist_ms"])
+    cfg.inplay = ic
     live_blk = blk.get("live")
     live_blk = dict(live_blk) if isinstance(live_blk, dict) else {}
     lc = LiveConfig()

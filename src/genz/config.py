@@ -147,6 +147,12 @@ class GenzConfig:
     kalshi_min_interval: Optional[float] = None   # per-process Kalshi request spacing (None = client default)
     poly_tours: list = field(default_factory=lambda: ["atp", "wta"])   # tennis: Poly series slugs to scan
     poly_sport: str = "ufc"                                             # ufc: the Poly series slug scanned per build
+    # IN-PLAY DATA COLLECTION (shadow only — live TRADING stays locked; in-play is additionally
+    # hard-forbidden for live by assertion). A started game within kickoff+horizon is PRICED and flagged
+    # phase="inplay" for data collection (would_trade FORCED false, executor SKIPPED); beyond the horizon
+    # it is dropped. The horizon is per-sport (games run different lengths).
+    inplay_collect: bool = True
+    inplay_horizon_hours: float = 3.0
 
 
 def _raw(config_path: str | None) -> dict[str, Any]:
@@ -161,6 +167,21 @@ def _raw(config_path: str | None) -> dict[str, Any]:
 def _block(config_path: str | None) -> dict[str, Any]:
     blk = _raw(config_path).get("genz")
     return blk if isinstance(blk, dict) else {}
+
+
+# Per-sport in-play horizon defaults (hours after kickoff a started game is still PRICED for shadow
+# collection). Games run different lengths: MLB ~3-4h, a tennis match ~1.5-4h, a UFC fight ~a few min
+# but the card slot slides, soccer ~2h. These are conservative upper bounds.
+_INPLAY_HORIZON_DEFAULTS: dict[str, float] = {"soccer": 3.0, "mlb": 4.5, "tennis": 4.5, "ufc": 1.5}
+
+
+def _apply_inplay(cfg: GenzConfig, block: dict[str, Any], sport: str) -> None:
+    """Overlay a sport's ``inplay:`` sub-block ({collect, horizon_hours}) onto cfg, defaulting the
+    horizon to the per-sport default. Missing sub-block -> collect on, default horizon."""
+    ip = block.get("inplay") if isinstance(block.get("inplay"), dict) else {}
+    default_h = _INPLAY_HORIZON_DEFAULTS.get(sport, 3.0)
+    cfg.inplay_collect = bool(ip.get("collect", True))
+    cfg.inplay_horizon_hours = float(ip.get("horizon_hours", default_h))
 
 
 # MLB defaults when the genz.mlb sub-block is absent/partial (spec section 0). Everything NOT listed
@@ -193,6 +214,7 @@ def _apply_mlb_block(cfg: GenzConfig, config_path: str | None) -> None:
             setattr(cfg, key, (int if key == "max_workers" else float)(mlb[key]))
     if mlb.get("kalshi_min_interval") is not None:
         cfg.kalshi_min_interval = float(mlb["kalshi_min_interval"])
+    _apply_inplay(cfg, mlb, "mlb")
 
 
 # TENNIS defaults when the genz.tennis sub-block is absent/partial. Everything NOT listed here is
@@ -222,6 +244,7 @@ def _apply_tennis_block(cfg: GenzConfig, config_path: str | None) -> None:
             setattr(cfg, key, (int if key == "max_workers" else float)(ten[key]))
     if ten.get("kalshi_min_interval") is not None:
         cfg.kalshi_min_interval = float(ten["kalshi_min_interval"])
+    _apply_inplay(cfg, ten, "tennis")
 
 
 # UFC defaults when the genz.ufc sub-block is absent/partial. Everything NOT listed is INHERITED from
@@ -251,6 +274,7 @@ def _apply_ufc_block(cfg: GenzConfig, config_path: str | None) -> None:
             setattr(cfg, key, (int if key == "max_workers" else float)(ufc[key]))
     if ufc.get("kalshi_min_interval") is not None:
         cfg.kalshi_min_interval = float(ufc["kalshi_min_interval"])
+    _apply_inplay(cfg, ufc, "ufc")
 
 
 def load_genz_config(config_path: str | None = None, *, overrides: dict[str, Any] | None = None,
@@ -293,4 +317,6 @@ def load_genz_config(config_path: str | None = None, *, overrides: dict[str, Any
         _apply_tennis_block(cfg, config_path)
     elif sport == "ufc":
         _apply_ufc_block(cfg, config_path)
+    else:
+        _apply_inplay(cfg, _block(config_path), "soccer")   # soccer reads genz.inplay directly
     return cfg

@@ -115,7 +115,7 @@ class PolyMarketFeed(_BaseFeed):
             data = json.loads(raw)
         except (ValueError, TypeError):
             return
-        prints = self.store.apply_poly(parsing.parse_poly_market(data))
+        prints = self.store.apply_poly(parsing.parse_poly_market(data), time.time())
         if prints:
             self.on_prints(prints)
         self.on_update()
@@ -173,7 +173,7 @@ class KalshiFeed(_BaseFeed):
             data = json.loads(raw)
         except (ValueError, TypeError):
             return
-        prints = self.store.apply_kalshi(parsing.parse_kalshi(data))
+        prints = self.store.apply_kalshi(parsing.parse_kalshi(data), time.time())
         if prints:
             self.on_prints(prints)
         self.on_update()

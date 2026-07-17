@@ -19,6 +19,16 @@ class GateResult:
     checks: dict = field(default_factory=dict)
 
 
+def is_inplay(phase: Any) -> bool:
+    return str(phase) == "inplay"
+
+
+def assert_live_allowed(phase: Any) -> None:
+    """HARD LOCK: a live order/hedge must NEVER fire for an in-play market, even when the gate is armed.
+    In-play is shadow data collection only. Raises AssertionError for phase=='inplay'."""
+    assert not is_inplay(phase), "LIVE FORBIDDEN in-play — in-play markets are shadow collection only"
+
+
 class LiveGate:
     """Decides whether the live order path may run. Clients are injected (fakes in tests); when the
     gate refuses, the caller must run in shadow and NEVER construct order clients."""
@@ -71,6 +81,12 @@ class LiveGate:
             failed = [k for k, v in checks.items() if not v]
             return GateResult(False, f"self-check failed: {failed}", checks=checks)
         return GateResult(True, "armed", checks=checks)
+
+    def may_place(self, phase: Any, *, gate: Optional[GateResult] = None) -> bool:
+        """True only if the gate is ARMED AND the market is NOT in-play. In-play is UNCONDITIONALLY
+        refused for live (shadow collection only), even enabled + ARM_MAKER + self-check passing."""
+        g = gate or self.evaluate()
+        return bool(g.armed) and not is_inplay(phase)
 
 
 def _require(res: Any) -> None:

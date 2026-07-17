@@ -62,8 +62,9 @@ async def _run(cfg: Any, log: Any) -> int:
     store = BookStore()
     state = MakerState()
     driver = QuoteDriver(cfg, state, log=log)
+    horizon = cfg.inplay.horizon_hours
     universe = build_universe(load_trees(), time.time(), max_games=cfg.max_games,
-                              expire_before_kickoff_s=cfg.expire_before_kickoff_s)
+                              expire_before_kickoff_s=cfg.expire_before_kickoff_s, horizon_hours=horizon)
     driver.set_universe(universe)
     log.info("[MAKER_RT] universe: %d markets (%s), %d poly tokens, %d kalshi tickers.",
              len(universe), _sport_breakdown(universe), len(poly_tokens(universe)),
@@ -80,6 +81,7 @@ async def _run(cfg: Any, log: Any) -> int:
     head0 = read_head_sha(mrt_config.REPO_ROOT)
     mtimes = tree_mtimes()
     last_hb = 0.0
+    last_achv_log = 0.0
     try:
         while True:
             now, now_ts = utcnow(), time.time()
@@ -89,7 +91,16 @@ async def _run(cfg: Any, log: Any) -> int:
             sockets = {"poly_market": pm.connected, "poly_user": False, "kalshi": ks.connected}
             if now_ts - last_hb >= HEARTBEAT_EVERY_S:
                 state.write_heartbeat(mode, sockets, driver.open_quote_count(), now)
+                summ = state.summary(mode, sockets, now)
                 state.write_summary(mode, sockets, now)
+                if now_ts - last_achv_log >= 60.0:            # a compact per-sport achievable heartbeat
+                    last_achv_log = now_ts
+                    for sp, sd in (summ.get("by_sport") or {}).items():
+                        a = sd.get("achievable") or {}
+                        if a.get("n"):
+                            log.info("[MAKER_RT][ACHV] %s p50=%s ge0.25pct=%s ge1pct=%s (n=%d) | q=%d f=%d",
+                                     sp, a.get("p50"), a.get("share_ge_25bp"), a.get("share_ge_100bp"),
+                                     a.get("n"), sd.get("quotes", 0), sd.get("fills", 0))
                 last_hb = now_ts
                 if head_changed(head0, read_head_sha(mrt_config.REPO_ROOT)):
                     log.warning("[MAKER_RT] git HEAD changed — exiting 0 for a fresh restart.")
@@ -98,7 +109,8 @@ async def _run(cfg: Any, log: Any) -> int:
                 if nm != mtimes:                          # trees rebuilt -> rebuild universe + feeds
                     mtimes = nm
                     universe = build_universe(load_trees(), now_ts, max_games=cfg.max_games,
-                                              expire_before_kickoff_s=cfg.expire_before_kickoff_s)
+                                              expire_before_kickoff_s=cfg.expire_before_kickoff_s,
+                                              horizon_hours=horizon)
                     driver.set_universe(universe)
                     for t in tasks:
                         t.cancel()

@@ -238,21 +238,54 @@ def test_usabih_style_totals_phantom_skipped_when_game_live():
     assert res.arbs_found == 0 and res.rows == []              # the 7.5% phantom never becomes a row
 
 
-def test_gate_fires_for_past_kickoff_with_live_markets_present():
-    """PROOF (issue 1): a game whose kickoff is 1 HOUR IN THE PAST, with LIVE (priced) markets
-    present, is skipped — markets_skipped > 0 and ZERO rows. Independent of any market closing."""
+def test_inplay_within_horizon_priced_as_shadow_never_traded(monkeypatch):
+    """IN-PLAY COLLECTION: a game kicked off 1h ago (within the 3h soccer horizon) is now PRICED for
+    SHADOW data collection — phase='inplay', inplay=1, would_trade forced FALSE, exec_status
+    'inplay_collect' — and the executor is NEVER called for it."""
     now = datetime(2026, 6, 30, 20, 0, 0, tzinfo=timezone.utc)
     past = (now - timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
     tree = {"games": {"BELSEN": {"away": "Belgium", "home": "Senegal", "kickoff_utc": past, "nodes": [
-        _node("1h_total", "1h_total|0.5", "over", 0.5, "2way", "high", "K_O", "YES", "P_O"),
-        _node("1h_total", "1h_total|0.5", "under", 0.5, "2way", "high", "K_U", "NO", "P_U"),
+        _node("total_goals", "total_goals|2.5", "over", 2.5, "2way", "high", "K_O", "YES", "P_O"),
+        _node("total_goals", "total_goals|2.5", "under", 2.5, "2way", "high", "K_U", "NO", "P_U"),
     ]}}}
-    md = _MD({("kalshi", "K_O"): [(0.71, 100000)], ("poly", "P_O"): [(0.63, 100000)],   # live books present
-              ("kalshi", "K_U"): [(0.30, 100000)], ("poly", "P_U"): [(0.39, 100000)]})
+    md = _MD({("kalshi", "K_O"): [(0.45, 100000)], ("poly", "P_O"): [(0.48, 100000)],   # implied 0.95 arb
+              ("kalshi", "K_U"): [(0.55, 100000)], ("poly", "P_U"): [(0.50, 100000)]})
+    # The executor must NOT be called for an in-play market.
+    called = []
+    monkeypatch.setattr(eng.exec_engine, "execute_arb", lambda *a, **k: called.append(1))
     res = eng.run_cycle(tree, md, GZ, ExecConfig(), now=now, kalshi=_NoTrade(), poly=_NoTrade(), write=False)
-    assert res.markets_skipped > 0          # gate fired
-    assert res.nodes_priced == 0            # skipped BEFORE pricing
-    assert res.rows == []                   # zero rows for the started game
+    assert res.markets_skipped == 0 and res.nodes_priced == 4     # PRICED (not skipped)
+    assert res.arbs_found == 1 and res.would_trade == 0           # an edge, but shadow-only
+    row = res.rows[0]
+    assert row["phase"] == "inplay" and row["inplay"] == 1
+    assert row["would_trade"] is False and row["exec_status"] == "inplay_collect"
+    assert called == []                                          # executor never touched in-play
+
+
+def test_inplay_beyond_horizon_dropped():
+    """A game kicked off 5h ago is BEYOND the 3h soccer horizon -> phase='expired' -> dropped (as a
+    started game always was): markets_skipped>0, nothing priced, zero rows."""
+    now = datetime(2026, 6, 30, 20, 0, 0, tzinfo=timezone.utc)
+    past = (now - timedelta(hours=5)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    tree = {"games": {"BELSEN": {"away": "Belgium", "home": "Senegal", "kickoff_utc": past, "nodes": [
+        _node("total_goals", "total_goals|2.5", "over", 2.5, "2way", "high", "K_O", "YES", "P_O"),
+        _node("total_goals", "total_goals|2.5", "under", 2.5, "2way", "high", "K_U", "NO", "P_U"),
+    ]}}}
+    res = eng.run_cycle(tree, _MD(_LADDERS), GZ, ExecConfig(), now=now, kalshi=_NoTrade(), poly=_NoTrade(), write=False)
+    assert res.markets_skipped == 1 and res.nodes_priced == 0 and res.rows == []
+
+
+def test_inplay_collect_disabled_drops_started_game():
+    """With inplay_collect=false a started game is dropped (the pre-in-play behavior), not priced."""
+    now = datetime(2026, 6, 30, 20, 0, 0, tzinfo=timezone.utc)
+    past = (now - timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    tree = {"games": {"BELSEN": {"away": "Belgium", "home": "Senegal", "kickoff_utc": past, "nodes": [
+        _node("total_goals", "total_goals|2.5", "over", 2.5, "2way", "high", "K_O", "YES", "P_O"),
+        _node("total_goals", "total_goals|2.5", "under", 2.5, "2way", "high", "K_U", "NO", "P_U"),
+    ]}}}
+    cfg = GenzConfig(); cfg.inplay_collect = False
+    res = eng.run_cycle(tree, _MD(_LADDERS), cfg, ExecConfig(), now=now, kalshi=_NoTrade(), poly=_NoTrade(), write=False)
+    assert res.markets_skipped == 1 and res.nodes_priced == 0 and res.rows == []
 
 
 def test_debug_gate_reports_started_true_and_false():
@@ -491,18 +524,42 @@ def test_run_cycle_writes_full_market_snapshot(tmp_path):
     assert snap_path.exists() and not (tmp_path / "genz_snapshot.json.tmp").exists()   # atomic
     snap = json.loads(snap_path.read_text(encoding="utf-8"))
     assert snap["cycle_utc"] == NOW.strftime("%Y-%m-%dT%H:%M:%SZ")
+    assert snap["schema"] == 4                                        # in-play phase schema
     g = snap["games"]["PORESP"]
-    assert g["teams"] == "Portugal vs Spain" and g["started"] is False
+    assert g["teams"] == "Portugal vs Spain" and g["started"] is False and g["phase"] == "pre"
     mkts = {m["market_type"]: m for m in g["markets"]}
     assert set(mkts) == {"total_goals", "btts"}                       # BOTH priced markets (arb + non-arb)
     assert mkts["total_goals"]["implied_cost"] < 1.0 and mkts["total_goals"]["would_trade"] is True
     assert mkts["btts"]["implied_cost"] > 1.0                         # the NON-ARB is present...
     assert mkts["btts"]["would_trade"] is False and mkts["btts"]["exec_status"] == "no_arb"
-    for m in g["markets"]:                                            # required fields incl. periods + flag
+    for m in g["markets"]:                                            # required fields incl. periods + phase
         for f in ("side_a", "venue_a", "price_a", "side_b", "venue_b", "price_b", "roi_pct",
-                  "kalshi_period", "poly_period", "period_mismatch"):
+                  "kalshi_period", "poly_period", "period_mismatch", "phase", "inplay"):
             assert f in m
+        assert m["phase"] == "pre" and m["inplay"] is False
     assert (tmp_path / "a.csv").exists()                             # genz_arbs.csv still written
+
+
+def test_snapshot_inplay_game_renders_with_phase():
+    """A started (within-horizon) game still RENDERS in the snapshot, flagged phase='inplay' at both
+    the game and row level (so the panel LIVE-badges it instead of dropping it)."""
+    now = datetime(2026, 6, 30, 20, 0, 0, tzinfo=timezone.utc)
+    past = (now - timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    tree = {"games": {"LIVEG": {"away": "A", "home": "H", "kickoff_utc": past, "nodes": [
+        _node("total_goals", "total_goals|2.5", "over", 2.5, "2way", "high", "K_O", "YES", "P_O"),
+        _node("total_goals", "total_goals|2.5", "under", 2.5, "2way", "high", "K_U", "NO", "P_U"),
+    ]}}}
+    md = _MD({("kalshi", "K_O"): [(0.45, 100000)], ("poly", "P_O"): [(0.48, 100000)],
+              ("kalshi", "K_U"): [(0.55, 100000)], ("poly", "P_U"): [(0.50, 100000)]})
+    markets = eng.collect_markets(tree)
+    for m in markets:
+        m.phase = eng.market_phase(m.kickoff, now, GZ.inplay_horizon_hours)
+    priced = eng.price_markets(md, markets, GZ)
+    snap = eng.build_snapshot(tree, markets, priced, {}, now, sport="soccer",
+                              horizon_hours=GZ.inplay_horizon_hours)
+    g = snap["games"]["LIVEG"]
+    assert g["phase"] == "inplay" and g["started"] is True
+    assert g["markets"] and all(m["phase"] == "inplay" and m["inplay"] is True for m in g["markets"])
 
 
 # --------------------------------------------------------------------------- #

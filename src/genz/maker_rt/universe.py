@@ -60,18 +60,23 @@ def _node(nd: dict) -> Node:
 
 
 def build_universe(trees: dict, now_ts: float, *, max_games: int = 20,
-                   expire_before_kickoff_s: int = 120) -> list:
-    """Every settlement-clean, pre-game, 2-outcome market of the nearest ``max_games`` games by
-    kickoff. ``trees`` maps sport -> loaded tree dict."""
+                   expire_before_kickoff_s: int = 120, horizon_hours: Optional[dict] = None) -> list:
+    """Every settlement-clean, 2-outcome market of the nearest ``max_games`` games by kickoff, admitted
+    from now until kickoff + the sport's in-play horizon. ``trees`` maps sport -> loaded tree dict;
+    ``horizon_hours`` maps sport -> hours after kickoff a node stays admitted (default {} -> drop at
+    kickoff, the pre-in-play behavior). The driver assigns each node its pre/gap/inplay phase at
+    quote time; the universe only decides admission."""
+    horizon_hours = horizon_hours or {}
     per_market: list = []
     game_kick: dict = {}
     for sport, tree in (trees or {}).items():
         if not tree:
             continue
+        horizon_s = float(horizon_hours.get(sport, 0.0)) * 3600.0
         for m in collect_markets(tree):
             ts = _kickoff_ts(m.kickoff)
-            if ts is None or now_ts >= ts - expire_before_kickoff_s:
-                continue                                   # started, or inside the expiry cutoff
+            if ts is None or now_ts >= ts + horizon_s:
+                continue                                   # no kickoff, or beyond the in-play horizon
             if _market_settlement_risk(m) or _period_disagrees(m):
                 continue                                   # not the same bet across venues -> never quote
             if not m.two_outcome:

@@ -332,10 +332,12 @@ def test_mlb_snapshot_carries_sport_and_settlement_risk():
     markets = E.collect_markets(tree)
     priced = E.price_markets(_CheapMD(), markets, load_genz_config(sport="mlb"))
     snap = E.build_snapshot(tree, markets, priced, {}, MLB_NOW, sport="mlb")
-    assert snap["sport"] == "mlb" and snap["schema"] == 3
+    assert snap["sport"] == "mlb" and snap["schema"] == 4          # schema 4: in-play phase
     g = snap["games"][_MLB_SUF]
+    assert g["phase"] == "pre"                                     # MLB_NOW is before first pitch
     tr = next(m for m in g["markets"] if m["market_type"] == "total_runs")
     assert tr["settlement_risk"] == "mlb_rain_rule" and tr["settlement_texts"] is not None
+    assert tr["phase"] == "pre" and tr["inplay"] is False
 
 
 # -- IDENTITY BEFORE SHAPE: exclude F5/run-line/NRFI sub-markets; keep ML + full-game totals --------- #

@@ -43,7 +43,7 @@ ARBS_COLUMNS = [
     "ts_utc", "game", "market_type", "market_key", "line",
     "side_a", "venue_a", "price_a", "side_b", "venue_b", "price_b",
     "implied_cost", "roi_pct", "net_edge_pct", "arb_survived", "would_trade",
-    "exec_status", "confidence", "note",
+    "exec_status", "confidence", "note", "phase", "inplay",
 ]
 
 
@@ -62,6 +62,7 @@ class Market:
     confidence: str
     kickoff: str = ""                            # game kickoff (UTC ISO) — gates out started games
     sides: dict = field(default_factory=dict)   # side_role -> tree node dict
+    phase: str = "pre"                           # "pre" | "inplay" | "expired" (set each cycle)
 
     @property
     def two_outcome(self) -> bool:
@@ -285,6 +286,21 @@ def _game_started(market: Market, now: datetime) -> bool:
     return _started(market.kickoff, now)
 
 
+def market_phase(kickoff: str, now: datetime, horizon_hours: float) -> str:
+    """The lifecycle phase of a game from its kickoff: 'pre' (not started, priced+arbed as today),
+    'inplay' (started but within kickoff+horizon — PRICED for shadow collection only, never traded),
+    or 'expired' (beyond kickoff+horizon — dropped). An unknown/empty kickoff is 'pre' (lenient)."""
+    ts = _parse_kickoff(kickoff)
+    if ts is None:
+        return "pre"
+    nowts = now.timestamp()
+    if nowts < ts:
+        return "pre"
+    if nowts < ts + horizon_hours * 3600.0:
+        return "inplay"
+    return "expired"
+
+
 # O/U totals families. A same-line/period Over+Under MUST sum to ~1.0 (like corners); a cross-venue
 # best-of-both that sums well below 1 means the two legs are NOT the same outcome (a period/line
 # mispairing), not a real arb. Kept only as a FALLBACK for legacy nodes that carry no numeric line —
@@ -363,7 +379,7 @@ def _base_row(c: ArbCandidate, now: datetime) -> dict[str, Any]:
         "side_b": c.side_b, "venue_b": c.quote_b.venue, "price_b": round(c.quote_b.price, 4),
         "implied_cost": round(c.implied_cost, 4), "roi_pct": round(c.roi_pct, 4),
         "net_edge_pct": "", "arb_survived": "", "would_trade": False, "exec_status": "",
-        "confidence": m.confidence, "note": "",
+        "confidence": m.confidence, "note": "", "phase": m.phase, "inplay": 1 if m.phase == "inplay" else 0,
     }
 
 
@@ -381,35 +397,46 @@ def run_cycle(tree: dict[str, Any], md: Any, gz_cfg: gz_config.GenzConfig,
     paths = paths or gz_config.paths_for_sport(getattr(gz_cfg, "sport", "soccer"))
     markets = collect_markets(tree)
 
-    # ELIGIBILITY GATE 1 (BEFORE pricing): GenZ trades PRE-GAME only. Skip ALL nodes of a started game
-    # up front — a live game's half-period markets desync between venues and throw phantom edges.
+    # ELIGIBILITY GATE 1 (BEFORE pricing): classify each market by lifecycle PHASE. 'pre' games are
+    # priced + arbed + tradeable as always. 'inplay' games (started, within kickoff+horizon) are PRICED
+    # for SHADOW DATA COLLECTION ONLY — never traded (would_trade forced false, the executor is skipped).
+    # 'expired' games (beyond the horizon) are dropped, as a started game always was. A live game's
+    # half-period markets desync between venues, so an in-play edge is data, not a tradeable arb.
+    horizon = float(getattr(gz_cfg, "inplay_horizon_hours", 3.0))
+    collect_inplay = bool(getattr(gz_cfg, "inplay_collect", True))
     pre_game: list[Market] = []
+    inplay: list[Market] = []
     markets_skipped = 0
     for mkt in markets:
-        if _game_started(mkt, now):
+        mkt.phase = market_phase(mkt.kickoff, now, horizon)
+        if mkt.phase == "pre":
+            pre_game.append(mkt)
+        elif mkt.phase == "inplay" and collect_inplay:
+            inplay.append(mkt)
+        else:                                              # expired (or in-play collection disabled)
+            mkt.phase = "expired"
             markets_skipped += 1
             if log:
-                log.info("[GENZ] %s %s: game started (kickoff %s) — skipping all nodes (pre-game only).",
-                         mkt.game, mkt.market_key, mkt.kickoff)
-            continue
-        pre_game.append(mkt)
+                log.info("[GENZ] %s %s: phase=%s (kickoff %s) — dropped (beyond in-play horizon).",
+                         mkt.game, mkt.market_key, mkt.phase, mkt.kickoff)
 
-    priced = price_markets(md, pre_game, gz_cfg)            # price ONLY pre-game markets
+    priced = price_markets(md, pre_game + inplay, gz_cfg)  # price pre-game AND in-play (collection)
     nodes_priced = sum(1 for pv in priced.values() if pv.priced)
     nodes_unpriced = sum(1 for pv in priced.values() if not pv.priced)
 
     # ELIGIBILITY GATE 2 (after pricing): skip a market where the two venues are pricing different
-    # states (one settled, one open) — a desync that produces phantom edges.
-    eligible: list[Market] = []
-    for mkt in pre_game:
+    # states (one settled, one open) — a desync that produces phantom edges. Applies to pre AND in-play.
+    eligible: list[Market] = []          # PRE-game, tradeable
+    eligible_inplay: list[Market] = []   # in-play, SHADOW collection only
+    for mkt in pre_game + inplay:
         if _venues_desynced(mkt, priced):
             markets_skipped += 1
             if log:
                 log.info("[GENZ] %s %s: venues desynced (one settled, one open) — skipping.",
                          mkt.game, mkt.market_key)
             continue
-        eligible.append(mkt)
-    arbs = find_arbs(eligible, priced)
+        (eligible_inplay if mkt.phase == "inplay" else eligible).append(mkt)
+    arbs = find_arbs(eligible + eligible_inplay, priced)
 
     rows: list[dict[str, Any]] = []
     attempted_trade = False                    # the one-trade-per-cycle rail
@@ -417,6 +444,15 @@ def run_cycle(tree: dict[str, Any], md: Any, gz_cfg: gz_config.GenzConfig,
     for c in arbs:
         m = c.market
         row = _base_row(c, now)
+        # IN-PLAY COLLECTION — checked FIRST: an in-play edge is SHADOW DATA, never a trade. Record the
+        # row (inplay=1) for offline analysis but SKIP the executor entirely and FORCE would_trade false
+        # (hard assertion — live trading must never touch an in-play market). No guard/executor call.
+        if m.phase == "inplay":
+            row.update(would_trade=False, exec_status="inplay_collect",
+                       note="in-play shadow collection — not traded (live forbidden in-play)")
+            assert row["would_trade"] is False, "in-play market must never would_trade"
+            rows.append(row)
+            continue
         # SETTLEMENT-RISK GUARD (MLB rain rule) — checked FIRST: a total_runs node whose venues can
         # settle a rain-shortened game differently is NOT the same bet. Never trade it, and label it
         # settlement_risk (clearer than the implausible catch-all it would otherwise hit).
@@ -495,15 +531,16 @@ def run_cycle(tree: dict[str, Any], md: Any, gz_cfg: gz_config.GenzConfig,
         write_heartbeat(res, now=now, path=heartbeat_path or paths.heartbeat_path)
         # Full-market snapshot: EVERY priced market (arb + non-arb) for the dashboard.
         rows_by_key = {(r.get("game"), r.get("market_key")): r for r in rows}
-        write_snapshot(build_snapshot(tree, markets, priced, rows_by_key, now, sport=paths.sport),
-                       snapshot_path or paths.snapshot_path)
+        write_snapshot(build_snapshot(tree, markets, priced, rows_by_key, now, sport=paths.sport,
+                                      horizon_hours=horizon), snapshot_path or paths.snapshot_path)
         # PAPER MAKER (dry-run): synthetic maker quotes on the PRE-GAME markets — measures the maker-side
         # edge; NEVER places an order or touches the executor.
         papermaker.run(eligible, priced, md, now, gz_cfg, log, paths=paths)
     if log:
+        n_inplay = sum(1 for r in rows if r.get("inplay"))
         log.info("[GENZ] cycle: %d game(s), %d node(s) priced (%d unpriced), %d market(s) skipped, "
-                 "%d arb(s), %d would-trade.", res.games, res.nodes_priced, res.nodes_unpriced,
-                 res.markets_skipped, res.arbs_found, res.would_trade)
+                 "%d arb(s) (%d in-play, shadow-only), %d would-trade.", res.games, res.nodes_priced,
+                 res.nodes_unpriced, res.markets_skipped, res.arbs_found, n_inplay, res.would_trade)
     return res
 
 
@@ -580,8 +617,9 @@ SNAPSHOT_REF_STAKE = 100.0            # reference TOTAL stake for the split/prof
 # Snapshot/heartbeat SCHEMA version — BUMP on ANY snapshot field change. The dashboard compares it to
 # its own expected value; a stale long-lived loop running old bytecode writes an old (or missing)
 # schema, which the panel turns into a loud "ENGINE RUNNING OLD CODE" banner. (v2: added fill_curve;
-# v3: Polymarket taker fee folded into net_roi_pct / fee_rate_pct / fill_curve.)
-SNAPSHOT_SCHEMA_VERSION = 3
+# v3: Polymarket taker fee folded into net_roi_pct / fee_rate_pct / fill_curve; v4: in-play phase — games
+# and rows gain phase="pre"|"inplay" + inplay flag, in-play games keep rendering with a LIVE badge.)
+SNAPSHOT_SCHEMA_VERSION = 4
 
 # Depth/stake fields are None for a non-arb (implied >= 1); the net fields below are computed for EVERY
 # priced row so the dashboard can sort all markets by net edge.
@@ -767,17 +805,22 @@ def _market_snapshot(market: Market, priced: dict[tuple, "PricedVenue"]) -> Opti
         "settlement_risk": risk,
         "settlement_note": note,
         "settlement_texts": (na.get("settlement_texts") or nb.get("settlement_texts")) if (risk or note) else None,
+        # In-play (schema 4): the market's lifecycle phase, so the panel LIVE-badges an in-play row
+        # instead of dropping it. would_trade is always false for these (data-collection only).
+        "phase": market.phase, "inplay": market.phase == "inplay",
     }
     snap.update(_sizing(qa, qb, implied))                  # depth/stake sizing (None for non-arbs)
     return snap
 
 
 def build_snapshot(tree: dict[str, Any], markets: list[Market], priced: dict[tuple, "PricedVenue"],
-                   rows_by_key: dict[tuple, dict], now: datetime, *, sport: str = "soccer") -> dict[str, Any]:
+                   rows_by_key: dict[tuple, dict], now: datetime, *, sport: str = "soccer",
+                   horizon_hours: float = 3.0) -> dict[str, Any]:
     """A full-market snapshot for the dashboard: EVERY priced 2-outcome market per game (arb AND
     non-arb, incl. implied>1.0), with best-of-both prices, the arb-loop's would_trade/exec_status when
     it produced a row (else 'no_arb'), and the settlement-period fields + a period_mismatch flag.
-    ``sport`` is stamped so the panel can label/route the snapshot (schema 3, new optional field)."""
+    ``sport`` is stamped so the panel can label/route the snapshot; ``horizon_hours`` sets each game's
+    in-play phase (schema 4)."""
     by_game: dict[str, list[Market]] = {}
     for m in markets:
         by_game.setdefault(m.game, []).append(m)
@@ -799,10 +842,12 @@ def build_snapshot(tree: dict[str, Any], markets: list[Market], priced: dict[tup
                 snap["exec_status"] = "no_arb" if snap["implied_cost"] >= 1.0 else "not_eligible"
                 snap["exec_net_edge_pct"] = ""
             mkts.append(snap)
+        ko = str(g.get("kickoff_utc", ""))
         games_out[game_id] = {
             "teams": f"{g.get('away', '?')} vs {g.get('home', '?')}",
-            "kickoff_utc": g.get("kickoff_utc", ""),
-            "started": _started(str(g.get("kickoff_utc", "")), now),
+            "kickoff_utc": ko,
+            "started": _started(ko, now),
+            "phase": market_phase(ko, now, horizon_hours),   # pre | inplay | expired
             "markets": mkts,
         }
     return {"schema": SNAPSHOT_SCHEMA_VERSION, "sport": sport,

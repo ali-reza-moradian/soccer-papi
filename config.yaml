@@ -402,6 +402,13 @@ genz:
   http_timeout_seconds: 15          # per-call HTTP timeout — fail fast so one hung call can't stall a cycle
   poly_series_slug: soccer-fifwc    # Polymarket WC series; siblings discovered by game-slug prefix
 
+  # IN-PLAY DATA COLLECTION (shadow ONLY — live TRADING stays locked everywhere; in-play is additionally
+  # hard-forbidden for live by assertion). A started game within kickoff+horizon_hours is PRICED and
+  # flagged phase="inplay" (would_trade FORCED false, executor dry-run SKIPPED, arbs CSV rows get
+  # inplay=1); beyond the horizon the game is dropped. Per-sport horizons live in each sub-block below.
+  inplay:
+    collect: true
+    horizon_hours: 3.0              # soccer: ~2h match + stoppage/ET buffer
   # MLB — a SECOND sport, fully isolated (its own tree/snapshot/heartbeat/arbs/papermaker files). Only
   # the keys below differ from the soccer defaults above; everything else (walk_stake_usd, min_edge_pct,
   # max_plausible_roi_pct, min_total_implied, http_timeout_seconds, max_workers, poly_fee_rate) is
@@ -412,6 +419,7 @@ genz:
     kalshi_series: [KXMLBGAME, KXMLBTOTAL]   # moneyline (ml2) + total runs ladder
     poly_slug_prefix: mlb           # Polymarket MLB series slug; event slug = mlb-<away>-<home>-<YYYY-MM-DD>
     kalshi_min_interval: 0.5        # per-process Kalshi request spacing (separate process from soccer)
+    inplay: {collect: true, horizon_hours: 4.5}   # a 9-inning game runs ~3h; 4.5h covers extras + rain delays
 
   # TENNIS — a THIRD sport, fully isolated (tennis_tree.json + genz_*_tennis files). match_winner ONLY
   # in v1 (sets/games are the corners trap across venues). Driven by `--sport tennis`; soccer + MLB are
@@ -422,6 +430,7 @@ genz:
     kalshi_series: [KXATPMATCH, KXWTAMATCH]   # ATP + WTA match-winner (one event per match, 2 markets)
     poly_tours: [atp, wta]          # Polymarket series slugs scanned per build; event slug <tour>-<s1>-<s2>-<date>
     kalshi_min_interval: 0.5        # per-process Kalshi request spacing (separate process)
+    inplay: {collect: true, horizon_hours: 4.5}   # a best-of-5 match can run 4h+
 
   # UFC — a FOURTH sport, fully isolated (ufc_tree.json + genz_*_ufc files). fight_winner ONLY in v1
   # (method/round/distance markets are the corners trap across venues). Driven by `--sport ufc`; the
@@ -432,6 +441,7 @@ genz:
     kalshi_series: [KXUFCFIGHT]     # one event per fight, 2 per-fighter YES markets
     poly_sport: ufc                 # Polymarket series slug scanned per build (slugs are UNDERIVABLE -> scan only)
     kalshi_min_interval: 0.5        # per-process Kalshi request spacing (separate process)
+    inplay: {collect: true, horizon_hours: 1.5}   # a fight is a few min but the card slot slides; short window
 
 # PAPER MAKER — DRY-RUN measurement of the maker-side edge with SYNTHETIC quotes. It NEVER places an
 # order and NEVER touches the executor/order API; it just measures whether a passive (maker-fee-free)
@@ -450,7 +460,7 @@ papermaker:
 # (false here) AND an on-disk arm file AND a startup self-check. Run: python -m src.genz.maker_rt.
 # ===========================================================================
 maker_rt:
-  max_games: 20                     # nearest-by-kickoff games to quote across BOTH sports combined
+  max_games: 30                     # nearest-by-kickoff games to quote across BOTH sports combined
   quote_usd: 100                    # shadow quote notional per node/direction
   target_net: 0.010                 # min net edge a hedged maker combo must clear at the quote price
   debounce_ms: 250                  # quote-engine debounce
@@ -464,6 +474,16 @@ maker_rt:
     tennis: 0.65                    #   pre-ball walkover tail: Poly settles 50c, Kalshi refunds ~last price
     ufc: 0.65                       #   pre-event cancel/draw/NC tail (HIGHER frequency than tennis walkovers)
   # (legacy `tennis_max_poly_leg: <x>` is still read as a back-compat alias for poly_leg_cap.tennis)
+  # IN-PLAY shadow quoting under anti-phantom rails (SHADOW ONLY — LiveGate hard-refuses in-play even if
+  # armed). A node is admitted until kickoff+horizon; quoted PRE until kickoff-120s, no quotes in the
+  # 120s gap, then IN-PLAY under the rails below. All the pre-game guards still apply.
+  inplay:
+    horizon_hours: {soccer: 3.0, mlb: 4.5, tennis: 4.5, ufc: 1.5}   # admit a node until kickoff + this
+    fresh_s: 10                     # (a) both venues' books must have updated within this to quote/fill
+    shock_move: 0.05                # (b) a mid move >= this within shock_window_s freezes the node
+    shock_window_s: 10
+    freeze_s: 30                    #     freeze duration after a shock (disarm + no quotes)
+    persist_ms: 1500                # (c) a direction must be continuously viable this long before arming
   # LIVE — BUILT, LOCKED. Refuses unless enabled AND the arm file exists AND the startup self-check
   # (balances on both venues, poly allowance/approvals, tick sizes) passes. DO NOT flip enabled here.
   live:

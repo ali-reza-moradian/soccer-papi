@@ -42,6 +42,7 @@ class FillEvent:
     trigger: str                     # "traded_through" | "queue_consumed"
     hedge_ctx: dict
     ts: float
+    rest_ref: tuple = ()             # the rest book (venue, identifier, side) — for the in-play fill rail
 
 
 class ShadowFillModel:
@@ -96,7 +97,7 @@ class ShadowFillModel:
                 q.filled = True
                 out.append(FillEvent(key=key, quote_price=q.quote_price, size=q.size, at_best=q.at_best,
                                      quote_age_s=max(0.0, ts - q.placed_ts), trigger=trigger,
-                                     hedge_ctx=dict(q.hedge_ctx), ts=ts))
+                                     hedge_ctx=dict(q.hedge_ctx), ts=ts, rest_ref=q.rest_ref))
                 self.quotes.pop(key, None)
         return out
 

@@ -56,8 +56,9 @@ assert.strictEqual(schemaStale({ schema: 1, games: {} }, null, 2), true, 'old sn
 assert.strictEqual(schemaStale({ cycle_utc: 'x', games: {} }, null, 2), true, 'missing schema -> banner');
 assert.strictEqual(schemaStale(null, { schema: 2 }, 2), false, 'heartbeat current -> no banner');
 assert.strictEqual(schemaStale(null, { schema: 1 }, 2), true, 'heartbeat old schema -> banner');
-assert.strictEqual(sandbox.EXPECTED_SCHEMA, 3, 'panel EXPECTED_SCHEMA matches engine SNAPSHOT_SCHEMA_VERSION');
-assert.strictEqual(schemaStale({ schema: 2, games: {} }, null, 3), true, 'schema 2 is now OLD (expected 3)');
+assert.strictEqual(sandbox.EXPECTED_SCHEMA, 4, 'panel EXPECTED_SCHEMA matches engine SNAPSHOT_SCHEMA_VERSION');
+assert.strictEqual(schemaStale({ schema: 3, games: {} }, null, 4), true, 'schema 3 is now OLD (expected 4)');
+assert.strictEqual(schemaStale({ schema: 4, games: {} }, null, 4), false, 'schema 4 -> current');
 
 // --- funded vs shadow (computed from parsed legs_json books, NOT the actionable flag) ---
 const funded = { legs_json: legsJson([
@@ -138,16 +139,46 @@ sandbox.selectGame('G2');
 assert.strictEqual(sandbox.curGame, 'G2', 'GAME-cell click sets curGame to that game');
 assert.ok(/genz\.game=G2/.test(loc.hash), 'GAME-cell click writes genz.game=G2: ' + loc.hash);
 
-// ================= MAKER RT v2 strip =================
+// ================= MAKER RT v3 strip (schema 2: by_sport / by_phase / achievable) =================
 const mstrip = strip(sandbox.makerStripHtml({
   mode: 'shadow', sockets: { poly_market: true, kalshi: true, poly_user: false },
   quotes: 12, fills: 3, fill_rate: 0.25, at_best_share: 0.5, median_net_at_fill: 1.2,
-  drift_median_1: 0.1, drift_median_5: 0.2, drift_median_30: -0.3, behind_best: 4 }));
+  drift_median_1: 0.1, drift_median_5: 0.2, drift_median_30: -0.3, behind_best: 4,
+  by_phase: { pre: { quotes: 10, fills: 3, fill_rate: 0.3, behind_best: 2 },
+              inplay: { quotes: 2, fills: 0, fill_rate: 0, behind_best: 2 } },
+  by_sport: {
+    mlb: { quotes: 12, fills: 3, fill_rate: 0.25, at_best_share: 0.5, median_net_at_fill: 1.2,
+           achievable: { n: 2820, p50: -0.008, share_ge_25bp: 0.03, share_ge_100bp: 0.001 } },
+    tennis: { quotes: 0, fills: 0, fill_rate: 0, at_best_share: 0, median_net_at_fill: null,
+              achievable: { n: 0 } } } }));
 assert.ok(/MAKER RT/.test(mstrip) && /shadow/i.test(mstrip), 'strip shows label + mode: ' + mstrip);
 assert.ok(/quotes 12/.test(mstrip) && /fills 3/.test(mstrip) && /fill-rate 25%/.test(mstrip), 'metrics: ' + mstrip);
 assert.ok(/median net 1\.20%/.test(mstrip) && /at-best 50%/.test(mstrip), 'net/at-best: ' + mstrip);
 assert.ok(/behind 4/.test(mstrip), 'behind-best count: ' + mstrip);
+// PRE | LIVE phase split
+assert.ok(/PRE q 10/.test(mstrip) && /LIVE q 2/.test(mstrip), 'PRE|LIVE split: ' + mstrip);
+// per-sport rows + achievable ladder ("achv p50 -0.8% ... 0.25%: 3%")
+assert.ok(/MLB q 12/.test(mstrip), 'per-sport MLB row: ' + mstrip);
+assert.ok(/achv p50 -0\.8%/.test(mstrip) && /0\.25%: 3%/.test(mstrip), 'achievable ladder line: ' + mstrip);
+// a zero-quote sport is greyed (class), not omitted
+assert.ok(/mrtsub grey/.test(sandbox.makerStripHtml({ mode: 'shadow', sockets: {},
+  by_sport: { tennis: { quotes: 0, achievable: { n: 0 } } } })), 'zero-quote sport greyed');
 // LIVE mode badge flips
 assert.ok(/live/i.test(sandbox.makerStripHtml({ mode: 'live', sockets: {} })), 'live badge');
+
+// --- in-play (schema 4): a row flagged inplay gets a red LIVE badge; collectAllRows carries phase ---
+const inplayRow = { market_type: 'total_goals', line: '2.5', side_a: 'over', venue_a: 'kalshi',
+  price_a: 0.45, side_b: 'under', venue_b: 'polymarket', price_b: 0.5, implied_cost: 0.95, roi_pct: 5,
+  net_roi_pct: 2, fee_rate_pct: 1, phase: 'inplay', inplay: true, exec_status: 'inplay_collect' };
+const rc = sandbox.marketCells(inplayRow);
+assert.ok(/livetag[^>]*>LIVE/.test(rc.cells), 'in-play row renders a LIVE badge: ' + rc.cells);
+const preRow = Object.assign({}, inplayRow, { phase: 'pre', inplay: false });
+assert.ok(!/livetag[^>]*>LIVE/.test(sandbox.marketCells(preRow).cells), 'pre-game row has no LIVE badge');
+// collectAllRows carries the game phase for the TIME-column live tag
+const ipSlate = { games: { LIVEG: { teams: 'A vs B', kickoff_utc: '2026-07-16T20:00:00Z', started: true,
+  phase: 'inplay', markets: [inplayRow] } } };
+const ipRows = sandbox.collectAllRows(ipSlate, 'all', '');
+assert.strictEqual(ipRows.length, 1, 'in-play market collected');
+assert.strictEqual(ipRows[0].phase, 'inplay', 'row carries game phase for the live tag');
 
 console.log('panel_og.test.js: all assertions passed');
