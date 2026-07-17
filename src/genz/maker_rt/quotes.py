@@ -98,6 +98,18 @@ def compute_quote(rest: SideView, hedge: SideView, *, hedge_venue: str, tick: fl
                          would_be_behind=False, hedge_best_ask=hedge_ask, net_at_quote=net)
 
 
+def poly_leg_exceeds_cap(rest_venue: str, quote_price: Optional[float],
+                         hedge_best_ask: Optional[float], cap: Optional[float]) -> bool:
+    """TENNIS walkover guard: True when the POLYMARKET leg of a direction prices above ``cap`` -> skip.
+    The Poly leg is the REST price when resting on Poly (rest_venue=='polymarket'), else the HEDGE best
+    ask when hedging on Poly. Bounds the pre-ball-walkover tail (Poly settles 50c, Kalshi refunds ~last
+    price). ``cap`` None (non-tennis) -> never skips."""
+    if cap is None:
+        return False
+    poly_px = quote_price if rest_venue == "polymarket" else hedge_best_ask
+    return poly_px is not None and poly_px > cap + 1e-9
+
+
 def needs_reprice(prev: QuoteDecision, cur: QuoteDecision, tick: float) -> bool:
     """Reprice when the floor OR the resulting quote price moved by >= one tick (both directions)."""
     tick = tick or DEFAULT_TICK

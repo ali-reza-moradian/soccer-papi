@@ -36,6 +36,13 @@ def _kalshi_ws_auth() -> tuple:
     return api_key_id, signer
 
 
+def _sport_breakdown(universe: list) -> str:
+    """'soccer=2 mlb=14 tennis=6' — the per-sport market counts, for the startup log."""
+    from collections import Counter
+    c = Counter(getattr(m, "sport", "?") for m in universe)
+    return " ".join(f"{k}={c[k]}" for k in sorted(c)) or "empty"
+
+
 def _spawn_feeds(store: BookStore, universe: list, cfg: Any, log: Any) -> tuple:
     """Create + start the shadow feeds (poly market + kalshi) for the current universe."""
     api_key_id, signer = _kalshi_ws_auth()
@@ -58,8 +65,9 @@ async def _run(cfg: Any, log: Any) -> int:
     universe = build_universe(load_trees(), time.time(), max_games=cfg.max_games,
                               expire_before_kickoff_s=cfg.expire_before_kickoff_s)
     driver.set_universe(universe)
-    log.info("[MAKER_RT] universe: %d markets, %d poly tokens, %d kalshi tickers.",
-             len(universe), len(poly_tokens(universe)), len(kalshi_tickers(universe)))
+    log.info("[MAKER_RT] universe: %d markets (%s), %d poly tokens, %d kalshi tickers.",
+             len(universe), _sport_breakdown(universe), len(poly_tokens(universe)),
+             len(kalshi_tickers(universe)))
 
     def on_prints(prints):
         driver.consume_prints(prints, store, utcnow(), time.time())

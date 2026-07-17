@@ -533,3 +533,102 @@ def test_driver_behind_best_is_deduped_not_per_tick():
         drv.refresh_quotes(bs, now, now_ts=100.0 + i * 0.25)
     behind = [r for r in st.rows if r["event"] == "behind" and r["direction"] == "rest-poly"]
     assert len(behind) == 1                              # deduped to the single transition
+
+
+# --------------------------------------------------------------------------- #
+# TENNIS coverage: universe admission, the poly-leg cap, start_utc re-anchor      #
+# --------------------------------------------------------------------------- #
+def _tennis_tree(kickoff, note="walkover_50_50", risk=None):
+    # Real tennis nodes: each player has their OWN Kalshi YES market (kalshi_side='YES' for both).
+    n = lambda side, tok, kt: {   # noqa: E731
+        "market_type": "match_winner", "market_key": "match_winner", "side": side, "line": None,
+        "kind": "2way", "poly_token_id": tok, "poly_side": side.title(), "poly_fee_rate": 0.05,
+        "kalshi_ticker": kt, "kalshi_side": "YES",
+        **({"settlement_note": note} if note else {}), **({"settlement_risk": risk} if risk else {})}
+    return {"games": {"KXATPMATCH-X": {"away": "Dzumhur", "home": "Molcan", "kickoff_utc": kickoff,
+            "sport": "tennis", "nodes": [n("dzumhur", "T_D", "KXATPMATCH-X-DZU"),
+                                         n("molcan", "T_M", "KXATPMATCH-X-MOL")]}}}
+
+
+def test_tennis_poly_leg_cap_helper_skips_high_and_admits_low():
+    from src.genz.maker_rt.quotes import poly_leg_exceeds_cap
+    cap = 0.65
+    assert poly_leg_exceeds_cap("polymarket", 0.70, None, cap) is True       # rest-poly leg 0.70 -> skip
+    assert poly_leg_exceeds_cap("kalshi", 0.48, 0.70, cap) is True            # hedge-poly ask 0.70 -> skip
+    assert poly_leg_exceeds_cap("polymarket", 0.60, None, cap) is False       # 0.60 admitted
+    assert poly_leg_exceeds_cap("kalshi", 0.48, 0.60, cap) is False
+    assert poly_leg_exceeds_cap("polymarket", 0.99, None, None) is False      # non-tennis (no cap)
+
+
+def test_tennis_walkover_note_nodes_enter_universe():
+    from src.genz.maker_rt.universe import build_universe, poly_tokens
+    uni = build_universe({"tennis": _tennis_tree("2027-01-01T00:00:00Z")}, now_ts=0.0,
+                         max_games=20, expire_before_kickoff_s=120)
+    assert len(uni) == 1 and uni[0].sport == "tennis"                         # walkover_50_50 note ADMITTED
+    assert set(poly_tokens(uni)) == {"T_D", "T_M"}
+    # a settlement_risk tennis node is EXCLUDED (conservative), same as MLB rain-risk.
+    risk = build_universe({"tennis": _tennis_tree("2027-01-01T00:00:00Z", note=None,
+                          risk="tennis_unparsed_settlement")}, now_ts=0.0, max_games=20,
+                          expire_before_kickoff_s=120)
+    assert risk == []
+
+
+def _fav_books():
+    """A Dzumhur-FAVORITE book where rest-poly on Dzumhur would quote at-best ~0.67: poly T_D bid 0.66,
+    and the Molcan hedge (Kalshi YES) asks 0.30 so the floor allows ~0.67."""
+    bs = BookStore()
+    bs.apply_poly(parsing.parse_poly_market({"event_type": "book", "asset_id": "T_D",
+        "bids": [{"price": "0.66", "size": "300"}], "asks": [{"price": "0.68", "size": "300"}]}))
+    bs.apply_poly(parsing.parse_poly_market({"event_type": "book", "asset_id": "T_M",
+        "bids": [{"price": "0.30", "size": "300"}], "asks": [{"price": "0.34", "size": "300"}]}))
+    # Molcan Kalshi YES ask = 1 - NO_bid = 1 - 0.70 = 0.30 (deep) -> Dzumhur-poly hedge lifts it cheaply.
+    bs.apply_kalshi(parsing.parse_kalshi({"type": "orderbook_snapshot", "sid": 1, "seq": 1,
+        "msg": {"market_ticker": "KXATPMATCH-X-MOL", "yes_dollars_fp": [["0.3000", "5000"]],
+                "no_dollars_fp": [["0.7000", "5000"]]}}))
+    # Dzumhur Kalshi YES ask = 1 - 0.34 = 0.66 (deep) — irrelevant to the rest-poly-Dzumhur direction.
+    bs.apply_kalshi(parsing.parse_kalshi({"type": "orderbook_snapshot", "sid": 1, "seq": 2,
+        "msg": {"market_ticker": "KXATPMATCH-X-DZU", "yes_dollars_fp": [["0.6600", "5000"]],
+                "no_dollars_fp": [["0.3400", "5000"]]}}))
+    return bs
+
+
+def test_tennis_driver_skips_direction_when_poly_leg_over_cap():
+    from datetime import datetime, timezone
+    from src.genz.maker_rt.driver import QuoteDriver
+    from src.genz.maker_rt.universe import build_universe
+    uni = build_universe({"tennis": _tennis_tree("2027-01-01T00:00:00Z")}, now_ts=0.0,
+                         max_games=20, expire_before_kickoff_s=120)
+    now = datetime(2026, 7, 17, 6, 0, 0, tzinfo=timezone.utc)
+
+    def restpoly_dzumhur_quoted(cap):
+        st = _RecState()
+        cfg = _cfg(); cfg.tennis_max_poly_leg = cap
+        drv = QuoteDriver(cfg, st); drv.set_universe(uni)
+        drv.refresh_quotes(_fav_books(), now, now_ts=100.0)
+        return any(r["event"] == "quote" and r["direction"] == "rest-poly" and r["side"] == "dzumhur"
+                   for r in st.rows)
+
+    # With a HIGH cap the favorite's rest-poly leg (~0.67) quotes; the 0.65 cap SKIPS it (no quote row).
+    assert restpoly_dzumhur_quoted(cap=0.99) is True
+    assert restpoly_dzumhur_quoted(cap=0.65) is False
+
+
+def test_tennis_start_utc_refresh_reanchors_expiry():
+    """On a tree reload with a SLID start time, set_universe rebuilds candidates with the new kickoff,
+    so expire_kickoff re-anchors to the refreshed start_utc (tennis 'not before' times slide)."""
+    from datetime import datetime, timezone
+    from src.genz.maker_rt.driver import QuoteDriver
+    from src.genz.maker_rt.universe import build_universe
+    st = _RecState()
+    drv = QuoteDriver(_cfg(), st)
+    # First build: kickoff far future -> candidates anchored there.
+    uni_a = build_universe({"tennis": _tennis_tree("2027-01-01T00:00:00Z")}, now_ts=0.0,
+                           max_games=20, expire_before_kickoff_s=120)
+    drv.set_universe(uni_a)
+    ka = drv._cands[0].kickoff_ts
+    # Rebuild with the match SLID two hours later -> candidates re-anchor to the new start.
+    uni_b = build_universe({"tennis": _tennis_tree("2027-01-01T02:00:00Z")}, now_ts=0.0,
+                           max_games=20, expire_before_kickoff_s=120)
+    drv.set_universe(uni_b)
+    kb = drv._cands[0].kickoff_ts
+    assert abs((kb - ka) - 7200.0) < 1.0                                     # +2h re-anchor

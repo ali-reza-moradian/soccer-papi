@@ -65,6 +65,12 @@ class MakerRtConfig:
     drift_marks_s: tuple = (1, 5, 30)      # adverse-selection hedge-drift marks after a shadow fill
     # Kalshi series that charge a MAKER fee — never rest on the Kalshi side of these (verified list).
     kalshi_maker_fee_series: tuple = ()
+    # TENNIS walkover cap: skip a direction whenever the Polymarket leg's price (rest price when resting
+    # Poly; hedge best ask when hedging Poly) exceeds this. On a PRE-BALL walkover the Poly leg settles
+    # 50c while the Kalshi leg refunds ~last price, so the hedged pair's tail loss ~= max(0, poly-0.50)
+    # on ~2-5% of matches. Capping at 0.65 bounds that tail to ~15c on a rare event (<0.5c expected) vs
+    # the ~1c target edge. match_winner nodes only; other sports unaffected.
+    tennis_max_poly_leg: float = 0.65
     live: LiveConfig = field(default_factory=LiveConfig)
 
 
@@ -86,7 +92,7 @@ def load_maker_rt_config(config_path: Optional[str] = None,
         blk.update({k: v for k, v in overrides.items() if v is not None})
     cfg = MakerRtConfig()
     for name in ("max_games", "quote_usd", "target_net", "debounce_ms", "expire_before_kickoff_s",
-                 "poly_fee_rate", "head_poll_s", "ping_s"):
+                 "poly_fee_rate", "head_poll_s", "ping_s", "tennis_max_poly_leg"):
         if blk.get(name) is not None:
             setattr(cfg, name, blk[name])
     cfg.max_games = int(cfg.max_games)
@@ -97,6 +103,7 @@ def load_maker_rt_config(config_path: Optional[str] = None,
     cfg.poly_fee_rate = float(cfg.poly_fee_rate)
     cfg.head_poll_s = int(cfg.head_poll_s)
     cfg.ping_s = int(cfg.ping_s)
+    cfg.tennis_max_poly_leg = float(cfg.tennis_max_poly_leg)
     if blk.get("drift_marks_s"):
         cfg.drift_marks_s = tuple(int(x) for x in blk["drift_marks_s"])
     if blk.get("kalshi_maker_fee_series"):

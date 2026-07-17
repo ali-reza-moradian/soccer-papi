@@ -750,6 +750,9 @@ def _market_snapshot(market: Market, priced: dict[tuple, "PricedVenue"]) -> Opti
     implied = qa.price + qb.price
     roi = ((1.0 / implied) - 1.0) * 100.0 if implied > 0 else 0.0
     risk = na.get("settlement_risk") or nb.get("settlement_risk") or ""
+    # Informational settlement note (the tennis walkover 50-50 divergence) — NOT a risk exclusion; the
+    # panel renders it as an amber W/O chip. Its raw texts ride along even without a risk flag.
+    note = na.get("settlement_note") or nb.get("settlement_note") or ""
     snap = {
         "market_type": market.market_type, "market_key": market.market_key,
         "line": "" if market.line is None else str(market.line),
@@ -762,7 +765,8 @@ def _market_snapshot(market: Market, priced: dict[tuple, "PricedVenue"]) -> Opti
         # MLB rain rule: a settlement_risk market is NOT the same bet across venues (excluded from
         # would_trade); the raw texts ride along so the panel can show them in the row's expando.
         "settlement_risk": risk,
-        "settlement_texts": (na.get("settlement_texts") or nb.get("settlement_texts")) if risk else None,
+        "settlement_note": note,
+        "settlement_texts": (na.get("settlement_texts") or nb.get("settlement_texts")) if (risk or note) else None,
     }
     snap.update(_sizing(qa, qb, implied))                  # depth/stake sizing (None for non-arbs)
     return snap

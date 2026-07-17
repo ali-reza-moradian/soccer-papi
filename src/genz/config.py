@@ -83,7 +83,13 @@ _MLB_PATHS = SportPaths(
     os.path.join(GENZ_DIR, "genz_snapshot_mlb.json"), os.path.join(GENZ_DIR, "genz_heartbeat_mlb.json"),
     os.path.join(GENZ_DIR, "papermaker_summary_mlb.json"), os.path.join(GENZ_DIR, "papermaker_state_mlb.json"),
     "genz_arbs_mlb", "papermaker_mlb")
-SPORT_PATHS: dict[str, SportPaths] = {"soccer": _SOCCER_PATHS, "mlb": _MLB_PATHS}
+_TENNIS_PATHS = SportPaths(
+    "tennis",
+    os.path.join(GENZ_DIR, "tennis_tree.json"), os.path.join(GENZ_DIR, "tennis_tree_meta.json"),
+    os.path.join(GENZ_DIR, "genz_snapshot_tennis.json"), os.path.join(GENZ_DIR, "genz_heartbeat_tennis.json"),
+    os.path.join(GENZ_DIR, "papermaker_summary_tennis.json"), os.path.join(GENZ_DIR, "papermaker_state_tennis.json"),
+    "genz_arbs_tennis", "papermaker_tennis")
+SPORT_PATHS: dict[str, SportPaths] = {"soccer": _SOCCER_PATHS, "mlb": _MLB_PATHS, "tennis": _TENNIS_PATHS}
 
 
 def paths_for_sport(sport: str = "soccer") -> SportPaths:
@@ -128,10 +134,11 @@ class GenzConfig:
     papermaker_enabled: bool = True
     papermaker_target_net_pct: float = 1.0   # min net edge (%) a hedged maker combo must clear
     papermaker_ref_shares: float = 100.0     # shares to walk the hedge book to when marking a fill
-    # MULTI-SPORT: which sport this config drives + its Kalshi throttle. soccer is unchanged; mlb reads
-    # the genz.mlb sub-block (lookahead/interval/series/slug), inheriting everything else from genz.
+    # MULTI-SPORT: which sport this config drives + its Kalshi throttle. soccer is unchanged; mlb/tennis
+    # read their genz.<sport> sub-block (lookahead/interval/series/slug), inheriting everything else.
     sport: str = "soccer"
     kalshi_min_interval: Optional[float] = None   # per-process Kalshi request spacing (None = client default)
+    poly_tours: list = field(default_factory=lambda: ["atp", "wta"])   # tennis: Poly series slugs to scan
 
 
 def _raw(config_path: str | None) -> dict[str, Any]:
@@ -180,6 +187,35 @@ def _apply_mlb_block(cfg: GenzConfig, config_path: str | None) -> None:
         cfg.kalshi_min_interval = float(mlb["kalshi_min_interval"])
 
 
+# TENNIS defaults when the genz.tennis sub-block is absent/partial. Everything NOT listed here is
+# INHERITED from the base genz block unchanged (mirrors the MLB overlay).
+_TENNIS_DEFAULTS: dict[str, Any] = {
+    "lookahead_hours": 72.0,
+    "interval_seconds": 60.0,
+    "kalshi_series": ["KXATPMATCH", "KXWTAMATCH"],
+    "poly_tours": ["atp", "wta"],
+}
+
+
+def _apply_tennis_block(cfg: GenzConfig, config_path: str | None) -> None:
+    """Overlay the genz.tennis sub-block: lookahead/interval/series/tours + optional inherited-override
+    knobs and the per-process Kalshi throttle. Missing keys fall back to _TENNIS_DEFAULTS then genz."""
+    cfg.sport = "tennis"
+    ten = _block(config_path).get("tennis")
+    ten = ten if isinstance(ten, dict) else {}
+    cfg.lookahead_hours = float(ten.get("lookahead_hours", _TENNIS_DEFAULTS["lookahead_hours"]))
+    cfg.interval_seconds = float(ten.get("interval_seconds", _TENNIS_DEFAULTS["interval_seconds"]))
+    cfg.kalshi_series = list(ten.get("kalshi_series") or _TENNIS_DEFAULTS["kalshi_series"])
+    cfg.poly_tours = list(ten.get("poly_tours") or _TENNIS_DEFAULTS["poly_tours"])
+    cfg.poly_series_slug = cfg.poly_tours[0] if cfg.poly_tours else "atp"   # nominal; discovery uses poly_tours
+    for key in ("walk_stake_usd", "min_edge_pct", "max_plausible_roi_pct", "min_total_implied",
+                "http_timeout_seconds", "max_workers"):
+        if ten.get(key) is not None:
+            setattr(cfg, key, (int if key == "max_workers" else float)(ten[key]))
+    if ten.get("kalshi_min_interval") is not None:
+        cfg.kalshi_min_interval = float(ten["kalshi_min_interval"])
+
+
 def load_genz_config(config_path: str | None = None, *, overrides: dict[str, Any] | None = None,
                      sport: str = "soccer") -> GenzConfig:
     """Load ``genz:`` from config.yaml into a :class:`GenzConfig`. ``overrides`` (CLI flags) win.
@@ -212,8 +248,10 @@ def load_genz_config(config_path: str | None = None, *, overrides: dict[str, Any
         cfg.papermaker_target_net_pct = float(pm["target_net_pct"])
     if pm.get("ref_shares") is not None:
         cfg.papermaker_ref_shares = float(pm["ref_shares"])
-    # MLB: overlay the genz.mlb sub-block LAST (after the base genz block is fully loaded), so MLB
-    # inherits every unspecified knob from genz and only overrides what it lists.
+    # MLB / TENNIS: overlay the genz.<sport> sub-block LAST (after the base genz block is fully loaded),
+    # so the sport inherits every unspecified knob from genz and only overrides what it lists.
     if sport == "mlb":
         _apply_mlb_block(cfg, config_path)
+    elif sport == "tennis":
+        _apply_tennis_block(cfg, config_path)
     return cfg

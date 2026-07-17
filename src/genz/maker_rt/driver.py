@@ -13,7 +13,7 @@ from typing import Any, Optional
 
 from . import hedge as hedge_mod
 from .fills import ShadowFillModel
-from .quotes import compute_quote, needs_reprice
+from .quotes import compute_quote, needs_reprice, poly_leg_exceeds_cap
 
 
 @dataclass
@@ -32,6 +32,7 @@ class Candidate:
     poly_rate: float
     hedge_lookup: dict        # how to fetch the hedge SideView from the store at any moment
     kickoff_ts: float
+    poly_leg_cap: Optional[float] = None   # tennis walkover cap (None = no cap for non-tennis)
 
 
 class QuoteDriver:
@@ -56,6 +57,8 @@ class QuoteDriver:
         sides = list(qm.sides.items())
         if len(sides) != 2:
             return out
+        # TENNIS walkover cap applies to a tennis (match_winner) market only.
+        cap = self.cfg.tennis_max_poly_leg if getattr(qm, "sport", "") == "tennis" else None
         for i in (0, 1):
             rest_side, rest_node = sides[i]
             hedge_node = sides[1 - i][1]
@@ -69,7 +72,7 @@ class QuoteDriver:
                     poly_rate=self.cfg.poly_rate if hasattr(self.cfg, "poly_rate") else self.cfg.poly_fee_rate,
                     hedge_lookup={"venue": "kalshi", "ticker": hedge_node.kalshi_ticker,
                                   "side": hedge_node.kalshi_side},
-                    kickoff_ts=qm.kickoff_ts))
+                    kickoff_ts=qm.kickoff_ts, poly_leg_cap=cap))
             # rest on KALSHI, hedge on POLY (skip if this series charges a maker fee)
             series = str(rest_node.kalshi_ticker or "").split("-", 1)[0]
             maker_fee = series in getattr(self.cfg, "kalshi_maker_fee_series", ())
@@ -81,7 +84,7 @@ class QuoteDriver:
                     rest_venue="kalshi", hedge_venue="polymarket", tick=0.01, hedge_tick=0.01,
                     poly_rate=float(hedge_node.poly_fee_rate or self.cfg.poly_fee_rate),
                     hedge_lookup={"venue": "polymarket", "token": hedge_node.poly_token_id},
-                    kickoff_ts=qm.kickoff_ts))
+                    kickoff_ts=qm.kickoff_ts, poly_leg_cap=cap))
         return out
 
     # -- lookups -----------------------------------------------------------
@@ -112,6 +115,13 @@ class QuoteDriver:
                                 poly_rate=c.poly_rate, hedge_tick=hedge_tick)
             prev = self.prev.get(c.key)
             self.prev[c.key] = dec
+            # TENNIS walkover cap: skip a direction whose Polymarket leg prices above the cap (bounds
+            # the pre-ball-walkover tail). Deduped like the other skip reasons.
+            if poly_leg_exceeds_cap(c.rest_venue, dec.quote_price, dec.hedge_best_ask, c.poly_leg_cap):
+                if c.key in self.fills.quotes:
+                    self._expire_if_open(c, now, "tennis_poly_cap")
+                self.last_event[c.key] = None
+                continue
             if dec.would_be_behind:
                 if c.key in self.fills.quotes:
                     self._expire_if_open(c, now, "now_behind")

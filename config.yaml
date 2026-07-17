@@ -413,6 +413,16 @@ genz:
     poly_slug_prefix: mlb           # Polymarket MLB series slug; event slug = mlb-<away>-<home>-<YYYY-MM-DD>
     kalshi_min_interval: 0.5        # per-process Kalshi request spacing (separate process from soccer)
 
+  # TENNIS — a THIRD sport, fully isolated (tennis_tree.json + genz_*_tennis files). match_winner ONLY
+  # in v1 (sets/games are the corners trap across venues). Driven by `--sport tennis`; soccer + MLB are
+  # untouched. See src/genz/sports_tennis.py. Everything not listed here is INHERITED from genz.
+  tennis:
+    lookahead_hours: 72             # tennis draws post ~2-3 days out
+    interval_seconds: 60            # pre-game winner books move slowly
+    kalshi_series: [KXATPMATCH, KXWTAMATCH]   # ATP + WTA match-winner (one event per match, 2 markets)
+    poly_tours: [atp, wta]          # Polymarket series slugs scanned per build; event slug <tour>-<s1>-<s2>-<date>
+    kalshi_min_interval: 0.5        # per-process Kalshi request spacing (separate process)
+
 # PAPER MAKER — DRY-RUN measurement of the maker-side edge with SYNTHETIC quotes. It NEVER places an
 # order and NEVER touches the executor/order API; it just measures whether a passive (maker-fee-free)
 # leg + an aggressive hedge would clear the target net. Driven from the genz price cycle. See
@@ -440,6 +450,8 @@ maker_rt:
   ping_s: 10                        # Poly market-socket keepalive PING cadence
   drift_marks_s: [1, 5, 30]         # adverse-selection hedge-drift reads after each shadow fill
   kalshi_maker_fee_series: []       # Kalshi series that charge a MAKER fee -> never rest on that side
+  tennis_max_poly_leg: 0.65         # tennis: skip a direction if the Polymarket leg price exceeds this
+                                    # (pre-ball walkover tail: Poly settles 50c, Kalshi refunds ~last price)
   # LIVE — BUILT, LOCKED. Refuses unless enabled AND the arm file exists AND the startup self-check
   # (balances on both venues, poly allowance/approvals, tick sizes) passes. DO NOT flip enabled here.
   live:

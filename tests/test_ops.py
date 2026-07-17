@@ -7,33 +7,41 @@ import io
 from scripts import ops
 
 
+_ALL = ["http", "tree", "genz", "og", "mlb_tree", "mlb", "tennis_tree", "tennis", "maker_rt"]
+
+
 def test_missing_components_start_if_missing():
     running = ["powershell -File C:/bots/soccer-papi/scripts/run_og_loop.ps1", "python.exe -m http.server 8080"]
-    # http + og alive -> the rest (incl. the MLB components + maker_rt) are missing
-    assert ops.missing_components(running) == ["tree", "genz", "mlb_tree", "mlb", "maker_rt"]
+    # http + og alive -> the rest (incl. the MLB + tennis components + maker_rt) are missing
+    assert ops.missing_components(running) == ["tree", "genz", "mlb_tree", "mlb", "tennis_tree", "tennis", "maker_rt"]
 
 
 def test_all_running_none_missing():
     running = ["a http.server 8080", "b run_tree_loop.ps1", "c run_genz_loop.ps1", "d run_og_loop.ps1",
-               "e run_mlb_tree_loop.ps1", "f run_mlb_loop.ps1", "g run_maker_rt_loop.ps1"]
+               "e run_mlb_tree_loop.ps1", "f run_mlb_loop.ps1", "g run_tennis_tree_loop.ps1",
+               "h run_tennis_loop.ps1", "i run_maker_rt_loop.ps1"]
     assert ops.missing_components(running) == []
 
 
 def test_all_missing_when_nothing_running():
-    assert ops.missing_components([]) == ["http", "tree", "genz", "og", "mlb_tree", "mlb", "maker_rt"]
-    assert ops.missing_components([None, ""]) == ["http", "tree", "genz", "og", "mlb_tree", "mlb", "maker_rt"]
+    assert ops.missing_components([]) == _ALL
+    assert ops.missing_components([None, ""]) == _ALL
 
 
-def test_component_specs_include_mlb_and_fill_templates():
+def test_component_specs_include_mlb_tennis_and_fill_templates():
     """The launch specs (consumed by run_all.ps1) list every component with a {py}/{repo}/{data}
     templated command, so adding a component needs no edit to run_all.ps1."""
     specs = ops.component_specs()
     names = [s["name"] for s in specs]
-    assert names == ["http", "tree", "genz", "og", "mlb_tree", "mlb", "maker_rt"]
+    assert names == _ALL
     mlb = next(s for s in specs if s["name"] == "mlb")
     assert "{repo}" in mlb["cmd"] and "run_mlb_loop.ps1" in mlb["cmd"]
     tree_tree = next(s for s in specs if s["name"] == "mlb_tree")
     assert "run_mlb_tree_loop.ps1" in tree_tree["cmd"]
+    tennis = next(s for s in specs if s["name"] == "tennis")
+    assert "run_tennis_loop.ps1" in tennis["cmd"]
+    tennis_tree = next(s for s in specs if s["name"] == "tennis_tree")
+    assert "run_tennis_tree_loop.ps1" in tennis_tree["cmd"]
     maker = next(s for s in specs if s["name"] == "maker_rt")
     assert "run_maker_rt_loop.ps1" in maker["cmd"]
 
@@ -60,7 +68,8 @@ def test_missing_cli_reads_stdin(monkeypatch, capsys):
     monkeypatch.setattr("sys.stdin", io.StringIO("x http.server 8080\ny run_genz_loop.ps1\n"))
     rc = ops._main(["missing"])
     assert rc == 0
-    assert capsys.readouterr().out.split() == ["tree", "og", "mlb_tree", "mlb", "maker_rt"]  # http + genz alive
+    assert capsys.readouterr().out.split() == ["tree", "og", "mlb_tree", "mlb", "tennis_tree",
+                                               "tennis", "maker_rt"]  # http + genz alive
 
 
 def test_stop_requested_cli(tmp_path):

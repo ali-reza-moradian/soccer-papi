@@ -110,20 +110,24 @@ def kalshi_tickers(universe: list) -> list:
     return list(seen)
 
 
+_SPORTS = ("soccer", "mlb", "tennis")
+
+
 def load_trees(paths_by_sport: Optional[dict] = None) -> dict:
-    """Load the soccer + MLB match trees from disk (missing -> None). Returns {sport: tree|None}."""
+    """Load the soccer + MLB + tennis match trees from disk (missing -> None). Returns {sport: tree|None}."""
     from .. import tree_builder
     out: dict = {}
-    for sport in ("soccer", "mlb"):
+    for sport in _SPORTS:
         p = gz_config.paths_for_sport(sport).tree_path
         out[sport] = tree_builder.load_tree(p) if os.path.exists(p) else None
     return out
 
 
 def tree_mtimes() -> dict:
-    """{sport: mtime} for the two tree files (0 when absent) — the driver reloads on change."""
+    """{sport: mtime} for the tree files (0 when absent) — the driver reloads on change (so quotes
+    re-anchor to a refreshed start_utc when the hourly rebuild slides a tennis 'not before' time)."""
     out: dict = {}
-    for sport in ("soccer", "mlb"):
+    for sport in _SPORTS:
         p = gz_config.paths_for_sport(sport).tree_path
         out[sport] = os.path.getmtime(p) if os.path.exists(p) else 0.0
     return out

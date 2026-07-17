@@ -78,6 +78,7 @@ tr:hover td{background:var(--panel2)}
 .trap{background:var(--redBg)!important}
 .trap-tag{font-family:var(--mono);font-size:9px;color:var(--red);padding:2px 6px;background:var(--redBg)}
 .rain-tag{font-family:var(--mono);font-size:9px;color:var(--red);padding:2px 6px;background:var(--redBg);cursor:help}
+.wo-tag{font-family:var(--mono);font-size:9px;color:var(--amber);padding:2px 6px;background:var(--amberBg);cursor:help}
 .rainrow{background:var(--redBg)!important}
 .feetrap{background:var(--amberBg)!important}
 .net{font-family:var(--mono);font-weight:600}
@@ -158,6 +159,7 @@ tr.betrow td{border-bottom:1px solid var(--border);padding-top:2px}
     <span class="lbl">SPORT</span>
     <span class="schip active">SOCCER</span>
     <span class="schip off" title="4-book scanner: soccer only — MLB coming">MLB<span class="n">coming</span></span>
+    <span class="schip off" title="4-book scanner: soccer only — tennis coming">TENNIS<span class="n">coming</span></span>
   </div>
   <div class="stale" id="ogstale">▲ OG FEED STALE — no scan in over 2× the interval. Is scripts\run_og_loop.ps1 running?</div>
   <div class="ctrl">
@@ -179,8 +181,8 @@ var MRT=null,MRTHB=null;
 // GENZ is now MULTI-SPORT: one snapshot/heartbeat/papermaker per sport. SNAP/HB/PM always point at the
 // ACTIVE sport's data (so every existing reference keeps working); the per-sport stores hold both.
 var sport='soccer';
-var SNAPS={soccer:null,mlb:null}, HBS={soccer:null,mlb:null}, PMS={soccer:null,mlb:null};
-var SPORTS=[['soccer','SOCCER'],['mlb','MLB']];
+var SNAPS={soccer:null,mlb:null,tennis:null}, HBS={soccer:null,mlb:null,tennis:null}, PMS={soccer:null,mlb:null,tennis:null};
+var SPORTS=[['soccer','SOCCER'],['mlb','MLB'],['tennis','TENNIS']];
 function useSport(){SNAP=SNAPS[sport];HB=HBS[sport];PM=PMS[sport];}
 var EXPECTED_SCHEMA=3;   // must match src/genz/engine.py SNAPSHOT_SCHEMA_VERSION
 function num(x){var n=parseFloat(x);return isNaN(n)?null:n;}
@@ -285,6 +287,12 @@ function rainTitle(m){   // both venues' raw settlement texts for the RAIN RULE 
   return 'RAIN RULE ('+(m.settlement_risk||'')+') — a rain-shortened game may settle differently across '
     +'venues. KALSHI: '+esc(t.kalshi)+'  ||  POLY: '+esc(t.poly);
 }
+function woTitle(m){   // both venues' raw texts for the tennis WALKOVER 50-50 chip tooltip
+  var t=m.settlement_texts||{},esc=function(s){return String(s||'').replace(/"/g,'&quot;').slice(0,400);};
+  return 'WALKOVER 50-50 — a PRE-BALL walkover settles 50c on Polymarket vs ~last price on Kalshi '
+    +'(informational, still tradable; the winner IS the same bet once a ball is played). '
+    +'KALSHI: '+esc(t.kalshi)+'  ||  POLY: '+esc(t.poly);
+}
 function marketCells(m){
   // The common per-market row: returns {cls, title, cells} where cells is the Market..Status <td>
   // sequence. Shared by the per-game view and the ALL view (which prepends Game + Time cells) so the
@@ -306,6 +314,9 @@ function marketCells(m){
   else if(netArb)tag='<span class="tag would">NET +'+net.toFixed(1)+'%</span>';   // positive net, below trade floor -> still GREEN
   else if(feeTrap)tag='<span class="tag flag">FEE &gt; EDGE</span>';               // gross<1 but net<=0 -> not an arb
   else tag='<span class="tag noarb">NO ARB</span>';                                // only when sum >= 100%
+  // Tennis WALKOVER 50-50 note: an amber INFORMATIONAL chip alongside the status (NOT a risk exclusion).
+  if(m.settlement_note==='walkover_50_50'&&!m.settlement_risk)
+    tag='<span class="wo-tag" title="'+woTitle(m)+'">W/O 50-50</span> '+tag;
   var xnet=num(m.exec_net_edge_pct);
   var xcap=(xnet!=null)?'<span class="cap">net@$10 '+xnet.toFixed(1)+'%</span>':'';
   var betCell='<span class="bet none">-</span>',profCell='<span class="roi neg">-</span>';
@@ -605,7 +616,7 @@ function readHash(){
   if(kv['og.view']==='current'||kv['og.view']==='history')ogSrc=kv['og.view'];
   if(kv['og.scope']==='funded'||kv['og.scope']==='all')ogView=kv['og.scope'];
   if(kv['genz.filter']==='all'||kv['genz.filter']==='arbs')view=kv['genz.filter'];
-  if(kv['genz.sport']==='soccer'||kv['genz.sport']==='mlb')sport=kv['genz.sport'];
+  if(kv['genz.sport']==='soccer'||kv['genz.sport']==='mlb'||kv['genz.sport']==='tennis')sport=kv['genz.sport'];
   if(kv['genz.game'])curGame=kv['genz.game'];
   if(kv['genz.mfilter'])mFilter=kv['genz.mfilter'];
 }
@@ -650,6 +661,7 @@ function pollSport(key, snapFile, hbFile, pmFile){
 function poll(){
   pollSport('soccer','genz_snapshot.json','genz_heartbeat.json','papermaker_summary.json');
   pollSport('mlb','genz_snapshot_mlb.json','genz_heartbeat_mlb.json','papermaker_summary_mlb.json');
+  pollSport('tennis','genz_snapshot_tennis.json','genz_heartbeat_tennis.json','papermaker_summary_tennis.json');
   // maker_rt (cross-sport): one summary + one heartbeat drive the MAKER RT v2 strip.
   fetch('maker_rt_summary.json?t='+Date.now(),{cache:'no-store'}).then(function(r){return r.ok?r.text():null;}).then(function(t){
     if(!t)return;var j;try{j=JSON.parse(t);}catch(e){return;}
