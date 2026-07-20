@@ -42,6 +42,8 @@ COMPONENTS: list[Component] = [
     Component("ufc", "run_ufc_loop.ps1", "& '{repo}\\scripts\\run_ufc_loop.ps1'"),
     # maker_rt (#11) — the realtime maker/hedger (SHADOW: real sockets, paper quotes, zero orders).
     Component("maker_rt", "run_maker_rt_loop.ps1", "& '{repo}\\scripts\\run_maker_rt_loop.ps1'"),
+    # og_multi (#12) — the 4-book MLB/tennis/UFC scanner loop (ALERT-ONLY; per-sport cadence inside).
+    Component("og_multi", "run_og_multi_loop.ps1", "& '{repo}\\scripts\\run_og_multi_loop.ps1'"),
 ]
 STOP_FLAG = "STOP_ALL"
 

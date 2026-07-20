@@ -8,21 +8,21 @@ from scripts import ops
 
 
 _ALL = ["http", "tree", "genz", "og", "mlb_tree", "mlb", "tennis_tree", "tennis",
-        "ufc_tree", "ufc", "maker_rt"]
+        "ufc_tree", "ufc", "maker_rt", "og_multi"]
 
 
 def test_missing_components_start_if_missing():
     running = ["powershell -File C:/bots/soccer-papi/scripts/run_og_loop.ps1", "python.exe -m http.server 8080"]
-    # http + og alive -> the rest (incl. the MLB + tennis + UFC components + maker_rt) are missing
+    # http + og alive -> the rest (incl. the MLB + tennis + UFC components + maker_rt + og_multi) are missing
     assert ops.missing_components(running) == ["tree", "genz", "mlb_tree", "mlb", "tennis_tree",
-                                               "tennis", "ufc_tree", "ufc", "maker_rt"]
+                                               "tennis", "ufc_tree", "ufc", "maker_rt", "og_multi"]
 
 
 def test_all_running_none_missing():
     running = ["a http.server 8080", "b run_tree_loop.ps1", "c run_genz_loop.ps1", "d run_og_loop.ps1",
                "e run_mlb_tree_loop.ps1", "f run_mlb_loop.ps1", "g run_tennis_tree_loop.ps1",
                "h run_tennis_loop.ps1", "i run_ufc_tree_loop.ps1", "j run_ufc_loop.ps1",
-               "k run_maker_rt_loop.ps1"]
+               "k run_maker_rt_loop.ps1", "l run_og_multi_loop.ps1"]
     assert ops.missing_components(running) == []
 
 
@@ -47,6 +47,8 @@ def test_component_specs_include_all_sports_and_fill_templates():
     assert "run_ufc_tree_loop.ps1" in ufc_tree["cmd"]
     maker = next(s for s in specs if s["name"] == "maker_rt")
     assert "run_maker_rt_loop.ps1" in maker["cmd"]
+    og_multi = next(s for s in specs if s["name"] == "og_multi")
+    assert "run_og_multi_loop.ps1" in og_multi["cmd"]
 
 
 def test_stop_requested(tmp_path):
@@ -72,7 +74,7 @@ def test_missing_cli_reads_stdin(monkeypatch, capsys):
     rc = ops._main(["missing"])
     assert rc == 0
     assert capsys.readouterr().out.split() == ["tree", "og", "mlb_tree", "mlb", "tennis_tree",
-                                               "tennis", "ufc_tree", "ufc", "maker_rt"]  # http + genz alive
+                                               "tennis", "ufc_tree", "ufc", "maker_rt", "og_multi"]  # http + genz alive
 
 
 def test_stop_requested_cli(tmp_path):

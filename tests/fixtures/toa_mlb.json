@@ -1,0 +1,50 @@
+[
+  {
+    "id": "mlb-evt-ladnyy",
+    "sport_key": "baseball_mlb",
+    "commence_time": "2026-07-19T23:20:00Z",
+    "home_team": "New York Yankees",
+    "away_team": "Los Angeles Dodgers",
+    "bookmakers": [
+      {
+        "key": "pinnacle",
+        "last_update": "2026-07-19T22:55:00Z",
+        "markets": [
+          {"key": "h2h", "last_update": "2026-07-19T22:55:00Z", "outcomes": [
+            {"name": "New York Yankees", "price": 1.95},
+            {"name": "Los Angeles Dodgers", "price": 1.95}]},
+          {"key": "totals", "last_update": "2026-07-19T22:55:00Z", "outcomes": [
+            {"name": "Over", "price": 1.90, "point": 8.5},
+            {"name": "Under", "price": 1.95, "point": 8.5}]},
+          {"key": "spreads", "last_update": "2026-07-19T22:55:00Z", "outcomes": [
+            {"name": "New York Yankees", "price": 1.90, "point": -1.5},
+            {"name": "Los Angeles Dodgers", "price": 1.95, "point": 1.5}]}
+        ]
+      },
+      {
+        "key": "onexbet",
+        "last_update": "2026-07-19T22:56:00Z",
+        "markets": [
+          {"key": "h2h", "last_update": "2026-07-19T22:56:00Z", "outcomes": [
+            {"name": "New York Yankees", "price": 2.08},
+            {"name": "Los Angeles Dodgers", "price": 1.88}]},
+          {"key": "totals", "last_update": "2026-07-19T22:56:00Z", "outcomes": [
+            {"name": "Over", "price": 2.06, "point": 8.5},
+            {"name": "Under", "price": 1.88, "point": 8.5}]},
+          {"key": "spreads", "last_update": "2026-07-19T22:56:00Z", "outcomes": [
+            {"name": "New York Yankees", "price": 2.05, "point": -1.5},
+            {"name": "Los Angeles Dodgers", "price": 1.90, "point": 1.5}]}
+        ]
+      },
+      {
+        "key": "unibet",
+        "last_update": "2026-07-19T22:54:00Z",
+        "markets": [
+          {"key": "h2h", "last_update": "2026-07-19T22:54:00Z", "outcomes": [
+            {"name": "New York Yankees", "price": 1.98},
+            {"name": "Los Angeles Dodgers", "price": 1.92}]}
+        ]
+      }
+    ]
+  }
+]

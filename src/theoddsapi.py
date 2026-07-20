@@ -56,7 +56,18 @@ SCOPE_GROUP = "group"
 # HTTP client                                                                   #
 # --------------------------------------------------------------------------- #
 class TheOddsApiError(Exception):
-    """Any failure talking to the-odds-api. Caught in run.py so it never breaks the OddsPapi run."""
+    """Any failure talking to the-odds-api. Caught in run.py so it never breaks the OddsPapi run.
+
+    ``status_code`` / ``body`` are populated on HTTP-status failures (None for network / non-JSON
+    errors) so a caller can detect a 422 INVALID_MARKET and self-learn the valid market set (see
+    src/og_multi/toa.py) without re-parsing the exception message. Back-compatible: the message-only
+    ``raise TheOddsApiError(msg)`` form still works (both attributes default to None)."""
+
+    def __init__(self, message: str, *, status_code: Optional[int] = None,
+                 body: Optional[str] = None) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+        self.body = body
 
 
 class TheOddsApiClient:
@@ -68,6 +79,11 @@ class TheOddsApiClient:
         self.session = session or requests.Session()
         self.requests_remaining: Optional[str] = None
         self.requests_used: Optional[str] = None
+        # x-requests-last = the credit cost of the MOST RECENT request (0 for the free /sports call).
+        # The multi-sport OG adapter sums this per call for exact per-cycle spend — the cumulative
+        # x-requests-used counter is useless for that on a fresh client (its first delta is the whole
+        # account lifetime). See src/og_multi/toa.py._call_credits.
+        self.requests_last: Optional[str] = None
 
     def sports(self) -> Any:
         return self._get("/sports", {})
@@ -80,6 +96,17 @@ class TheOddsApiClient:
             {"regions": regions, "markets": markets, "oddsFormat": odds_format, "dateFormat": "iso"},
         )
 
+    def odds(self, sport_key: str, regions: str, markets: str, odds_format: str = "decimal") -> Any:
+        """Featured bulk odds for every in-window event in ``sport_key`` — the generic sibling of
+        ``wc_odds`` used by the multi-sport OG adapter (src/og_multi/toa.py). One HTTP call, billed
+        (#markets x #regions) credits; returns a list of event dicts. On an INVALID_MARKET the raised
+        TheOddsApiError carries ``status_code``/``body`` so the caller can drop the bad market and
+        retry in the same cycle."""
+        return self._get(
+            f"/sports/{sport_key}/odds",
+            {"regions": regions, "markets": markets, "oddsFormat": odds_format, "dateFormat": "iso"},
+        )
+
     def _get(self, path: str, params: dict[str, Any]) -> Any:
         full = {**params, "apiKey": self.api_key}
         try:
@@ -89,8 +116,10 @@ class TheOddsApiClient:
         # the-odds-api reports quota on every response via headers.
         self.requests_remaining = resp.headers.get("x-requests-remaining", self.requests_remaining)
         self.requests_used = resp.headers.get("x-requests-used", self.requests_used)
+        self.requests_last = resp.headers.get("x-requests-last", self.requests_last)
         if resp.status_code >= 400:
-            raise TheOddsApiError(f"{resp.status_code} on {path}: {resp.text[:200]}")
+            raise TheOddsApiError(f"{resp.status_code} on {path}: {resp.text[:200]}",
+                                  status_code=resp.status_code, body=resp.text)
         try:
             return resp.json()
         except ValueError as exc:

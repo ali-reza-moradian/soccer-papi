@@ -1,0 +1,35 @@
+[
+  {
+    "id": "ufc-evt-elland",
+    "sport_key": "mma_mixed_martial_arts",
+    "commence_time": "2026-07-18T02:00:00Z",
+    "home_team": "Ezra Elliott",
+    "away_team": "Damien Anderson",
+    "bookmakers": [
+      {
+        "key": "pinnacle",
+        "last_update": "2026-07-18T01:30:00Z",
+        "markets": [
+          {"key": "h2h", "last_update": "2026-07-18T01:30:00Z", "outcomes": [
+            {"name": "Ezra Elliott", "price": 2.10},
+            {"name": "Damien Anderson", "price": 1.80}]},
+          {"key": "totals", "last_update": "2026-07-18T01:30:00Z", "outcomes": [
+            {"name": "Over", "price": 1.95, "point": 2.5},
+            {"name": "Under", "price": 1.85, "point": 2.5}]}
+        ]
+      },
+      {
+        "key": "onexbet",
+        "last_update": "2026-07-18T01:31:00Z",
+        "markets": [
+          {"key": "h2h", "last_update": "2026-07-18T01:31:00Z", "outcomes": [
+            {"name": "Ezra Elliott", "price": 2.22},
+            {"name": "Damien Anderson", "price": 1.74}]},
+          {"key": "totals", "last_update": "2026-07-18T01:31:00Z", "outcomes": [
+            {"name": "Over", "price": 2.00, "point": 2.5},
+            {"name": "Under", "price": 1.80, "point": 2.5}]}
+        ]
+      }
+    ]
+  }
+]

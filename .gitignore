@@ -53,5 +53,9 @@ data/cache/
 data/arbitrage_opportunities.csv
 data/arbs_log.xlsx
 data/og_current.json
+# OG multi-sport (src/og_multi/) runtime outputs + caches — regenerable, never committed (the panel
+# HTML that reads them lives under data/genz/ and IS committed via the !data/genz/*.html rule below).
+data/og_current_*.json
+data/og_multi/
 data/genz/*
 !data/genz/*.html

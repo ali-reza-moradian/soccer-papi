@@ -291,6 +291,16 @@ class Config:
         """Shadow gate. While False, any arb with a polymarket-direct leg is forced non-actionable."""
         return bool(self.get("polymarket", "actionable", default=False))
 
+    # -- OG MULTI-SPORT (src/og_multi/) — the 4-book MLB/tennis/UFC layer -------
+    def og_multi_opt(self, key: str, default: Any) -> Any:
+        """Read one key of the ``og_multi:`` block (mirrors ``theoddsapi_opt`` etc.)."""
+        return self.get("og_multi", key, default=default)
+
+    @property
+    def og_multi_enabled_sports(self) -> list[str]:
+        """Sports the multi-sport OG cycle scans (empty/absent => the cycle is a no-op)."""
+        return list(self.get("og_multi", "enabled_sports", default=[]) or [])
+
 
 def load_config(config_path: str | None = None) -> Config:
     """Load config.yaml, layer in env-based workflow inputs, and read secrets."""

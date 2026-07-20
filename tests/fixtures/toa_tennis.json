@@ -1,0 +1,35 @@
+[
+  {
+    "id": "tennis-evt-rubtab",
+    "sport_key": "tennis_atp_wimbledon",
+    "commence_time": "2026-07-18T13:00:00Z",
+    "home_team": "Andrey Rublev",
+    "away_team": "Alexei Tabilo",
+    "bookmakers": [
+      {
+        "key": "pinnacle",
+        "last_update": "2026-07-18T12:30:00Z",
+        "markets": [
+          {"key": "h2h", "last_update": "2026-07-18T12:30:00Z", "outcomes": [
+            {"name": "Andrey Rublev", "price": 1.40},
+            {"name": "Alexei Tabilo", "price": 3.05}]},
+          {"key": "totals", "last_update": "2026-07-18T12:30:00Z", "outcomes": [
+            {"name": "Over", "price": 1.90, "point": 22.5},
+            {"name": "Under", "price": 1.90, "point": 22.5}]}
+        ]
+      },
+      {
+        "key": "onexbet",
+        "last_update": "2026-07-18T12:31:00Z",
+        "markets": [
+          {"key": "h2h", "last_update": "2026-07-18T12:31:00Z", "outcomes": [
+            {"name": "Andrey Rublev", "price": 1.44},
+            {"name": "Alexei Tabilo", "price": 2.95}]},
+          {"key": "totals", "last_update": "2026-07-18T12:31:00Z", "outcomes": [
+            {"name": "Over", "price": 1.95, "point": 22.5},
+            {"name": "Under", "price": 1.87, "point": 22.5}]}
+        ]
+      }
+    ]
+  }
+]

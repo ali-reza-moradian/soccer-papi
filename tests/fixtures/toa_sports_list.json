@@ -1,0 +1,7 @@
+[
+  {"key": "baseball_mlb", "group": "Baseball", "title": "MLB", "active": true, "has_outrights": false},
+  {"key": "tennis_atp_wimbledon", "group": "Tennis", "title": "ATP Wimbledon", "active": true, "has_outrights": false},
+  {"key": "tennis_wta_wimbledon", "group": "Tennis", "title": "WTA Wimbledon", "active": true, "has_outrights": false},
+  {"key": "tennis_atp_french_open", "group": "Tennis", "title": "ATP French Open", "active": false, "has_outrights": false},
+  {"key": "mma_mixed_martial_arts", "group": "Mixed Martial Arts", "title": "MMA", "active": true, "has_outrights": false}
+]

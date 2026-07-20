@@ -495,3 +495,29 @@ maker_rt:
     max_daily_loss_usd: 25
     hedge_timeout_ms: 3000          # miss/partial after this -> market-unwind the fill + freeze market
     unwind_on_hedge_fail: true
+
+# ===========================================================================
+# OG MULTI-SPORT (src/og_multi/) — the 4-book layer (Kalshi, Polymarket, Pinnacle, 1xbet) for
+# MLB / tennis / UFC. A STANDALONE scanner: `python -m src.og_multi` runs ONE multi-sport cycle
+# (per enabled sport: load the GenZ tree, fetch the-odds-api odds, match events, assemble best-of-4
+# candidates, compute_arb with exact exchange fees, walk exchange legs to stake, write
+# data/og_current_<sport>.json). ALERT-ONLY: no executor, no order code. The soccer OG (src/run.py)
+# and every GenZ price loop are untouched. Supervised component 'og_multi'
+# (scripts/run_og_multi_loop.ps1). See src/og_multi/__init__.py for the module map.
+# ===========================================================================
+og_multi:
+  enabled_sports: [mlb, tennis, ufc]              # which sports the cycle scans (empty -> no-op)
+  interval_s: {mlb: 300, tennis: 300, ufc: 600}   # per-sport cadence, enforced INSIDE via last-run stamps
+  region: eu                                      # the-odds-api region (pinnacle + 1xbet are eu)
+  # A fixed-book (pinnacle / 1xbet) leg whose the-odds-api last_update is older than this many minutes
+  # is treated as stale and dropped (exchange legs are live, so this gate is books-only).
+  age_limit_min: 30
+  # the-odds-api sport keys. tennis = AUTO -> discovered from /v4/sports (group==Tennis && active),
+  # cached once per scan-day to data/og_multi/toa_tennis_keys.json. mlb/ufc are static.
+  toa_sports: {mlb: baseball_mlb, ufc: mma_mixed_martial_arts, tennis: AUTO}
+  # Assumed executable stake ($) on a Pinnacle leg (its real limit is not in the bulk odds feed).
+  # 1xbet is UNCONSTRAINED (user directive) -> sized at any depth and flagged UNVERIFIED.
+  pinnacle_limit: 5000
+  # Quota discipline: WARN when projected monthly the-odds-api spend exceeds this % of the plan quota
+  # (plan quota = x-requests-remaining + x-requests-used from the response headers; no hardcoded total).
+  quota_warn_pct: 60

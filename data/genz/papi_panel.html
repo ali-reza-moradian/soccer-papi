@@ -161,14 +161,11 @@ tr.betrow td{border-bottom:1px solid var(--border);padding-top:2px}
 
 <!-- ===== OG ===== -->
 <div id="tab-og" class="hide">
-  <div class="sportchips">
+  <div class="sportchips" id="ogsportchips">
     <span class="lbl">SPORT</span>
-    <span class="schip active">SOCCER</span>
-    <span class="schip off" title="4-book scanner: soccer only — MLB coming">MLB<span class="n">coming</span></span>
-    <span class="schip off" title="4-book scanner: soccer only — tennis coming">TENNIS<span class="n">coming</span></span>
-    <span class="schip off" title="4-book scanner: soccer only — UFC coming">UFC<span class="n">coming</span></span>
+    <span class="schip active" data-ogsp="soccer">SOCCER</span>
   </div>
-  <div class="stale" id="ogstale">▲ OG FEED STALE — no scan in over 2× the interval. Is scripts\run_og_loop.ps1 running?</div>
+  <div class="stale" id="ogstale">▲ OG FEED STALE — no scan in over 2× the interval. Is the scanner loop running?</div>
   <div class="ctrl">
     <div class="seg" id="ogSrcSeg"><button data-s="current" class="on">Current</button><button data-s="history">History</button></div>
     <div class="seg" id="ogSeg"><button data-o="funded" class="on">Funded</button><button data-o="all">All</button></div>
@@ -178,6 +175,7 @@ tr.betrow td{border-bottom:1px solid var(--border);padding-top:2px}
   <div class="foot">
     <div>OG · 4-book pre-game scanner (Kalshi, Polymarket, Pinnacle, 1xbet) · <span class="dry">ALERT-ONLY</span> — you place these by hand.</div>
     <div><b>Current</b> = arbs alive THIS scan, HONESTLY sized by walking each exchange leg's real book NET of ALL taker fees (Kalshi 0.07·p·(1−p), Polymarket 0.05·min(p,1−p)); per-leg <b>$stake outcome @ book (fills)</b>, profit &amp; max stake are the walked truth. Amber <b>FEE &gt; EDGE</b> = gross sub-1 but the fees eat it. <b>History</b> = the 48h CSV. <b>Funded</b> = every leg on Kalshi / Polymarket / Pinnacle / 1xbet (sorted first); <b>SHADOW</b> needs a book you can't place on. 1xbet is bettable at any size — verify the price before betting.</div>
+    <div id="ogcap"></div>
   </div>
 </div>
 
@@ -191,6 +189,11 @@ var sport='soccer';
 var SNAPS={soccer:null,mlb:null,tennis:null,ufc:null}, HBS={soccer:null,mlb:null,tennis:null,ufc:null}, PMS={soccer:null,mlb:null,tennis:null,ufc:null};
 var SPORTS=[['soccer','SOCCER'],['mlb','MLB'],['tennis','TENNIS'],['ufc','UFC']];
 function useSport(){SNAP=SNAPS[sport];HB=HBS[sport];PM=PMS[sport];}
+// OG is MULTI-SPORT too: one og_current file per sport. OGC always points at the ACTIVE OG sport (so
+// ogCurrent/ogRow/the 2x-interval stale banner render unchanged); OGCS holds all four feeds.
+var ogSport='soccer';
+var OGCS={soccer:null,mlb:null,tennis:null,ufc:null};
+function useOgSport(){OGC=OGCS[ogSport];}
 var EXPECTED_SCHEMA=4;   // must match src/genz/engine.py SNAPSHOT_SCHEMA_VERSION (4 = in-play phase)
 function num(x){var n=parseFloat(x);return isNaN(n)?null:n;}
 function pct(x){return x==null?'-':(x*100).toFixed(1)+'%';}
@@ -506,11 +509,29 @@ function ogBetLine(r){   // per-leg stakes scaled to the bankroll box, recompute
   var profit=(roiD!=null?roiD:0)*tmax*scale;
   return '<span class="betline"><b>BET:</b> '+parts.join('  +  ')+'  <span class="v">-> profit $'+Math.round(profit)+' on $'+Math.round(tmax*scale)+'</span></span>';
 }
-function ogTable(){ if(ogSrc==='history') ogHistory(); else ogCurrent(); }
+function ogTable(){   // MULTI-SPORT: point OGC at the active OG sport, then render Current (or soccer History)
+  useOgSport(); ogCapFooter();
+  if(ogSrc==='history'){
+    if(ogSport==='soccer'){ ogHistory(); return; }
+    document.getElementById('ogstale').classList.remove('show');
+    document.getElementById('ogbody').innerHTML='<div class="empty">History (48h CSV) is soccer-only.<br>Switch to <b>Current</b> for MLB / tennis / UFC.</div>';
+    document.getElementById('ogcount').textContent=''; return;
+  }
+  ogCurrent();
+}
+function ogCapFooter(){   // per-sport 'the-odds-api capabilities' footer line (which markets the plan serves)
+  var el=document.getElementById('ogcap'); if(!el)return;
+  var cap=OGC&&OGC.toa_capabilities;
+  if(cap&&cap.markets_served){
+    el.textContent='the-odds-api ('+ogSport.toUpperCase()+') serves: '+((cap.markets_served||[]).join(', ')||'none')
+      +(cap.sport_keys&&cap.sport_keys.length?'  ·  keys: '+cap.sport_keys.join(', '):'')
+      +'  ·  '+(cap.daily_total||0)+' credits today.  Tier B rows: bookmaker settlement conventions are not machine-verifiable — confirm on both books before betting.';
+  } else el.textContent='';
+}
 
 function ogCurrent(){   // DEFAULT — honest walked sizing from data/og_current.json (state, this cycle)
   var body=document.getElementById('ogbody'),cnt=document.getElementById('ogcount'),sb=document.getElementById('ogstale');
-  if(!OGC||!OGC.arbs){sb.classList.remove('show');body.innerHTML='<div class="empty">No OG current-state yet — start <b>scripts\\run_og_loop.ps1</b> (writes <b>data/og_current.json</b> each scan).</div>';cnt.textContent='';return;}
+  if(!OGC||!OGC.arbs){sb.classList.remove('show');body.innerHTML='<div class="empty">No OG current-state yet for <b>'+ogSport.toUpperCase()+'</b> — start the scanner loop (writes <b>data/og_current'+(ogSport==='soccer'?'':'_'+ogSport)+'.json</b> each scan).</div>';cnt.textContent='';return;}
   var cyc=Date.parse(OGC.cycle_utc),iv=(OGC.scan_interval_s||300);
   sb.classList.toggle('show', !cyc || (Date.now()-cyc)/1000 > 2*iv);   // red banner if older than 2x interval
   var arbs=(OGC.arbs||[]).slice();
@@ -525,6 +546,9 @@ function ogCurrent(){   // DEFAULT — honest walked sizing from data/og_current
   function ogRow(a){
     var S=num(a.arb_sum_S),roi=num(a.roi_pct),net=num(a.net_roi_pct),fee=num(a.fee_pct),prof=num(a.profit),tmax=num(a.t_max_honest);
     var badge=a._funded?'':' <span class="tag shadow">SHADOW: '+esc(a._shadow.join(', '))+'</span>';
+    var tier=a.tier?' <span class="tag noarb">'+esc(a.tier)+'</span>':'';   // A (exchange-enriched) / B (book-only)
+    var sett=(a.settlement&&a.settlement.length)?a.settlement.map(function(c){return ' <span class="tag rej">'+esc(c)+'</span>';}).join(''):'';
+    var unv=a.rules_unverified?' <span class="tag flag">BOOK RULES UNVERIFIED</span>':'';
     var legs=a._near?'<span class="bet none">gross only — not placeable</span>':(a.legs||[]).map(function(L){
       var top=num(L.top_odds),avg=num(L.avg_fill_odds);
       var fills=(top!=null&&avg!=null&&Math.abs(avg-top)>=0.01)?' <span class="v">(fills '+avg.toFixed(2)+')</span>':'';
@@ -534,7 +558,7 @@ function ogCurrent(){   // DEFAULT — honest walked sizing from data/og_current
     var feeCell=(fee!=null)?'<span class="fee">'+fee.toFixed(2)+'%</span>':'-';
     var status=a.fee_trap?'<span class="tag flag">FEE &gt; EDGE</span>':(a.below_floor?'<span class="tag flag">below floor</span>':'<span class="tag would">bettable</span>');
     var cls=a._near?'nearmiss':(a._funded?'':'shadow');
-    return '<tr class="'+cls+'"><td class="mtype">'+esc(a.match||'')+badge+'</td>'
+    return '<tr class="'+cls+'"><td class="mtype">'+esc(a.match||'')+badge+tier+sett+unv+'</td>'
       +'<td class="leg">'+esc(a.market||'')+'</td><td class="betline">'+legs+'</td>'
       +'<td class="num"><span class="sum '+(S!=null&&S<1?'arb':'no')+'">'+(S!=null?S.toFixed(4):'-')+'</span></td>'
       +'<td class="num"><span class="roi '+(roi>0?'pos':'neg')+'">'+(roi!=null?roi.toFixed(2)+'%':'-')+'</span></td>'
@@ -661,11 +685,27 @@ function setSport(s){
   if(s===sport||!SNAPS.hasOwnProperty(s))return;
   sport=s;curGame=null;useSport();writeHash();renderAll();
 }
-function renderAll(){useSport();health();if(tab==='genz'){sportChips();tabs();filter();table();paperStrip();makerStrip();}else{ogTable();}}
+function ogSportChips(){   // SOCCER | MLB | TENNIS | UFC selector on the OG tab (a sport with no og_current file is greyed)
+  var el=document.getElementById('ogsportchips');if(!el)return;
+  var h='<span class="lbl">SPORT</span>';
+  SPORTS.forEach(function(sp){
+    var key=sp[0],lbl=sp[1],oc=OGCS[key],has=!!(oc&&oc.arbs);
+    if(key===ogSport)h+='<span class="schip active" data-ogsp="'+key+'">'+lbl+'</span>';
+    else if(has)h+='<span class="schip" data-ogsp="'+key+'">'+lbl+'<span class="n">'+oc.arbs.length+'</span></span>';
+    else h+='<span class="schip off" title="no og_current file yet - is the '+key+' scanner running?">'+lbl+'<span class="n">no data</span></span>';
+  });
+  el.innerHTML=h;
+  el.querySelectorAll('.schip[data-ogsp]').forEach(function(c){c.onclick=function(){setOgSport(this.getAttribute('data-ogsp'));};});
+}
+function setOgSport(s){
+  if(s===ogSport||!OGCS.hasOwnProperty(s))return;
+  ogSport=s;useOgSport();writeHash();ogSportChips();ogTable();
+}
+function renderAll(){useSport();health();if(tab==='genz'){sportChips();tabs();filter();table();paperStrip();makerStrip();}else{useOgSport();ogSportChips();ogTable();}}
 
 // --- ALL UI state lives in the URL hash so a refresh restores tab + every sub-segment (no reload) ---
 function writeHash(){
-  var p=['tab='+tab,'og.view='+ogSrc,'og.scope='+ogView,'genz.filter='+view,'genz.sport='+sport];
+  var p=['tab='+tab,'og.view='+ogSrc,'og.scope='+ogView,'og.sport='+ogSport,'genz.filter='+view,'genz.sport='+sport];
   if(curGame)p.push('genz.game='+encodeURIComponent(curGame));
   if(mFilter)p.push('genz.mfilter='+encodeURIComponent(mFilter));
   try{history.replaceState(null,'','#'+p.join('&'));}catch(e){}
@@ -676,6 +716,7 @@ function readHash(){
   if(kv['tab']==='og'||kv['tab']==='genz')tab=kv['tab'];
   if(kv['og.view']==='current'||kv['og.view']==='history')ogSrc=kv['og.view'];
   if(kv['og.scope']==='funded'||kv['og.scope']==='all')ogView=kv['og.scope'];
+  if(kv['og.sport']==='soccer'||kv['og.sport']==='mlb'||kv['og.sport']==='tennis'||kv['og.sport']==='ufc')ogSport=kv['og.sport'];
   if(kv['genz.filter']==='all'||kv['genz.filter']==='arbs')view=kv['genz.filter'];
   if(kv['genz.sport']==='soccer'||kv['genz.sport']==='mlb'||kv['genz.sport']==='tennis'||kv['genz.sport']==='ufc')sport=kv['genz.sport'];
   if(kv['genz.game'])curGame=kv['genz.game'];
@@ -719,6 +760,12 @@ function pollSport(key, snapFile, hbFile, pmFile){
     PMS[key]=j;if(tab==='genz'&&key===sport)paperStrip();
   }).catch(function(){});
 }
+function ogPollSport(key,file){   // fetch one sport's og_current file into OGCS; re-render if it's the active OG sport
+  fetch(file+'?t='+Date.now(),{cache:'no-store'}).then(function(r){return r.ok?r.text():null;}).then(function(t){
+    if(!t)return;var j;try{j=JSON.parse(t);}catch(e){return;}
+    if(j&&j.arbs){OGCS[key]=j;if(tab==='og'){if(key===ogSport)ogTable();else ogSportChips();}}
+  }).catch(function(){});
+}
 function poll(){
   pollSport('soccer','genz_snapshot.json','genz_heartbeat.json','papermaker_summary.json');
   pollSport('mlb','genz_snapshot_mlb.json','genz_heartbeat_mlb.json','papermaker_summary_mlb.json');
@@ -733,10 +780,11 @@ function poll(){
     if(!t)return;var j;try{j=JSON.parse(t);}catch(e){return;}
     MRTHB=j;if(tab==='genz')makerStrip();
   }).catch(function(){});
-  fetch('../og_current.json?t='+Date.now(),{cache:'no-store'}).then(function(r){return r.ok?r.text():null;}).then(function(t){
-    if(!t)return;var j;try{j=JSON.parse(t);}catch(e){return;}
-    if(j&&j.arbs){OGC=j;if(tab==='og')ogTable();}
-  }).catch(function(){});
+  // OG is multi-sport: soccer (../og_current.json) + MLB/tennis/UFC (../og_current_<sport>.json).
+  ogPollSport('soccer','../og_current.json');
+  ogPollSport('mlb','../og_current_mlb.json');
+  ogPollSport('tennis','../og_current_tennis.json');
+  ogPollSport('ufc','../og_current_ufc.json');
   fetch('../arbitrage_opportunities.csv?t='+Date.now(),{cache:'no-store'}).then(function(r){return r.ok?r.text():null;}).then(function(t){
     if(!t)return;OG=parseCSV(t);if(tab==='og')ogTable();
   }).catch(function(){});
