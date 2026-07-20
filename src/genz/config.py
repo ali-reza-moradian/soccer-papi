@@ -120,6 +120,32 @@ def ensure_dirs() -> None:
 
 
 @dataclass
+class Competition:
+    """One soccer competition the tree builder discovers (POST-WC generalization). ``kalshi_series`` is
+    either the sentinel ``"AUTO"`` (discover the game-winner series from the Kalshi catalog, report +
+    persist to soccer_series_map.json) or an explicit list of series tickers. ``poly_slug_prefix`` is
+    the Polymarket event-slug stem (e.g. 'mls', 'fifwc'); ``poly_tag`` is an optional discovery hint."""
+    name: str
+    kalshi_series: Any = "AUTO"
+    poly_slug_prefix: str = ""
+    poly_tag: str = ""
+    enabled: bool = True
+
+
+def _parse_competitions(raw_list: Any) -> list:
+    """Parse ``genz.soccer.competitions`` (a list of dicts) into Competition objects. Malformed/nameless
+    entries are skipped. An empty/absent list -> the LEGACY World Cup path (byte-identical golden)."""
+    out: list = []
+    for c in raw_list or []:
+        if not isinstance(c, dict) or not c.get("name"):
+            continue
+        out.append(Competition(name=str(c["name"]), kalshi_series=c.get("kalshi_series", "AUTO"),
+                               poly_slug_prefix=str(c.get("poly_slug_prefix") or ""),
+                               poly_tag=str(c.get("poly_tag") or ""), enabled=bool(c.get("enabled", True))))
+    return out
+
+
+@dataclass
 class GenzConfig:
     """Typed view of the ``genz:`` config block (missing keys -> safe defaults)."""
     lookahead_hours: float = 48.0          # how far ahead the tree builder discovers games
@@ -153,6 +179,9 @@ class GenzConfig:
     # it is dropped. The horizon is per-sport (games run different lengths).
     inplay_collect: bool = True
     inplay_horizon_hours: float = 3.0
+    # SOCCER POST-WC: competition-driven discovery. Empty (the dataclass default, used by the golden) ->
+    # the legacy World Cup path, byte-identical. Populated from genz.soccer.competitions in config.yaml.
+    competitions: list = field(default_factory=list)
 
 
 def _raw(config_path: str | None) -> dict[str, Any]:
@@ -318,5 +347,8 @@ def load_genz_config(config_path: str | None = None, *, overrides: dict[str, Any
     elif sport == "ufc":
         _apply_ufc_block(cfg, config_path)
     else:
+        soc = _block(config_path).get("soccer")
+        soc = soc if isinstance(soc, dict) else {}
+        cfg.competitions = _parse_competitions(soc.get("competitions"))
         _apply_inplay(cfg, _block(config_path), "soccer")   # soccer reads genz.inplay directly
     return cfg

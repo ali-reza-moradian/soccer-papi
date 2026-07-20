@@ -8,10 +8,14 @@ guard (50-50 note vs started-divergence refuse vs unparseable conservative flag)
 stay byte-identical (they are locked in test_genz_sports.py)."""
 from __future__ import annotations
 
+import json
+import os
 from datetime import datetime, timezone
 
 from src.genz import sports_tennis as T
 from src.genz.config import load_genz_config
+
+_FIX = os.path.join(os.path.dirname(__file__), "fixtures", "raw", "tennis_titledrift_kalshi.json")
 
 
 class _Log:
@@ -61,6 +65,35 @@ def test_names_from_title_and_ticker_fragment_resolved_by_title():
     # discovery then UPGRADES the surname pair to full names via the per-player yes_sub_titles.
     mkts = [{"yes_sub_title": "Panna Udvardy"}, {"yes_sub_title": "Paula Badosa"}]
     assert T._enrich_full_names(("Udvardy", "Badosa"), mkts) == ("Panna Udvardy", "Paula Badosa")
+
+
+# --------------------------------------------------------------------------- #
+# TITLE-DRIFT FIX — derived from the committed raw dump, not assumed              #
+# --------------------------------------------------------------------------- #
+def test_strip_stage_suffix_from_real_title():
+    # The exact broken text captured live: ': Round Of 16' must be removed, names untouched.
+    assert T.strip_stage_suffix("Tabilo vs Torres: Round Of 16") == "Tabilo vs Torres"
+    assert T.strip_stage_suffix("Udvardy vs Badosa: Quarterfinal") == "Udvardy vs Badosa"
+    assert T.strip_stage_suffix("A vs B - Semifinal") == "A vs B"
+    assert T.strip_stage_suffix("A vs B Final") == "A vs B"
+    assert T.strip_stage_suffix("Alejandro Tabilo") == "Alejandro Tabilo"       # no stage -> unchanged
+
+
+def test_name_tokens_drop_stage_stopwords():
+    # A title-drift leak must not poison the token set: 'round'/'of' are dropped, the surname survives.
+    assert T.name_tokens("Torres: Round Of 16") == frozenset({"torres", "16"})
+    assert T.name_tokens("Tiago Torres") == frozenset({"tiago", "torres"})
+
+
+def test_player_names_yes_sub_title_primary_from_fixture():
+    """The real captured event: yes_sub_title gives clean full names; the title (with ': Round Of 16')
+    only fixes order. Before the fix player_b was 'Torres: Round Of'."""
+    raw = json.load(open(_FIX, encoding="utf-8"))
+    mkts = raw["markets"]
+    names = T._player_names(mkts)
+    assert names == ("Alejandro Tabilo", "Tiago Torres")                        # title order A=Tabilo, B=Torres
+    # and the tokens are clean (no stage words) so Poly token-matching can pair.
+    assert "round" not in (T.name_tokens(names[0]) | T.name_tokens(names[1]))
 
 
 # --------------------------------------------------------------------------- #

@@ -187,6 +187,7 @@ var MRT=null,MRTHB=null;
 // ACTIVE sport's data (so every existing reference keeps working); the per-sport stores hold both.
 var sport='soccer';
 var SNAPS={soccer:null,mlb:null,tennis:null,ufc:null}, HBS={soccer:null,mlb:null,tennis:null,ufc:null}, PMS={soccer:null,mlb:null,tennis:null,ufc:null};
+var METAS={soccer:null,mlb:null,tennis:null,ufc:null};   // <sport>_tree_meta.json -> systemic_alert drives the red chip banner
 var SPORTS=[['soccer','SOCCER'],['mlb','MLB'],['tennis','TENNIS'],['ufc','UFC']];
 function useSport(){SNAP=SNAPS[sport];HB=HBS[sport];PM=PMS[sport];}
 // OG is MULTI-SPORT too: one og_current file per sport. OGC always points at the ACTIVE OG sport (so
@@ -680,9 +681,13 @@ function sportChips(){   // SOCCER | MLB selector on the GENZ tab; a sport with 
   var h='<span class="lbl">SPORT</span>';
   SPORTS.forEach(function(sp){
     var key=sp[0],lbl=sp[1],snap=SNAPS[key],has=!!(snap&&snap.games&&Object.keys(snap.games).length);
-    if(key===sport)h+='<span class="schip active" data-sp="'+key+'">'+lbl+'</span>';
-    else if(has)h+='<span class="schip" data-sp="'+key+'">'+lbl+'<span class="n">'+Object.keys(snap.games).length+' games</span></span>';
-    else h+='<span class="schip off" title="no data yet — is the '+key+' loop running?">'+lbl+'<span class="n">no data yet</span></span>';
+    // SYSTEMIC PAIRING ALARM: a red banner on the chip when this sport's tree build flagged a
+    // near-total pairing failure (probable venue format drift) — see the tree log.
+    var alert=METAS[key]&&METAS[key].systemic_alert;
+    var broken=alert?(' <span class="tag rej" title="'+esc((alert.paired||0)+'/'+(alert.total||0)+' games paired - see the tree log')+'">PAIRING BROKEN</span>'):'';
+    if(key===sport)h+='<span class="schip active" data-sp="'+key+'">'+lbl+broken+'</span>';
+    else if(has)h+='<span class="schip'+(alert?' alarm':'')+'" data-sp="'+key+'">'+lbl+broken+'<span class="n">'+Object.keys(snap.games).length+' games</span></span>';
+    else h+='<span class="schip off" title="no data yet — is the '+key+' loop running?">'+lbl+broken+'<span class="n">no data yet</span></span>';
   });
   el.innerHTML=h;
   el.querySelectorAll('.schip[data-sp]').forEach(function(c){c.onclick=function(){setSport(this.getAttribute('data-sp'));};});
@@ -752,10 +757,14 @@ document.getElementById('mfilter').onchange=function(e){mFilter=e.target.value;w
 setInterval(function(){document.getElementById('clock').textContent=new Date().toLocaleTimeString();health();},1000);
 
 // Fetch one sport's snapshot/heartbeat/papermaker into the per-sport stores; re-render if it's active.
-function pollSport(key, snapFile, hbFile, pmFile){
+function pollSport(key, snapFile, hbFile, pmFile, metaFile){
   fetch(snapFile+'?t='+Date.now(),{cache:'no-store'}).then(function(r){return r.ok?r.text():null;}).then(function(t){
     if(!t)return;var j;try{j=JSON.parse(t);}catch(e){return;}
     if(j&&j.games&&typeof j.games==='object'){SNAPS[key]=j;if(tab==='genz'){if(key===sport)renderAll();else sportChips();}}
+  }).catch(function(){});
+  if(metaFile)fetch(metaFile+'?t='+Date.now(),{cache:'no-store'}).then(function(r){return r.ok?r.text():null;}).then(function(t){
+    if(!t)return;var j;try{j=JSON.parse(t);}catch(e){return;}
+    METAS[key]=j;if(tab==='genz')sportChips();   // systemic_alert -> red 'PAIRING BROKEN' chip banner
   }).catch(function(){});
   fetch(hbFile+'?t='+Date.now(),{cache:'no-store'}).then(function(r){return r.ok?r.text():null;}).then(function(t){
     if(!t)return;var j;try{j=JSON.parse(t);}catch(e){return;}
@@ -773,10 +782,10 @@ function ogPollSport(key,file){   // fetch one sport's og_current file into OGCS
   }).catch(function(){});
 }
 function poll(){
-  pollSport('soccer','genz_snapshot.json','genz_heartbeat.json','papermaker_summary.json');
-  pollSport('mlb','genz_snapshot_mlb.json','genz_heartbeat_mlb.json','papermaker_summary_mlb.json');
-  pollSport('tennis','genz_snapshot_tennis.json','genz_heartbeat_tennis.json','papermaker_summary_tennis.json');
-  pollSport('ufc','genz_snapshot_ufc.json','genz_heartbeat_ufc.json','papermaker_summary_ufc.json');
+  pollSport('soccer','genz_snapshot.json','genz_heartbeat.json','papermaker_summary.json','tree_meta.json');
+  pollSport('mlb','genz_snapshot_mlb.json','genz_heartbeat_mlb.json','papermaker_summary_mlb.json','mlb_tree_meta.json');
+  pollSport('tennis','genz_snapshot_tennis.json','genz_heartbeat_tennis.json','papermaker_summary_tennis.json','tennis_tree_meta.json');
+  pollSport('ufc','genz_snapshot_ufc.json','genz_heartbeat_ufc.json','papermaker_summary_ufc.json','ufc_tree_meta.json');
   // maker_rt (cross-sport): one summary + one heartbeat drive the MAKER RT v2 strip.
   fetch('maker_rt_summary.json?t='+Date.now(),{cache:'no-store'}).then(function(r){return r.ok?r.text():null;}).then(function(t){
     if(!t)return;var j;try{j=JSON.parse(t);}catch(e){return;}

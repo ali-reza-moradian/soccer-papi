@@ -71,7 +71,8 @@ def cmd_build_tree(args) -> int:
     log.info("[GENZ] build-tree (%s): discovering games within %.0fh ...", sport, gz_cfg.lookahead_hours)
     tree = tree_builder.build_tree(_kalshi_client(gz_cfg), _poly_client(gz_cfg), gz_cfg,
                                    now=now, log=log, spec=spec)
-    tp, mp = tree_builder.write_tree(tree, now=now, tree_path=paths.tree_path, meta_path=paths.meta_path)
+    tp, mp = tree_builder.write_tree(tree, now=now, tree_path=paths.tree_path, meta_path=paths.meta_path,
+                                     sport=sport)
     games = tree.get("games", {})
     nodes = sum(len(g.get("nodes") or []) for g in games.values())
     log.info("[GENZ] wrote %d game(s), %d node(s) -> %s (meta: %s)", len(games), nodes, tp, mp)

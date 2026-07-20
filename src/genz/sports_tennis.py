@@ -56,11 +56,23 @@ def _norm(s: str) -> str:
     return re.sub(r"\s+", " ", t).strip()
 
 
+# Stage/round + title-boilerplate words that must NEVER be matching tokens: a title-drift leak
+# ('Torres: Round Of 16' -> tokens {torres, round, of}) would otherwise defeat token-set matching and
+# mint a phantom no-match. Guarded here so even a name that slips the sanitizer still matches on the
+# real surname. Derived from the committed raw dump (tests/fixtures/raw/tennis_titledrift_kalshi.json).
+_STAGE_STOPWORDS = frozenset({
+    "round", "of", "final", "finals", "quarterfinal", "quarterfinals", "semifinal", "semifinals",
+    "quarter", "semi", "qualifier", "qualifying", "qualification", "robin", "match", "vs", "win",
+    "wins", "will", "the",
+})
+
+
 def name_tokens(full: str) -> frozenset:
     """The normalized word tokens of a player name — for token-set (containment) matching across
     venues, which resolves both the surname-truncation slug quirk AND a dropped middle name
-    ('Daniel Merida' ⊆ 'Daniel Merida Aguilar')."""
-    return frozenset(t for t in _norm(full).split() if t)
+    ('Daniel Merida' ⊆ 'Daniel Merida Aguilar'). Stage/boilerplate words are dropped (see
+    ``_STAGE_STOPWORDS``) so a title-drift leak can never poison the token set."""
+    return frozenset(t for t in _norm(full).split() if t and t not in _STAGE_STOPWORDS)
 
 
 # Surname particles that belong WITH the final token (so 'Alex de Minaur' -> 'de minaur').
@@ -167,6 +179,20 @@ class TennisMatch:
 _SUFFIX_RE = re.compile(r"^(\d{2}[A-Z]{3}\d{2})([A-Z]{3})([A-Z]{3})$")
 _TITLE_VS_RE = re.compile(r"\bvs\.?\b", re.IGNORECASE)
 
+# Trailing round/stage decoration on a Kalshi (or Poly) tennis title. DERIVED FROM THE REAL TEXT
+# (tests/fixtures/raw/tennis_titledrift_kalshi.json: "... Tabilo vs Torres: Round Of 16 match?"), not
+# assumed — the ': Round Of 16' bled into player_b before this. Optional leading ':'/'-'/en-dash, the
+# stage phrase, then everything after it. Case-insensitive.
+_STAGE_SUFFIX_RE = re.compile(
+    r"[:\-–]?\s*(round\s+of\s+\d+|quarterfinals?|semifinals?|finals?|qualifying|qualifier)\b.*$",
+    re.IGNORECASE)
+
+
+def strip_stage_suffix(title: str) -> str:
+    """Remove a trailing round/stage decoration ('...: Round Of 16', ' - Semifinal', ' Final') from a
+    tennis title BEFORE any name extraction. Idempotent; leaves a clean '<A> vs <B>' (or bare name)."""
+    return _STAGE_SUFFIX_RE.sub("", str(title or "")).strip(" .:-")
+
 
 def _decode_date(suffix: str) -> Optional[str]:
     m = _SUFFIX_RE.match(suffix or "")
@@ -179,17 +205,45 @@ def _decode_date(suffix: str) -> Optional[str]:
 
 
 def _names_from_title(title: str) -> Optional[tuple[str, str]]:
-    """('Player A', 'Player B') from a Kalshi tennis title. Handles both the market title
-    ('Will X win the A vs B: Round match?') and a bare 'A vs B'."""
+    """('Player A', 'Player B') from a Kalshi tennis title — used ONLY to fix the A-vs-B ORDER (the full
+    names come from yes_sub_title; see _player_names). Handles the market title ('Will X win the A vs B:
+    Round Of 16 match?') and a bare 'A vs B'. The stage suffix is stripped from the extracted core, so
+    'Round Of 16' can never leak into a name."""
     t = str(title or "")
-    m = re.search(r"win the (.+?):?\s*(?:\w+\s+)?match\??$", t, re.IGNORECASE)
-    core = m.group(1) if m else t
-    core = re.sub(r":\s*\w+$", "", core).strip()          # drop a trailing ': Round'
+    m = re.search(r"win the (.+?)\s+match\b", t, re.IGNORECASE)
+    core = strip_stage_suffix(m.group(1) if m else t)      # extract the 'A vs B' core, then de-stage it
     parts = _TITLE_VS_RE.split(core, maxsplit=1)
     if len(parts) != 2:
         return None
     a, b = parts[0].strip(" .:-"), parts[1].strip(" .:-")
     return (a, b) if a and b else None
+
+
+def _player_names(mkts: list[dict]) -> Optional[tuple[str, str]]:
+    """The two player full names for an event. PRIMARY SOURCE = the per-player markets' yes_sub_title
+    full names (already fetched, never stage-decorated); the event TITLE is fallback ONLY, used to fix
+    the A-vs-B ORDER (and for a single-market event). This is the title-drift fix: a corrupted title
+    ('Tabilo vs Torres: Round Of 16') no longer decides names — yes_sub_title does."""
+    fulls: list[str] = []
+    seen: set[str] = set()
+    for m in mkts:
+        f = str(m.get("yes_sub_title") or "").strip()
+        sn = surname(f)
+        if f and sn and sn not in seen:
+            seen.add(sn)
+            fulls.append(f)
+    title_names = None
+    for m in mkts:
+        title_names = _names_from_title(m.get("title"))
+        if title_names:
+            break
+    if title_names:                                        # order the yes_sub_title fulls by title order
+        ordered = [next((f for f in fulls if surname(f) == surname(tn)), tn) for tn in title_names]
+        if ordered[0] and ordered[1]:
+            return (ordered[0], ordered[1])
+    if len(fulls) == 2:                                    # no/ambiguous title -> yes_sub_title order
+        return (fulls[0], fulls[1])
+    return title_names
 
 
 def _suffix_of(m: dict) -> str:
@@ -236,17 +290,12 @@ def discover_tennis_matches(kalshi_client: Any, *, now: datetime, lookahead_hour
     for et, mkts in by_event.items():
         suffix = _suffix_of(mkts[0])
         date = _decode_date(suffix)
-        names = None
-        for m in mkts:                                     # the title fixes the A-vs-B ORDER (surnames)
-            names = _names_from_title(m.get("title"))
-            if names:
-                break
+        names = _player_names(mkts)                        # PRIMARY = yes_sub_title full names; title = order only
         if not date or not names:
             if log:
                 log.warning("[TENNIS] unparseable event %s (title=%r) — skipping.",
                             et, (mkts[0].get("title") if mkts else ""))
             continue
-        names = _enrich_full_names(names, mkts)            # prefer the full yes_sub_title names for display
         kickoff = f"{date}T12:00:00Z"                       # provisional; refined from Poly startTime
         ts = datetime.fromisoformat(kickoff.replace("Z", "+00:00")).timestamp()
         if ts > horizon or ts < now.timestamp() - 12 * 3600.0:
@@ -301,9 +350,11 @@ def _same_player(a: str, b: str) -> bool:
 
 
 def _event_players(ev: dict) -> Optional[tuple[str, str]]:
-    """The two player full names from a Poly tennis event title ('<Tournament>: A vs B')."""
+    """The two player full names from a Poly tennis event title ('<Tournament>: A vs B'). The stage
+    suffix is stripped defensively (Poly can decorate titles too)."""
     title = str(ev.get("title") or "")
     core = title.split(":", 1)[1] if ":" in title else title
+    core = strip_stage_suffix(core)
     parts = _TITLE_VS_RE.split(core, maxsplit=1)
     if len(parts) != 2:
         return None
@@ -347,8 +398,22 @@ def resolve_poly_event(match: TennisMatch, series_events: list[dict], poly_clien
                          match.event_ticker, match.player_a, match.player_b, match.poly_base_slug)
             return e, "scan"
     if log:
-        log.info("[TENNIS] %s %s vs %s: NO Poly event (tried %d slugs + scan) — one-sided.",
-                 match.event_ticker, match.player_a, match.player_b, len(construct_slugs(match)))
+        # SELF-DIAGNOSING (the NEXT drift): dump both venues' extracted token sets so a future
+        # name/format drift is visible in the log without a code change.
+        want = sorted(name_tokens(match.player_a) | name_tokens(match.player_b))
+        cand = []
+        for e in series_events or []:
+            if not isinstance(e, dict):
+                continue
+            if (str(e.get("startTime") or "")[:10] in want_dates
+                    or str(e.get("slug") or "")[-10:] in want_dates):
+                ps = _event_players(e)
+                if ps:
+                    cand.append(sorted(name_tokens(ps[0]) | name_tokens(ps[1])))
+        log.info("[TENNIS] %s %s vs %s: NO Poly event (tried %d slugs + scan) — one-sided. "
+                 "kalshi_tokens=%s | poly_candidate_tokens(date-window)=%s",
+                 match.event_ticker, match.player_a, match.player_b, len(construct_slugs(match)),
+                 want, cand[:8])
     return None, "none"
 
 

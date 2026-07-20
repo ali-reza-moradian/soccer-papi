@@ -102,6 +102,78 @@ def test_soccer_spec_advertises_soccer_paths():
     assert sp.tree_path.endswith("match_tree.json") and sp.snapshot_path.endswith("genz_snapshot.json")
 
 
+# --------------------------------------------------------------------------- #
+# SOCCER POST-WC — competition-driven discovery (WC entry pins the golden)        #
+# --------------------------------------------------------------------------- #
+from src.genz.config import Competition   # noqa: E402
+
+
+def test_world_cup_competition_reproduces_legacy_golden():
+    """Enabling ONLY the world_cup competition must build byte-identically to the legacy (no-competition)
+    path — the WC constants moved behind the entry, nothing changed (deliverable 3d)."""
+    cfg = GenzConfig()
+    cfg.competitions = [Competition(name="world_cup", kalshi_series=["KXWCGAME"], poly_slug_prefix="fifwc")]
+    assert tb.build_tree(_Kalshi(), _Poly(), cfg, now=NOW) == tb.build_tree(_Kalshi(), _Poly(), GenzConfig(), now=NOW)
+
+
+def test_config_yaml_seeds_competitions_world_cup_disabled():
+    comps = load_genz_config(sport="soccer").competitions
+    names = {c.name: c for c in comps}
+    assert {"mls", "club_friendlies", "ucl_qualifying", "world_cup"} <= set(names)
+    assert names["world_cup"].enabled is False and names["mls"].enabled is True
+    assert names["world_cup"].kalshi_series == ["KXWCGAME"] and names["mls"].kalshi_series == "AUTO"
+
+
+class _MlsKalshi:
+    def iter_markets(self, *, series_ticker=None, status="open", **k):
+        if series_ticker == "KXMLSGAME":
+            return [{"event_ticker": "KXMLSGAME-26JUL21LAFSEA", "ticker": "x-1", "yes_sub_title": "LAFC",
+                     "title": "Will LAFC win the LAFC vs Seattle Sounders match?"}]
+        return []
+
+    def markets(self, **k):
+        return {"markets": []}
+
+
+class _EmptyPoly:
+    def events_by_series(self, slug, **k):
+        return []
+
+
+def test_non_wc_competition_discovers_reports_honest_zero(monkeypatch, tmp_path):
+    monkeypatch.setattr(tb, "SOCCER_SERIES_MAP_PATH", str(tmp_path / "smap.json"))
+    cfg = GenzConfig()
+    cfg.competitions = [Competition(name="mls", kalshi_series=["KXMLSGAME"], poly_slug_prefix="mls")]
+    tree = tb.build_tree(_MlsKalshi(), _EmptyPoly(), cfg, now=NOW)
+    g = tree["games"]["26JUL21LAFSEA"]
+    assert g["away"] == "LAFC" and g["home"] == "Seattle Sounders" and g["competition"] == "mls"
+    assert g["nodes"] == [] and g["coverage"]["needs_evidence"] is True             # honest zero, named
+    assert g["poly_base_slug"] == "mls-lafc-seattle-sounders-2026-07-21"            # prefix slug built
+
+
+class _CatalogKalshi(_MlsKalshi):
+    def list_series(self, *, category=None):
+        return [{"ticker": "KXMLSGAME", "title": "MLS Game Winner"},
+                {"ticker": "KXNBAGAME", "title": "NBA Game Winner"}]     # non-soccer -> filtered out
+
+
+def test_auto_series_discovery_reports_and_persists(monkeypatch, tmp_path):
+    mp = str(tmp_path / "smap.json")
+    monkeypatch.setattr(tb, "SOCCER_SERIES_MAP_PATH", mp)
+    smap = {}
+    comp = Competition(name="mls", kalshi_series="AUTO", poly_slug_prefix="mls")
+    got = tb.resolve_kalshi_series(comp, _CatalogKalshi(), smap)
+    assert got == ["KXMLSGAME"] and smap["mls"] == ["KXMLSGAME"]          # discovered + learned
+    tb.save_series_map(smap)
+    assert json.load(open(mp, encoding="utf-8"))["mls"] == ["KXMLSGAME"]  # persisted
+
+
+def test_auto_series_discovery_honest_zero_without_catalog():
+    # The default Kalshi client exposes NO catalog listing -> AUTO returns [] (never a hardcoded guess).
+    comp = Competition(name="ucl_qualifying", kalshi_series="AUTO", poly_slug_prefix="ucl")
+    assert tb.resolve_kalshi_series(comp, _MlsKalshi(), {}) == []
+
+
 # =========================================================================== #
 # MLB adapter (src/genz/sports_mlb.py)                                          #
 # =========================================================================== #

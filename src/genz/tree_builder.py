@@ -96,6 +96,7 @@ class Game:
     kickoff_iso: str
     poly_base_slug: str
     poly_slug_alts: list = field(default_factory=list)
+    competition: str = "world_cup"        # POST-WC: which competition discovered this game (legacy = world_cup)
 
     @property
     def ctx(self) -> mr.GameCtx:
@@ -745,6 +746,135 @@ def join_game(k_opts: dict[str, dict], p_opts: dict[str, dict],
 
 
 # --------------------------------------------------------------------------- #
+# SOCCER POST-WC — competition-driven discovery (the WC is over). ADDITIVE: an empty competitions list #
+# (the default) keeps the legacy World Cup path byte-identical; the world_cup entry reproduces it.       #
+# --------------------------------------------------------------------------- #
+SOCCER_SERIES_MAP_PATH = os.path.join(gz_config.GENZ_DIR, "soccer_series_map.json")
+
+
+def load_series_map() -> dict:
+    """The learned {competition: [kalshi_series,...]} map (AUTO discovery persists here). {} if absent."""
+    try:
+        with open(SOCCER_SERIES_MAP_PATH, encoding="utf-8") as fh:
+            d = json.load(fh)
+            return d if isinstance(d, dict) else {}
+    except (FileNotFoundError, ValueError, OSError):
+        return {}
+
+
+def save_series_map(m: dict) -> None:
+    try:
+        gz_config.ensure_dirs()
+        tmp = SOCCER_SERIES_MAP_PATH + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(m, fh, ensure_ascii=False, indent=2)
+        os.replace(tmp, SOCCER_SERIES_MAP_PATH)
+    except OSError:
+        pass
+
+
+def _scan_soccer_series(kalshi_client: Any, comp: Any, log: Any = None) -> list[str]:
+    """Best-effort scan of the Kalshi series CATALOG for a competition's game-winner series (title/ticker
+    heuristic). Returns candidate tickers, or [] when the client exposes NO catalog listing — we NEVER
+    hardcode a guessed ticker (the evidence-first rule); [] means 'report zero, configure explicit'."""
+    lister = getattr(kalshi_client, "list_series", None) or getattr(kalshi_client, "series_list", None)
+    if not callable(lister):
+        if log:
+            log.info("[GENZ][SOCCER] AUTO %s: Kalshi client has no series catalog listing — reporting "
+                     "zero (set an explicit kalshi_series once a real series is confirmed).", comp.name)
+        return []
+    try:
+        rows = lister(category="Soccer")
+    except Exception as exc:  # noqa: BLE001
+        if log:
+            log.warning("[GENZ][SOCCER] AUTO %s catalog scan failed: %s — reporting zero.", comp.name, exc)
+        return []
+    toks = set(re.findall(r"[a-z]+", str(comp.name).lower()))
+    hits: list[str] = []
+    for r in rows or []:
+        if not isinstance(r, dict):
+            continue
+        ticker = str(r.get("ticker") or r.get("series_ticker") or "")
+        blob = f"{ticker} {r.get('title') or ''}".lower()
+        if any(t in blob for t in toks) and any(w in blob for w in ("game", "winner", "match", "moneyline")):
+            hits.append(ticker)
+    if log:
+        log.info("[GENZ][SOCCER] AUTO %s: catalog scan -> candidates %s.", comp.name, hits or "none")
+    return hits
+
+
+def resolve_kalshi_series(comp: Any, kalshi_client: Any, series_map: dict, log: Any = None) -> list[str]:
+    """A competition's Kalshi game-winner series. Explicit list -> as-is. 'AUTO' -> the learned mapping,
+    else a catalog scan (reported + persisted to soccer_series_map.json). Never a hardcoded guess."""
+    ks_cfg = comp.kalshi_series
+    if isinstance(ks_cfg, (list, tuple)):
+        return [str(s) for s in ks_cfg]
+    if str(ks_cfg).upper() != "AUTO":
+        return [str(ks_cfg)]
+    if series_map.get(comp.name):
+        return list(series_map[comp.name])
+    cands = _scan_soccer_series(kalshi_client, comp, log)
+    if cands:
+        series_map[comp.name] = cands
+    return list(cands)
+
+
+_SOCCER_VS_RE = re.compile(r"\bvs\.?\b", re.IGNORECASE)
+
+
+def _soccer_names_from_title(title: str) -> Optional[tuple[str, str]]:
+    """Generic '(A, B)' from a soccer market title ('Will A win the A vs B match?' or bare 'A vs B')."""
+    t = str(title or "")
+    m = re.search(r"win the (.+?)\s+match\b", t, re.IGNORECASE)
+    core = m.group(1) if m else t
+    parts = _SOCCER_VS_RE.split(core, maxsplit=1)
+    if len(parts) != 2:
+        return None
+    a, b = parts[0].strip(" .:-"), parts[1].strip(" .:-")
+    return (a, b) if a and b else None
+
+
+def _competition_slug(prefix: str, away: str, home: str, date: str) -> str:
+    def toks(s: str) -> str:
+        return "-".join(re.findall(r"[a-z0-9]+", str(s or "").lower()))
+    return f"{prefix}-{toks(away)}-{toks(home)}-{date}" if prefix else ""
+
+
+def _discover_competition_games(kalshi_client: Any, comp: Any, series_list: list[str], *,
+                                now: datetime, lookahead_hours: float, log: Any = None) -> list["Game"]:
+    """Generic (non-WC) discovery: enumerate a competition's game-winner series, group by event, parse
+    the two teams from the market titles, and build Game objects with the competition's poly slug prefix.
+    EVIDENCE-FIRST: an event whose title won't parse is REPORTED (for the next raw dump), never guessed;
+    a series with no open markets -> honest zero. Reused team-name matching pairs it downstream."""
+    by_event: dict[str, list[dict]] = {}
+    for series in series_list:
+        try:
+            for m in kalshi_client.iter_markets(series_ticker=series, status="open"):
+                if isinstance(m, dict):
+                    by_event.setdefault(str(m.get("event_ticker") or ""), []).append(m)
+        except Exception as exc:  # noqa: BLE001
+            if log:
+                log.warning("[GENZ][SOCCER] %s series %s fetch failed: %s.", comp.name, series, exc)
+    games: list[Game] = []
+    for et, mkts in by_event.items():
+        names = next((n for n in (_soccer_names_from_title(m.get("title")) for m in mkts) if n), None)
+        iso = ks._event_commence_iso(et)
+        date = iso[:10] if iso else None
+        if not names or not date:
+            if log:
+                log.info("[GENZ][SOCCER] %s: unparsed event %s (title=%r) — reported for evidence, "
+                         "not paired.", comp.name, et, (mkts[0].get("title") if mkts else ""))
+            continue
+        away, home = names
+        base = _competition_slug(comp.poly_slug_prefix, away, home, date)
+        suffix = ks._game_key(et) or et
+        games.append(Game(game_id=suffix, kalshi_suffix=suffix, date=date, home=home, away=away,
+                          kickoff_iso=f"{date}T12:00:00Z", poly_base_slug=base, poly_slug_alts=[base],
+                          competition=comp.name))
+    return games
+
+
+# --------------------------------------------------------------------------- #
 # SOCCER sport adapter — wraps the functions above verbatim (byte-identical output)#
 # --------------------------------------------------------------------------- #
 class SoccerSpec:
@@ -760,15 +890,58 @@ class SoccerSpec:
         return game.game_id
 
     def discover_games(self, kalshi_client: Any, poly_client: Any, cfg: gz_config.GenzConfig, *,
-                       now: datetime, log: Any = None) -> tuple[list["Game"], list[dict]]:
-        games = discover_games(kalshi_client, now=now, lookahead_hours=cfg.lookahead_hours, log=log)
-        # Enumerate the whole soccer-fifwc series ONCE; each game's events are filtered by slug prefix.
-        series_events = fetch_series_events(poly_client, cfg.poly_series_slug, log)
-        return games, series_events
+                       now: datetime, log: Any = None) -> tuple[list["Game"], Any]:
+        comps = getattr(cfg, "competitions", None) or []
+        if not comps:
+            # LEGACY World Cup path — byte-for-byte identical (the golden's default GenzConfig hits this).
+            games = discover_games(kalshi_client, now=now, lookahead_hours=cfg.lookahead_hours, log=log)
+            return games, fetch_series_events(poly_client, cfg.poly_series_slug, log)
+        # COMPETITION-DRIVEN. Each enabled competition resolves its Kalshi game-winner series (AUTO ->
+        # discovered + reported + persisted) and its Poly events; world_cup reuses the WC machinery.
+        all_games: list[Game] = []
+        ctx: dict[str, Any] = {"world_cup_events": [], "comp_events": {}}
+        series_map = load_series_map()
+        for comp in comps:
+            if not getattr(comp, "enabled", True):
+                continue
+            series_list = resolve_kalshi_series(comp, kalshi_client, series_map, log)
+            if comp.name == "world_cup":
+                gs = discover_games(kalshi_client, now=now, lookahead_hours=cfg.lookahead_hours, log=log)
+                ctx["world_cup_events"] = fetch_series_events(poly_client, cfg.poly_series_slug, log)
+            else:
+                gs = _discover_competition_games(kalshi_client, comp, series_list, now=now,
+                                                 lookahead_hours=cfg.lookahead_hours, log=log)
+                ctx["comp_events"][comp.name] = (fetch_series_events(poly_client, comp.poly_slug_prefix, log)
+                                                 if comp.poly_slug_prefix else [])
+            all_games.extend(gs)
+            if log:
+                log.info("[GENZ][SOCCER] competition %s: kalshi_series=%s -> %d game(s) in window.",
+                         comp.name, series_list or ["KXWCGAME"] if comp.name == "world_cup" else series_list,
+                         len(gs))
+        save_series_map(series_map)
+        return all_games, ctx
 
-    def pair_markets(self, kalshi_client: Any, poly_client: Any, game: "Game",
-                     series_events: list[dict], cfg: gz_config.GenzConfig, *,
-                     log: Any = None) -> dict[str, Any]:
+    def pair_markets(self, kalshi_client: Any, poly_client: Any, game: "Game", poly_ctx: Any,
+                     cfg: gz_config.GenzConfig, *, log: Any = None) -> dict[str, Any]:
+        comp = getattr(game, "competition", "world_cup")
+        if comp == "world_cup":
+            se = poly_ctx.get("world_cup_events") if isinstance(poly_ctx, dict) else poly_ctx
+            return self._pair_world_cup(kalshi_client, poly_client, game, se or [], cfg, log=log)
+        # NON-WC: discovered + REPORTED, but the evidence-based pairing rules for this competition don't
+        # exist yet (families/match_rules are competition-agnostic, but its market shapes are unconfirmed)
+        # -> an HONEST zero-node entry that names the game so a dump-raw can add rules. Never forced.
+        if log:
+            log.info("[GENZ][SOCCER] %s (%s) %s vs %s: discovered, awaiting evidence — 0 nodes "
+                     "(dump-raw this game to add its pairing rules).", comp, game.game_id, game.away, game.home)
+        return {"kalshi_suffix": game.kalshi_suffix, "poly_base_slug": game.poly_base_slug,
+                "home": game.home, "away": game.away, "date": game.date, "kickoff_utc": game.kickoff_iso,
+                "sport": "soccer", "competition": comp, "nodes": [], "unmatched": [],
+                "coverage": {"kalshi_ok": 0, "kalshi_failed": [], "poly_ok": 0, "poly_failed": [],
+                             "period_mismatch_dropped": 0, "needs_evidence": True}}
+
+    def _pair_world_cup(self, kalshi_client: Any, poly_client: Any, game: "Game",
+                        series_events: list[dict], cfg: gz_config.GenzConfig, *,
+                        log: Any = None) -> dict[str, Any]:
         # Correct the Poly slug for Kalshi<->Poly 3-letter-code mismatches (POR/PRT, SUI/CHE, …) BEFORE
         # reading the Poly side, so a code mismatch can never silently drop a game.
         resolve_poly_slug(game, series_events, log)
@@ -818,10 +991,18 @@ def build_tree(kalshi_client: Any, poly_client: Any, cfg: gz_config.GenzConfig, 
             continue
         if entry is not None:
             tree["games"][spec.game_id(game)] = entry
+    # SYSTEMIC PAIRING ALARM: a build where almost no game paired is a venue format drift, not a quiet
+    # "nothing today" — log it loudly (the meta carries the machine-readable alert; see build_meta).
+    from .sports_base import pairing_alert
+    alert = pairing_alert(tree, getattr(spec, "name", "?"))
+    if alert and log:
+        log.warning("[%s] SYSTEMIC PAIRING FAILURE: %d/%d games paired — probable venue format drift.",
+                    str(getattr(spec, "name", "?")).upper(), alert["paired"], alert["total"])
     return tree
 
 
-def build_meta(tree: dict[str, Any], *, now: datetime) -> dict[str, Any]:
+def build_meta(tree: dict[str, Any], *, now: datetime, sport: str = "?") -> dict[str, Any]:
+    from .sports_base import pairing_alert
     games = tree.get("games", {})
     kickoffs = sorted((g.get("kickoff_utc", "") for g in games.values()) if games else [])
     # Per-game coverage so the dashboard can show which market types failed to fetch this build.
@@ -831,15 +1012,20 @@ def build_meta(tree: dict[str, Any], *, now: datetime) -> dict[str, Any]:
     # Per-game count-market pairs dropped for a settlement-period mismatch (the extra-time trap).
     period_dropped = {gid: g.get("coverage", {}).get("period_mismatch_dropped", 0)
                       for gid, g in games.items() if g.get("coverage", {}).get("period_mismatch_dropped")}
-    return {"built_utc": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+    meta = {"built_utc": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
             "games": sorted(games.keys()), "next_kickoffs": kickoffs[:10],
             "coverage": coverage, "kalshi_series_failed_any_game": any_failed,
             "period_mismatch_dropped_by_game": period_dropped,
             "period_mismatch_dropped_total": sum(period_dropped.values())}
+    alert = pairing_alert(tree, sport)                     # None unless a systemic pairing failure
+    if alert:
+        meta["systemic_alert"] = alert
+    return meta
 
 
 def write_tree(tree: dict[str, Any], *, now: Optional[datetime] = None,
-               tree_path: Optional[str] = None, meta_path: Optional[str] = None) -> tuple[str, str]:
+               tree_path: Optional[str] = None, meta_path: Optional[str] = None,
+               sport: str = "?") -> tuple[str, str]:
     """Persist match_tree.json + tree_meta.json under data/genz/. Returns the two paths written."""
     now = now or datetime.now(timezone.utc)
     gz_config.ensure_dirs()
@@ -848,7 +1034,7 @@ def write_tree(tree: dict[str, Any], *, now: Optional[datetime] = None,
     with open(tp, "w", encoding="utf-8") as fh:
         json.dump(tree, fh, ensure_ascii=False, indent=2)
     with open(mp, "w", encoding="utf-8") as fh:
-        json.dump(build_meta(tree, now=now), fh, ensure_ascii=False, indent=2)
+        json.dump(build_meta(tree, now=now, sport=sport), fh, ensure_ascii=False, indent=2)
     return tp, mp
 
 

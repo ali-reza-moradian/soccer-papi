@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from src.genz import match_rules as mr
 from src.genz import tree_builder as tb
 from src.genz.config import GenzConfig
+from src.genz.sports_base import pairing_alert
 
 NOW = datetime(2026, 6, 29, 12, 0, 0, tzinfo=timezone.utc)   # game kicks off 2026-06-30 (within 48h)
 SUF = "26JUN30CIVNOR"
@@ -513,3 +514,29 @@ def test_settle_period_parsed_and_attached_end_to_end():
     assert not any(n["market_type"] == "corners" for n in g["nodes"])        # period mismatch -> not paired
     assert g["coverage"]["period_mismatch_dropped"] >= 1
     assert tb.build_meta(tree, now=_POR_NOW)["period_mismatch_dropped_total"] >= 1
+
+
+# --------------------------------------------------------------------------- #
+# SYSTEMIC PAIRING ALARM — the 39/39 silent-zeros guard                          #
+# --------------------------------------------------------------------------- #
+def _tree(paired, total, sport="tennis"):
+    games = {}
+    for i in range(total):
+        nodes = [{"twin_key": "match_winner|x"}] if i < paired else []
+        games[f"G{i}"] = {"away": f"Player {i}", "home": "Torres: Round Of", "nodes": nodes, "sport": sport}
+    return {"games": games}
+
+
+def test_systemic_alert_fires_below_20pct_and_meta_carries_it():
+    tree = _tree(paired=0, total=35, sport="tennis")           # the real 0/35 case
+    alert = pairing_alert(tree, "tennis")
+    assert alert and alert["paired"] == 0 and alert["total"] == 35 and alert["rate"] == 0.0
+    assert alert["sample_unmatched_tokens"] and "round" in alert["sample_unmatched_tokens"][0]["tokens"]
+    meta = tb.build_meta(tree, now=NOW, sport="tennis")
+    assert meta["systemic_alert"]["total"] == 35
+
+
+def test_systemic_alert_silent_when_healthy_or_too_few_games():
+    assert pairing_alert(_tree(paired=10, total=35), "tennis") is None      # 28% paired -> healthy
+    assert pairing_alert(_tree(paired=0, total=4), "tennis") is None        # < 5 games -> no alarm (small slate)
+    assert "systemic_alert" not in tb.build_meta(_tree(paired=30, total=35), now=NOW, sport="tennis")

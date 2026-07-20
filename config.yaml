@@ -409,6 +409,20 @@ genz:
   inplay:
     collect: true
     horizon_hours: 3.0              # soccer: ~2h match + stoppage/ET buffer
+  # SOCCER POST-WC — competition-driven discovery (the World Cup is over). Each competition names its
+  # Kalshi game-winner series (AUTO -> discovered from the catalog, REPORTED, and persisted to
+  # data/genz/soccer_series_map.json; or an explicit list) and its Polymarket slug prefix. A competition
+  # simply not listed on a venue reports ZERO honestly (never forced). The world_cup entry keeps the
+  # KXWCGAME/fifwc constants (disabled here; ENABLED it reproduces the legacy path — the golden pins it).
+  # Families/match_rules (periods, settlement, twin keys) are competition-AGNOSTIC and unchanged. Empty/
+  # absent competitions -> the legacy World Cup path (byte-identical). Friendlies caveat: no extra time /
+  # odd sub rules — the existing settlement-period parser + guards already handle the divergence.
+  soccer:
+    competitions:
+      - {name: mls,             kalshi_series: AUTO, poly_slug_prefix: mls,           enabled: true}
+      - {name: club_friendlies, kalshi_series: AUTO, poly_slug_prefix: club-friendly, enabled: true}
+      - {name: ucl_qualifying,  kalshi_series: AUTO, poly_slug_prefix: ucl,           enabled: true}
+      - {name: world_cup,       kalshi_series: [KXWCGAME], poly_slug_prefix: fifwc,   enabled: false}
   # MLB — a SECOND sport, fully isolated (its own tree/snapshot/heartbeat/arbs/papermaker files). Only
   # the keys below differ from the soccer defaults above; everything else (walk_stake_usd, min_edge_pct,
   # max_plausible_roi_pct, min_total_implied, http_timeout_seconds, max_workers, poly_fee_rate) is

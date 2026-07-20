@@ -13,10 +13,43 @@ kalshi_side, poly_token_id, poly_side, + optional poly_fee_*/settlement fields).
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Any, Callable, Optional, Protocol, runtime_checkable
 
 from . import config as gz_config
+
+# SYSTEMIC PAIRING ALARM (all sports). A silent 39/39-games-with-zero-nodes build is almost always a
+# venue FORMAT DRIFT (a title/slug shape changed), not a real "nothing paired today". Below these
+# thresholds the build writes a systemic_alert into <sport>_tree_meta.json + logs a loud WARNING so it
+# can never pass silently again.
+SYSTEMIC_MIN_GAMES = 5
+SYSTEMIC_MIN_PAIRED_SHARE = 0.20
+
+
+def pairing_alert(tree: dict, sport: str = "?") -> Optional[dict]:
+    """Return a systemic_alert dict when a build has >= SYSTEMIC_MIN_GAMES games but < 20% of them have
+    ANY paired node (probable venue format drift), else None. Sport-agnostic; samples the unpaired
+    games' name tokens so the alert is self-diagnosing for whoever reads the tree log / panel banner."""
+    games = tree.get("games", {}) or {}
+    total = len(games)
+    if total < SYSTEMIC_MIN_GAMES:
+        return None
+    paired = sum(1 for g in games.values() if g.get("nodes"))
+    rate = paired / total if total else 0.0
+    if rate >= SYSTEMIC_MIN_PAIRED_SHARE:
+        return None
+    samples: list = []
+    for gid, g in games.items():
+        if g.get("nodes"):
+            continue
+        label = f"{g.get('away', '?')} vs {g.get('home', '?')}"
+        samples.append({"game": gid, "label": label,
+                        "tokens": sorted(set(re.findall(r"[a-z0-9]+", label.lower())))})
+        if len(samples) >= 6:
+            break
+    return {"sport": sport, "rate": round(rate, 4), "paired": paired, "total": total,
+            "sample_unmatched_tokens": samples}
 
 
 # --------------------------------------------------------------------------- #
