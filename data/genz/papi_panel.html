@@ -639,16 +639,22 @@ function mrtSportRow(name,s){   // one per-sport mini-row; greyed when the sport
 }
 function makerStripHtml(m){   // PURE: the MAKER RT v3 strip (top line + per-sport rows + PRE|LIVE split)
   var mode=(m.mode||'shadow').toLowerCase();
-  var badge='<span class="mbadge '+(mode==='live'?'live':'shadow')+'">'+mode+'</span>';
+  // TWO GATES shown separately: PRE (pre-game live/shadow) and INPLAY (locked/armed) — independent files+flags.
+  var g=m.gates||{};
+  var preOn=(g.pre!=null)?!!g.pre:(mode==='live');
+  var ipOn=!!g.inplay;
+  var gatePre='<span class="mbadge '+(preOn?'live':'shadow')+'" title="pre-game live gate (ARM_MAKER)">PRE '+(preOn?'LIVE':'SHADOW')+'</span>';
+  var gateIp='<span class="mbadge '+(ipOn?'live':'shadow')+'" title="in-play live gate (ARM_MAKER_INPLAY)">INPLAY '+(ipOn?'ARMED':'LOCKED')+'</span>';
+  var rst=(m.restarts_today!=null)?(' &middot; restarts '+((m.restarts_today>3)?'<b style="color:#e5484d" title="crash-loop?">':'<b>')+m.restarts_today+'</b>'):'';
   var s=m.sockets||{};
   function dot(k,lbl){return '<span class="sock"><span class="sdot'+(s[k]?' up':'')+'"></span>'+lbl+'</span>';}
   var socks=dot('poly_market','poly')+dot('kalshi','kalshi')+dot('poly_user','user');
-  var top='<span class="lbl">MAKER RT</span> '+badge+' '+socks
+  var top='<span class="lbl">MAKER RT</span> '+gatePre+' '+gateIp+' '+socks
     +' <span class="v">&middot;</span> quotes <b>'+(m.quotes||0)+'</b> &middot; fills <b>'+(m.fills||0)
     +'</b> (fill-rate <b>'+mrtPctInt(m.fill_rate)+'</b>) &middot; at-best <b>'+mrtPctInt(m.at_best_share)
     +'</b> &middot; median net <b>'+mrtPct2(m.median_net_at_fill)+'</b>'
     +' &middot; drift <b>'+mrtPct2(m.drift_median_1)+'</b>/<b>'+mrtPct2(m.drift_median_5)+'</b>/<b>'+mrtPct2(m.drift_median_30)+'</b>'
-    +' <span class="v">(+1/5/30s)</span> &middot; behind <b>'+(m.behind_best||0)+'</b>';
+    +' <span class="v">(+1/5/30s)</span> &middot; behind <b>'+(m.behind_best||0)+'</b>'+rst;
   // PRE | LIVE phase split.
   var byp=m.by_phase||{},pre=byp.pre,ip=byp.inplay;
   function phaseSeg(lbl,ph){return '<b>'+lbl+'</b> q '+((ph&&ph.quotes)||0)+' f '+((ph&&ph.fills)||0)

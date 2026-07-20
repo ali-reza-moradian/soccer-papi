@@ -1,8 +1,13 @@
 """The LIVE gate — the hard lock in front of every order path.
 
-Live refuses unless ALL of: config maker_rt.live.enabled is true, the on-disk arm file exists, AND a
-startup self-check passes (readable balances on BOTH venues, Polymarket allowance/approvals readable,
-tick sizes fetchable). Any failure -> SHADOW. In this build enabled defaults False, so the gate never
+TWO INDEPENDENT GATES, one per phase (a fill's phase decides which applies):
+  * PRE-GAME  (``maker_rt.live``)        — armed iff enabled AND ``ARM_MAKER`` exists AND self-check.
+  * IN-PLAY   (``maker_rt.live_inplay``) — armed iff enabled AND ``ARM_MAKER_INPLAY`` exists AND
+    self-check. STRICTER downstream rails (freeze cool-off + hedge re-verify) live in the executor.
+
+The two gates share nothing but the startup self-check (readable balances on BOTH venues, Polymarket
+allowance/approvals readable, tick sizes fetchable); their enabled flags + arm files are separate, so
+arming pre-game never arms in-play and vice-versa. In this build BOTH default enabled False, so neither
 opens; the checks + refusal reasons are unit-tested with fakes.
 """
 from __future__ import annotations
@@ -23,10 +28,11 @@ def is_inplay(phase: Any) -> bool:
     return str(phase) == "inplay"
 
 
-def assert_live_allowed(phase: Any) -> None:
-    """HARD LOCK: a live order/hedge must NEVER fire for an in-play market, even when the gate is armed.
-    In-play is shadow data collection only. Raises AssertionError for phase=='inplay'."""
-    assert not is_inplay(phase), "LIVE FORBIDDEN in-play — in-play markets are shadow collection only"
+def assert_live_allowed(phase: Any, armed: bool) -> None:
+    """HARD LOCK re-checked immediately before a live order fires: refuse unless ``armed`` is the result
+    of the phase's OWN gate (pre-game or in-play). Raises AssertionError otherwise. The two-gate design
+    replaced the old blanket in-play refusal — in-play may now fire, but ONLY through its own armed gate."""
+    assert armed, f"LIVE not armed for phase={phase!r} — refusing to place an order."
 
 
 class LiveGate:
@@ -69,11 +75,11 @@ class LiveGate:
             checks["poly_balance"] = False
         return checks
 
-    def evaluate(self) -> GateResult:
-        live = getattr(self.cfg, "live", None)
-        if not getattr(live, "enabled", False):
-            return GateResult(False, "live.enabled is false (shadow)")
-        arm = getattr(live, "arm_file", "")
+    def _evaluate_block(self, block: Any, label: str) -> GateResult:
+        """Evaluate ONE gate block (enabled + arm_file + self-check). Shared by both gates."""
+        if not getattr(block, "enabled", False):
+            return GateResult(False, f"{label}.enabled is false (shadow)")
+        arm = getattr(block, "arm_file", "")
         if not (arm and os.path.exists(arm)):
             return GateResult(False, f"arm file missing ({arm})")
         checks = self._self_check()
@@ -82,11 +88,24 @@ class LiveGate:
             return GateResult(False, f"self-check failed: {failed}", checks=checks)
         return GateResult(True, "armed", checks=checks)
 
-    def may_place(self, phase: Any, *, gate: Optional[GateResult] = None) -> bool:
-        """True only if the gate is ARMED AND the market is NOT in-play. In-play is UNCONDITIONALLY
-        refused for live (shadow collection only), even enabled + ARM_MAKER + self-check passing."""
-        g = gate or self.evaluate()
-        return bool(g.armed) and not is_inplay(phase)
+    def evaluate(self) -> GateResult:
+        """The PRE-GAME gate (``maker_rt.live`` — enabled + ARM_MAKER + self-check)."""
+        return self._evaluate_block(getattr(self.cfg, "live", None), "live")
+
+    def evaluate_inplay(self) -> GateResult:
+        """The IN-PLAY gate (``maker_rt.live_inplay`` — enabled + ARM_MAKER_INPLAY + self-check).
+        INDEPENDENT of the pre-game gate: separate enabled flag AND separate arm file."""
+        return self._evaluate_block(getattr(self.cfg, "live_inplay", None), "live_inplay")
+
+    def may_place(self, phase: Any, *, gate: Optional[GateResult] = None,
+                  inplay_gate: Optional[GateResult] = None) -> bool:
+        """TWO-GATE rule: an in-play fill needs the IN-PLAY gate armed; any other phase needs the
+        PRE-GAME gate armed. The two are evaluated independently (own enabled flag + own arm file)."""
+        if is_inplay(phase):
+            g = inplay_gate or self.evaluate_inplay()
+        else:
+            g = gate or self.evaluate()
+        return bool(g.armed)
 
 
 def _require(res: Any) -> None:

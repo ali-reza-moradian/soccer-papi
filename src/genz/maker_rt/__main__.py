@@ -17,12 +17,27 @@ from . import config as mrt_config
 from .driver import QuoteDriver
 from .feeds import KalshiFeed, PolyMarketFeed
 from .gitguard import head_changed, read_head_sha
+from .hedge import LiveHedger
+from .inplay_exec import InFlightGuard, InplayLiveExecutor
 from .live import LiveGate
-from .state import MakerState, utcnow
+from .state import MakerState, bump_restart, utcnow
 from .store import BookStore
 from .universe import build_universe, kalshi_tickers, load_trees, poly_tokens, tree_mtimes
 
 HEARTBEAT_EVERY_S = 2.5
+
+
+def _telegram_sender(log: Any):
+    """A ``callable(text)`` that alerts Telegram, or None when creds are absent. Only ever called by the
+    in-play executor when the (locked) in-play gate is armed."""
+    key, chat = os.environ.get("TELEGRAM_BOT_KEY"), os.environ.get("TELEGRAM_GROUP_ID")
+    if not (key and chat):
+        return None
+    try:
+        from ...telegram import send_message
+    except Exception:  # noqa: BLE001
+        return None
+    return lambda text: send_message(key, chat, text, log)
 
 
 def _kalshi_ws_auth() -> tuple:
@@ -55,13 +70,25 @@ def _spawn_feeds(store: BookStore, universe: list, cfg: Any, log: Any) -> tuple:
 
 async def _run(cfg: Any, log: Any) -> int:
     mrt_config.ensure_dirs()
-    gate = LiveGate(cfg, log=log).evaluate()          # SHADOW unless enabled+armed+self-check pass
+    now0 = utcnow()
+    restarts = bump_restart(now0)                     # crash-loop signal (persisted, per UTC day)
+    live_gate = LiveGate(cfg, log=log)                # no order clients in shadow -> both gates stay closed
+    gate = live_gate.evaluate()                       # SHADOW unless enabled+armed+self-check pass (pre-game)
+    inplay_gate = live_gate.evaluate_inplay()
     mode = "live" if gate.armed else "shadow"
-    log.info("[MAKER_RT] starting in %s mode (%s)", mode.upper(), gate.reason)
+    log.info("[MAKER_RT] starting in %s mode (pre-game: %s | in-play: %s) — restart #%d today",
+             mode.upper(), gate.reason, inplay_gate.reason, restarts)
 
     store = BookStore()
-    state = MakerState()
-    driver = QuoteDriver(cfg, state, log=log)
+    state = MakerState(log=log)
+    state.restarts_today = restarts
+    state.gates = {"pre": bool(gate.armed), "inplay": bool(inplay_gate.armed)}
+    # IN-PLAY LIVE executor — built + wired, but LOCKED (its gate never opens in this build; every driver
+    # hook is a no-op). No order clients are injected in shadow, so it can never place an order.
+    executor = InplayLiveExecutor(cfg, live_gate, LiveHedger(poly_rate=cfg.poly_fee_rate, log=log),
+                                  in_flight=InFlightGuard(), telegram=_telegram_sender(log),
+                                  state=state, log=log)
+    driver = QuoteDriver(cfg, state, log=log, inplay_exec=executor)
     horizon = cfg.inplay.horizon_hours
     universe = build_universe(load_trees(), time.time(), max_games=cfg.max_games,
                               expire_before_kickoff_s=cfg.expire_before_kickoff_s, horizon_hours=horizon)
@@ -125,6 +152,11 @@ async def _run(cfg: Any, log: Any) -> int:
     finally:
         # SHUTDOWN: cancel all LIVE orders FIRST (armed only), then stop the feeds.
         # (In shadow there are no live orders; the hook is here for the armed path.)
+        # FLUSH pending drift so a HEAD-change/restart never silently drops a fill's drift numbers.
+        try:
+            driver.flush_drift(utcnow())
+        except Exception as exc:  # noqa: BLE001 — a flush failure must not mask the real shutdown
+            log.warning("[MAKER_RT] drift flush on shutdown failed: %s", exc)
         pm.stop(); ks.stop()
         for t in tasks:
             t.cancel()

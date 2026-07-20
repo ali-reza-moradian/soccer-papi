@@ -54,10 +54,13 @@ class Candidate:
 
 
 class QuoteDriver:
-    def __init__(self, cfg: Any, state: Any, *, log: Any = None) -> None:
+    def __init__(self, cfg: Any, state: Any, *, log: Any = None, inplay_exec: Any = None) -> None:
         self.cfg = cfg
         self.state = state
         self.log = log
+        # The IN-PLAY LIVE executor (built + tested, but LOCKED — armed() is False in this build, so every
+        # hook below is a no-op and the shadow path is byte-identical). Set only by __main__.
+        self.inplay_exec = inplay_exec
         self.fills = ShadowFillModel()
         self.universe: list = []
         self.prev: dict = {}                 # key -> last QuoteDecision (reprice detection)
@@ -149,6 +152,17 @@ class QuoteDriver:
     def _ip(self):
         return getattr(self.cfg, "inplay", None)
 
+    def _rails_ok(self, store: Any, c: Candidate, now_ts: float) -> bool:
+        """Data-quality rail for the achievable ladder (ALL phases): both books fresh AND the node not
+        shock-frozen right now. A rails-failed evaluation is kept OUT of the summary ladder (ghost
+        inflation from stale/frozen phantom edges)."""
+        ip = self._ip()
+        fresh_s = ip.fresh_s if ip is not None else 10.0
+        if now_ts < self.freeze_until.get(c.node3, 0.0):
+            return False
+        return bool(store.is_fresh(c.rest_id, now_ts, fresh_s)
+                    and store.is_fresh(c.hedge_id, now_ts, fresh_s))
+
     # -- quote refresh -----------------------------------------------------
     def refresh_quotes(self, store: Any, now: Any, now_ts: float) -> None:
         """Re-evaluate every candidate against the current books; arm/reprice/expire + record events.
@@ -168,8 +182,9 @@ class QuoteDriver:
             # the edge if we simply JOINED the current best bid. Accumulated per sport/phase; a throttled
             # 1/min/market sample also lands in the CSV.
             achv = achievable_net(rest.best_bid, hedge.best_ask, c.hedge_venue, c.poly_rate)
-            self.state.record_achievable(c.sport, phase, achv, now)
-            self._maybe_sample_achievable(c, phase, achv, now, now_ts)
+            rails_ok = self._rails_ok(store, c, now_ts)
+            self.state.record_achievable(c.sport, phase, achv, now, rails_ok=rails_ok)
+            self._maybe_sample_achievable(c, phase, achv, rails_ok, now, now_ts)
 
             # GAP: no quotes between kickoff-120s and kickoff.
             if phase == "gap":
@@ -237,6 +252,13 @@ class QuoteDriver:
             else:
                 self.viable_since.pop(c.key, None)
 
+            # STRICTER LIVE IN-PLAY RAIL: place only once the node has been unfrozen AND both-books-fresh
+            # for >= freeze_cooloff_s. No-op in shadow (executor locked -> armed() is False).
+            if (phase == "inplay" and self.inplay_exec is not None and self.inplay_exec.armed()
+                    and not self.inplay_exec.cooloff_ok(store, c, self.freeze_until.get(c.node3, 0.0), now_ts)):
+                self._expire_if_open(c, now, "inplay_cooloff", phase)
+                continue
+
             was_open = c.key in self.fills.quotes
             if was_open and not needs_reprice(prev, dec, tick):
                 continue                                  # unchanged within a tick
@@ -272,10 +294,11 @@ class QuoteDriver:
             self.log.info("[MAKER_RT] FREEZE %s %s (mid move %.3f >= shock) - disarmed, no quotes for the "
                           "freeze window.", c.game, c.market_key, move)
 
-    def _maybe_sample_achievable(self, c: Candidate, phase: str, achv: Optional[float], now: Any,
-                                 now_ts: float) -> None:
+    def _maybe_sample_achievable(self, c: Candidate, phase: str, achv: Optional[float], rails_ok: bool,
+                                 now: Any, now_ts: float) -> None:
         """Write AT MOST one achievable_sample CSV row per minute per MARKET (this evaluates thousands of
-        times/day — the aggregate lives in the summary, only a heartbeat sample lands in the CSV)."""
+        times/day — the aggregate lives in the summary, only a heartbeat sample lands in the CSV). The
+        RAW sample is kept regardless of rails; ``rails_ok`` records whether it fed the summary ladder."""
         if achv is None:
             return
         last = self._achv_sample_ts.get(c.node3, -1e18)
@@ -284,7 +307,8 @@ class QuoteDriver:
         self._achv_sample_ts[c.node3] = now_ts
         self.state.record({"event": "achievable_sample", "mode": "shadow", "sport": c.sport,
                            "phase": phase, "game": c.game, "market_key": c.market_key, "side": c.rest_side,
-                           "direction": c.direction, "achievable_net": round(achv * 100, 4)}, now)
+                           "direction": c.direction, "achievable_net": round(achv * 100, 4),
+                           "rails_ok": rails_ok}, now)
 
     def _expire_if_open(self, c: Candidate, now: Any, reason: str, phase: str = "pre") -> None:
         if c.key in self.fills.quotes:
@@ -320,6 +344,13 @@ class QuoteDriver:
         mark = hedge_mod.mark_hedge(hv.ask_ladder, fe.size, ctx.get("hedge_venue", "kalshi"),
                                     ctx.get("poly_rate", self.cfg.poly_fee_rate)) if hv else None
         locked = hedge_mod.locked_net(fe.quote_price, mark["cost_per_share"]) if mark else None
+        mid0 = hedge_mod.hedge_mid(hv) if hv else None      # drift baseline: hedge mid AT fill time
+        # IN-PLAY LIVE: once the in-play gate is armed, the executor OWNS this fill (re-verify hedge, fire
+        # or decline+unwind, caps, one-in-flight, Telegram + CSV). LOCKED in this build (armed() is False),
+        # so control falls through to the shadow measurement below, byte-identical.
+        if phase == "inplay" and self.inplay_exec is not None and self.inplay_exec.armed():
+            self.inplay_exec.on_fill(fe, ctx, store, now, now_ts, hedge_view=hv, mark=mark)
+            return
         sport, game, mkey, side, direction = fe.key
         row = {"event": "fill", "mode": "shadow", "sport": sport, "phase": phase, "game": game,
                "market_key": mkey, "side": side, "direction": direction,
@@ -335,10 +366,16 @@ class QuoteDriver:
                           game, mkey, direction, phase, fe.quote_price, fe.trigger, fe.quote_age_s,
                           f"{locked*100:.2f}" if locked is not None else "n/a")
         self.drift_pending.append({"key": fe.key, "lookup": ctx.get("lookup", {}), "phase": phase,
-                                   "fill_ts": now_ts, "marks": {}, "sport": sport, "game": game,
+                                   "fill_ts": now_ts, "fill_iso": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                                   "mid0": mid0, "marks": {}, "sport": sport, "game": game,
                                    "market_key": mkey, "side": side, "direction": direction})
 
     def process_drift(self, store: Any, now: Any, now_ts: float) -> None:
+        """Sample the hedge mid at each +drift_marks_s after a shadow fill; once the LAST mark is due,
+        emit a PAIRED ``fill_drift`` event. The CSV is append-only so the fill row can't be updated in
+        place — the fill_drift row is linked back by ``fill_ts`` + identity, and its drift_1/5/30 are the
+        ADVERSE-SELECTION deltas mid(t) − mid_at_fill (positive = the hedge moved against us). These
+        numbers gate in-play arming, so they must reliably exist — hence the shutdown flush below."""
         marks = tuple(self.cfg.drift_marks_s)
         still: list = []
         for d in self.drift_pending:
@@ -347,16 +384,36 @@ class QuoteDriver:
             mid = hedge_mod.hedge_mid(hv) if hv else None
             for m in marks:
                 if m not in d["marks"] and age >= m:
-                    d["marks"][m] = mid
+                    d["marks"][m] = mid                  # first hedge-mid reading at/after this mark's age
             if age >= max(marks):
-                self.state.record({"event": "drift", "mode": "shadow", "sport": d["sport"],
-                                   "phase": d.get("phase", "pre"), "game": d["game"],
-                                   "market_key": d["market_key"], "side": d["side"], "direction": d["direction"],
-                                   "drift_1": d["marks"].get(marks[0]), "drift_5": d["marks"].get(marks[1]),
-                                   "drift_30": d["marks"].get(marks[-1])}, now)
+                self._emit_fill_drift(d, now)
             else:
                 still.append(d)
         self.drift_pending = still
+
+    def flush_drift(self, now: Any, now_ts: Optional[float] = None) -> None:
+        """Emit a (possibly partial) fill_drift for EVERY still-pending fill — called on graceful
+        shutdown so a HEAD-change/restart never silently drops a fill's drift. Marks not yet reached are
+        blank; the row is tagged reason='partial'."""
+        for d in self.drift_pending:
+            self._emit_fill_drift(d, now, partial=True)
+        self.drift_pending = []
+
+    def _emit_fill_drift(self, d: dict, now: Any, *, partial: bool = False) -> None:
+        marks = tuple(self.cfg.drift_marks_s)
+        mid0 = d.get("mid0")
+
+        def delta(m):
+            mv = d["marks"].get(m)
+            return round(mv - mid0, 6) if (mv is not None and mid0 is not None) else None
+
+        self.state.record({"event": "fill_drift", "mode": "shadow", "sport": d["sport"],
+                           "phase": d.get("phase", "pre"), "game": d["game"], "market_key": d["market_key"],
+                           "side": d["side"], "direction": d["direction"], "fill_ts": d.get("fill_iso", ""),
+                           "drift_1": delta(marks[0]) if len(marks) >= 1 else None,
+                           "drift_5": delta(marks[1]) if len(marks) >= 2 else None,
+                           "drift_30": delta(marks[-1]) if marks else None,
+                           "reason": "partial" if partial else ""}, now)
 
     def expire_kickoff(self, now: Any, now_ts: float) -> None:
         """Disarm any quote that entered the GAP window (kickoff-120s .. kickoff). In-play quotes

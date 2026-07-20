@@ -440,12 +440,14 @@ def test_state_summary_and_heartbeat(tmp_path):
     now = datetime(2026, 7, 16, 18, 0, 0, tzinfo=timezone.utc)
     st.record({"event": "quote", "at_best": True}, now)
     st.record({"event": "behind"}, now)
-    st.record({"event": "fill", "locked_net": 1.5, "locked_pnl": 0.75}, now)
+    st.record({"event": "fill", "sport": "mlb", "game": "G1", "market_key": "ml2",
+               "locked_net": 1.5, "locked_pnl": 0.75}, now)
     summ = st.summary("shadow", {"poly_market": True, "kalshi": True, "poly_user": False}, now)
     assert summ["quotes"] == 1 and summ["fills"] == 1 and summ["behind_best"] == 1
     assert summ["at_best_share"] == 1.0 and summ["median_net_at_fill"] == 1.5
-    assert summ["mode"] == "shadow" and summ["schema"] == 2      # schema 2: by_sport/by_phase/achievable
+    assert summ["mode"] == "shadow" and summ["schema"] == 3      # schema 3: rails-gated achv + restarts + gates
     assert "by_sport" in summ and "by_phase" in summ
+    assert "restarts_today" in summ and "gates" in summ
     hb = st.heartbeat("shadow", {"poly_market": True}, 3, now)
     assert hb["open_quotes"] == 3 and hb["fills_today"] == 1
 
@@ -478,7 +480,7 @@ class _RecState:
     def record(self, row, now):
         self.rows.append(row)
 
-    def record_achievable(self, sport, phase, value, now):
+    def record_achievable(self, sport, phase, value, now, rails_ok=True):
         self.achv.append((sport, phase, value))
 
 
@@ -513,9 +515,10 @@ def test_driver_quotes_and_shadow_fills_end_to_end():
     fill_rows = [r for r in st.rows if r["event"] == "fill"]
     assert len(fill_rows) == 1 and fill_rows[0]["trigger"] == "traded_through"
     assert fill_rows[0]["locked_net"] is not None and fill_rows[0]["hedge_avg"] == 0.5
-    # Drift marks fire after the max window.
+    # Drift marks fire after the max window -> a PAIRED fill_drift event (linked by fill_ts + identity).
     drv.process_drift(bs, now, now_ts=101.0 + max(drv.cfg.drift_marks_s) + 1)
-    assert any(r["event"] == "drift" for r in st.rows)
+    fd = [r for r in st.rows if r["event"] == "fill_drift"]
+    assert len(fd) == 1 and fd[0]["fill_ts"] and fd[0]["drift_30"] is not None   # baseline captured -> real number
 
 
 def test_driver_behind_best_is_deduped_not_per_tick():

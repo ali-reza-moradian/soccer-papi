@@ -52,6 +52,22 @@ class LiveConfig:
 
 
 @dataclass
+class InplayLiveConfig:
+    """The ``maker_rt.live_inplay:`` sub-block — the SECOND, INDEPENDENT live gate for IN-PLAY markets
+    (the pre-game ``live`` gate is separate and unchanged). Defaults are the locked posture: enabled
+    False, so the in-play live path never arms in this build. Rails here are STRICTER than pre-game."""
+    enabled: bool = False
+    arm_file: str = os.path.join(OPS_DIR, "ARM_MAKER_INPLAY")
+    quote_usd_max: float = 25.0
+    max_open_quotes: int = 1
+    max_fills_per_day: int = 4
+    max_daily_loss_usd: float = 20.0
+    hedge_timeout_ms: int = 1500
+    freeze_cooloff_s: float = 10.0   # place only after the node has been unfrozen AND both-books-fresh this long
+    hedge_decline_floor: float = -0.010   # re-verify at fill: if walked hedge nets below this, decline+unwind
+
+
+@dataclass
 class InplayConfig:
     """The ``maker_rt.inplay:`` sub-block — admission horizon + the anti-phantom rails for in-play
     shadow quoting. Live is HARD-refused in-play regardless (see LiveGate)."""
@@ -92,6 +108,7 @@ class MakerRtConfig:
     tennis_max_poly_leg: Optional[float] = None
     inplay: InplayConfig = field(default_factory=InplayConfig)
     live: LiveConfig = field(default_factory=LiveConfig)
+    live_inplay: InplayLiveConfig = field(default_factory=InplayLiveConfig)
 
 
 def _raw(config_path: Optional[str] = None) -> dict[str, Any]:
@@ -165,6 +182,23 @@ def load_maker_rt_config(config_path: Optional[str] = None,
     lc.hedge_timeout_ms = int(lc.hedge_timeout_ms)
     lc.unwind_on_hedge_fail = bool(lc.unwind_on_hedge_fail)
     cfg.live = lc
+    # LIVE-INPLAY — the second, independent gate (locked by default; enabled False).
+    li_blk = blk.get("live_inplay")
+    li_blk = dict(li_blk) if isinstance(li_blk, dict) else {}
+    li = InplayLiveConfig()
+    for name in ("enabled", "arm_file", "quote_usd_max", "max_open_quotes", "max_fills_per_day",
+                 "max_daily_loss_usd", "hedge_timeout_ms", "freeze_cooloff_s", "hedge_decline_floor"):
+        if li_blk.get(name) is not None:
+            setattr(li, name, li_blk[name])
+    li.enabled = bool(li.enabled)
+    li.quote_usd_max = float(li.quote_usd_max)
+    li.max_open_quotes = int(li.max_open_quotes)
+    li.max_fills_per_day = int(li.max_fills_per_day)
+    li.max_daily_loss_usd = float(li.max_daily_loss_usd)
+    li.hedge_timeout_ms = int(li.hedge_timeout_ms)
+    li.freeze_cooloff_s = float(li.freeze_cooloff_s)
+    li.hedge_decline_floor = float(li.hedge_decline_floor)
+    cfg.live_inplay = li
     return cfg
 
 

@@ -14,22 +14,25 @@ from __future__ import annotations
 
 import csv
 import json
+import logging
 import os
 import random
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Optional
 
 from . import config as mrt_config
 
-SCHEMA = 2
+SCHEMA = 3                       # 3: rails-gated achievable ladder + paired fill_drift + restarts_today
 _RESERVOIR_CAP = 5000            # bounded achievable-net sample reservoir per (sport, phase)
+RUNSTATE_NAME = "maker_rt_runstate.json"   # persistent process-start counter (crash-loop signal)
 
 CSV_COLUMNS = [
     "ts", "day", "event", "mode", "sport", "phase", "game", "market_key", "side", "direction",
     "rest_venue", "hedge_venue", "quote_price", "size", "floor", "at_best", "hedge_ask",
-    "net_at_quote", "achievable_net", "queue_ahead", "trigger", "quote_age_s", "hedge_avg", "hedge_fee",
-    "locked_net", "drift_1", "drift_5", "drift_30", "reason",
+    "net_at_quote", "achievable_net", "rails_ok", "queue_ahead", "trigger", "quote_age_s",
+    "hedge_avg", "hedge_fee", "locked_net", "fill_ts", "drift_1", "drift_5", "drift_30", "reason",
 ]
 
 
@@ -65,8 +68,11 @@ class _Bucket:
     drift1: list = field(default_factory=list)
     drift5: list = field(default_factory=list)
     drift30: list = field(default_factory=list)
-    # ACHIEVABLE-NET accumulator (reservoir for percentiles + exact threshold counts).
+    # ACHIEVABLE-NET accumulator (reservoir for percentiles + exact threshold counts). RAILS-GATED: only
+    # rails_ok samples (both-books-fresh AND not-frozen) feed the ladder — that kills the ghost inflation
+    # from stale/frozen phantom edges. Rails-failed evaluations are counted in achv_gated, not the ladder.
     achv_n: int = 0
+    achv_gated: int = 0          # evaluations dropped from the ladder because rails_ok was false
     achv_reservoir: list = field(default_factory=list)
     achv_ge0: int = 0
     achv_ge25: int = 0            # >= 0.0025 (0.25%)
@@ -107,7 +113,7 @@ class _Bucket:
     def achievable(self) -> dict:
         pct = lambda c: round(c / self.achv_n, 4) if self.achv_n else 0.0   # noqa: E731
         return {
-            "n": self.achv_n,
+            "n": self.achv_n, "gated": self.achv_gated,           # n = rails_ok samples in the ladder
             "p50": _pctl(self.achv_reservoir, 0.5), "p90": _pctl(self.achv_reservoir, 0.9),
             "share_ge_0": pct(self.achv_ge0), "share_ge_25bp": pct(self.achv_ge25),
             "share_ge_50bp": pct(self.achv_ge50), "share_ge_100bp": pct(self.achv_ge100),
@@ -124,8 +130,8 @@ def _pool(buckets: list) -> dict:
         agg.at_best_hits += b.at_best_hits
         agg.fill_nets += b.fill_nets
         agg.drift1 += b.drift1; agg.drift5 += b.drift5; agg.drift30 += b.drift30
-        agg.achv_n += b.achv_n; agg.achv_ge0 += b.achv_ge0; agg.achv_ge25 += b.achv_ge25
-        agg.achv_ge50 += b.achv_ge50; agg.achv_ge100 += b.achv_ge100
+        agg.achv_n += b.achv_n; agg.achv_gated += b.achv_gated; agg.achv_ge0 += b.achv_ge0
+        agg.achv_ge25 += b.achv_ge25; agg.achv_ge50 += b.achv_ge50; agg.achv_ge100 += b.achv_ge100
         agg.achv_reservoir += b.achv_reservoir
     if len(agg.achv_reservoir) > _RESERVOIR_CAP:
         agg.achv_reservoir = agg.achv_reservoir[:_RESERVOIR_CAP]
@@ -148,12 +154,17 @@ class MakerState:
     drift5: list = field(default_factory=list)
     drift30: list = field(default_factory=list)
     pnl_today: float = 0.0
+    restarts_today: int = 0                             # process starts today (crash-loop signal; set at startup)
+    gates: dict = field(default_factory=dict)          # {"pre": bool, "inplay": bool} — armed states, set at startup
     buckets: dict = field(default_factory=dict)        # (sport, phase) -> _Bucket
+    log: Any = None                                    # optional logger (artifact-guard WARNINGs)
     _rng: Any = field(default_factory=lambda: random.Random(1234))
 
     def _roll(self, day: str) -> None:
         if day != self.day:
+            log, restarts, gates = self.log, self.restarts_today, self.gates   # survive the daily reset
             self.__init__(day=day)  # type: ignore[misc]
+            self.log, self.restarts_today, self.gates = log, restarts, gates
 
     def _bucket(self, sport: str, phase: str) -> _Bucket:
         return self.buckets.setdefault((str(sport or "?"), str(phase or "pre")), _Bucket())
@@ -161,9 +172,18 @@ class MakerState:
     # -- events -------------------------------------------------------------
     def record(self, row: dict, now: datetime) -> None:
         """Update aggregates from an event row and append it to the dated CSV."""
+        ev = row.get("event")
+        # ARTIFACT GUARD: a schema-transition parse once emitted 8 blank fills (no game/market, junk
+        # locked_net) into a real day. A fill with no sport/game/market is not real — WARN and DROP it
+        # (never aggregated, never written) so a corrupt row can't inflate fills / pnl / the ladders.
+        if ev == "fill" and not (row.get("sport") and row.get("game") and row.get("market_key")):
+            if self.log:
+                self.log.warning("[MAKER_RT] dropped malformed fill (no sport/game/market): %s",
+                                 {k: row.get(k) for k in ("sport", "game", "market_key", "phase",
+                                                          "locked_net", "trigger")})
+            return
         day = now.strftime("%Y%m%d")
         self._roll(day)
-        ev = row.get("event")
         b = self._bucket(row.get("sport"), row.get("phase"))
         if ev == "quote":
             self.n_quotes += 1; b.quotes += 1
@@ -181,21 +201,29 @@ class MakerState:
                 self.fill_nets.append(float(row["locked_net"]))
                 b.fill_nets.append(float(row["locked_net"]))
                 self.pnl_today += float(row.get("locked_pnl") or 0.0)
-        elif ev == "drift":
+        elif ev == "fill_drift":
             for src, dst_flat, dst_b in ((row.get("drift_1"), self.drift1, b.drift1),
                                          (row.get("drift_5"), self.drift5, b.drift5),
                                          (row.get("drift_30"), self.drift30, b.drift30)):
-                if src is not None:
+                if src is not None and src != "":
                     dst_flat.append(float(src)); dst_b.append(float(src))
         self._append_csv(row, now)
 
-    def record_achievable(self, sport: str, phase: str, value: Optional[float], now: datetime) -> None:
+    def record_achievable(self, sport: str, phase: str, value: Optional[float], now: datetime,
+                          rails_ok: bool = True) -> None:
         """Aggregate ONE achievable-net evaluation into the (sport, phase) bucket. NO CSV row (this
-        fires thousands of times/day — the throttled sample is a separate event via record())."""
+        fires thousands of times/day — the throttled sample is a separate event via record()).
+        RAILS-GATED: only rails_ok evaluations (both-books-fresh AND not-frozen) feed the ladder; a
+        rails-failed one is counted in ``gated`` and kept out of the percentiles/thresholds — that is
+        what kills the ghost inflation from stale/frozen phantom edges."""
         if value is None:
             return
         self._roll(now.strftime("%Y%m%d"))
-        self._bucket(sport, phase).add_achievable(float(value), self._rng)
+        b = self._bucket(sport, phase)
+        if not rails_ok:
+            b.achv_gated += 1
+            return
+        b.add_achievable(float(value), self._rng)
 
     def _append_csv(self, row: dict, now: datetime) -> None:
         path = mrt_config.events_path_for(now.strftime("%Y%m%d"))
@@ -235,8 +263,8 @@ class MakerState:
             "median_net_at_fill": _median(self.fill_nets),
             "drift_median_1": _median(self.drift1), "drift_median_5": _median(self.drift5),
             "drift_median_30": _median(self.drift30),
-            "pnl_today": round(self.pnl_today, 4),
-            "by_sport": self._by_sport(), "by_phase": self._by_phase(),
+            "pnl_today": round(self.pnl_today, 4), "restarts_today": self.restarts_today,
+            "gates": dict(self.gates), "by_sport": self._by_sport(), "by_phase": self._by_phase(),
         }
 
     def write_summary(self, mode: str, sockets: dict, now: datetime,
@@ -246,7 +274,8 @@ class MakerState:
     def heartbeat(self, mode: str, sockets: dict, open_quotes: int, now: datetime) -> dict:
         return {"ts": now.strftime("%Y-%m-%dT%H:%M:%SZ"), "schema": SCHEMA, "mode": mode,
                 "sockets": dict(sockets), "open_quotes": open_quotes,
-                "fills_today": self.n_fills, "pnl_today": round(self.pnl_today, 4)}
+                "fills_today": self.n_fills, "pnl_today": round(self.pnl_today, 4),
+                "restarts_today": self.restarts_today, "gates": dict(self.gates)}
 
     def write_heartbeat(self, mode: str, sockets: dict, open_quotes: int, now: datetime,
                         path: Optional[str] = None) -> None:
@@ -254,12 +283,64 @@ class MakerState:
                      self.heartbeat(mode, sockets, open_quotes, now))
 
 
-def _atomic_json(path: str, obj: dict) -> None:
+def _atomic_json(path: str, obj: dict, *, retries: int = 5, backoff_s: float = 0.04) -> None:
+    """Atomically write ``obj`` as JSON. ROBUST on Windows: ``os.replace`` raises PermissionError when a
+    reader (the panel HTTP server / antivirus) momentarily holds the target open — the #1 crash of the
+    weekend (50/51 tracebacks) took the whole maker process down here. Retry with a short backoff, and
+    if still blocked, WARN and skip this write rather than crash. A per-pid tmp avoids old/new-process
+    collisions during a restart."""
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-    tmp = path + ".tmp"
+    tmp = f"{path}.{os.getpid()}.tmp"
     with open(tmp, "w", encoding="utf-8") as fh:
         json.dump(obj, fh, ensure_ascii=False, indent=2)
-    os.replace(tmp, path)
+    last: Optional[Exception] = None
+    for i in range(max(1, retries)):
+        try:
+            os.replace(tmp, path)
+            return
+        except (PermissionError, OSError) as exc:      # a reader holds the target -> transient on Windows
+            last = exc
+            time.sleep(backoff_s * (i + 1))
+    logging.getLogger("maker_rt").warning(
+        "[MAKER_RT] atomic write to %s blocked after %d retries (%s) - skipped this write, not crashing.",
+        path, retries, last)
+    try:
+        os.remove(tmp)
+    except OSError:
+        pass
+
+
+def _runstate_path() -> str:
+    return os.path.join(mrt_config.OPS_DIR, RUNSTATE_NAME)
+
+
+def bump_restart(now: datetime) -> int:
+    """Increment (and return) today's maker_rt process-start count — persisted across the fresh
+    interpreter each restart spawns, so a spike is a visible CRASH-LOOP signal on the panel. Rolls at
+    UTC midnight. Best-effort; never raises."""
+    day = now.strftime("%Y%m%d")
+    obj: Any = {}
+    try:
+        with open(_runstate_path(), "r", encoding="utf-8") as fh:
+            obj = json.load(fh)
+    except (FileNotFoundError, ValueError, OSError):
+        obj = {}
+    if not isinstance(obj, dict) or obj.get("day") != day:
+        obj = {"day": day, "restarts": 0}
+    obj["restarts"] = int(obj.get("restarts", 0)) + 1
+    _atomic_json(_runstate_path(), obj)
+    return int(obj["restarts"])
+
+
+def read_restarts(now: datetime) -> int:
+    """Today's persisted restart count (0 when absent / a prior day). Never raises."""
+    day = now.strftime("%Y%m%d")
+    try:
+        with open(_runstate_path(), "r", encoding="utf-8") as fh:
+            obj = json.load(fh)
+        return int(obj.get("restarts", 0)) if isinstance(obj, dict) and obj.get("day") == day else 0
+    except (FileNotFoundError, ValueError, OSError, TypeError):
+        return 0
 
 
 def utcnow() -> datetime:

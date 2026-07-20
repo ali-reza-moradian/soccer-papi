@@ -32,8 +32,8 @@ class _RecState:
     def record(self, row, now):
         self.rows.append(row)
 
-    def record_achievable(self, sport, phase, value, now):
-        self.achv.append((sport, phase, value))
+    def record_achievable(self, sport, phase, value, now, rails_ok=True):
+        self.achv.append((sport, phase, value, rails_ok))
 
 
 class _CapLog:
@@ -161,19 +161,41 @@ def test_pre_phase_unaffected_by_inplay_rails():
 
 
 # --------------------------------------------------------------------------- #
-# LiveGate in-play refusal                                                       #
+# LiveGate — the two INDEPENDENT gates (pre-game vs in-play)                      #
 # --------------------------------------------------------------------------- #
-def test_live_gate_refuses_inplay_even_when_armed(tmp_path):
+def test_two_gate_pre_armed_does_not_arm_inplay(tmp_path):
+    """Arming ONLY the pre-game gate (ARM_MAKER + live.enabled) leaves in-play LOCKED — in-play now needs
+    its OWN flag + file (the old blanket in-play refusal is replaced by an independent second gate)."""
     arm = tmp_path / "ARM_MAKER"; arm.write_text("1")
     cfg = mrt_config.MakerRtConfig(); cfg.live.enabled = True; cfg.live.arm_file = str(arm)
+    cfg.live_inplay.arm_file = str(tmp_path / "ARM_MAKER_INPLAY")   # absent + disabled
     gate = live.LiveGate(cfg, kalshi_client=_OkClient(), poly_client=_OkClient())
-    assert gate.evaluate().armed is True                        # the gate IS armed
-    assert gate.may_place("pre") is True                        # pre-game live would be allowed
-    assert gate.may_place("inplay") is False                    # in-play refused even armed
-    assert live.is_inplay("inplay") is True and live.is_inplay("pre") is False
+    assert gate.evaluate().armed is True and gate.evaluate_inplay().armed is False
+    assert gate.may_place("pre") is True                        # pre-game live allowed (its gate is armed)
+    assert gate.may_place("inplay") is False                    # in-play NOT armed -> refused
+    live.assert_live_allowed("pre", gate.may_place("pre"))      # armed -> no raise
     with pytest.raises(AssertionError):
-        live.assert_live_allowed("inplay")
-    live.assert_live_allowed("pre")                             # pre never raises
+        live.assert_live_allowed("inplay", gate.may_place("inplay"))   # not armed -> hard-refuse
+
+
+def test_two_gate_matrix_exactly_the_right_ones_allow(tmp_path):
+    """16 combinations of {pre enabled/armed} x {inplay enabled/armed}: may_place('pre') is True iff the
+    PRE gate is (enabled AND its arm file present), may_place('inplay') iff the IN-PLAY gate is — fully
+    independent (self-check passes via ok clients throughout)."""
+    pre_arm = tmp_path / "ARM_MAKER"; pre_arm.write_text("1")
+    ip_arm = tmp_path / "ARM_MAKER_INPLAY"; ip_arm.write_text("1")
+    for pe in (False, True):
+        for pf in (False, True):
+            for ie in (False, True):
+                for if_ in (False, True):
+                    cfg = mrt_config.MakerRtConfig()
+                    cfg.live.enabled = pe
+                    cfg.live.arm_file = str(pre_arm) if pf else str(tmp_path / "NOPE_PRE")
+                    cfg.live_inplay.enabled = ie
+                    cfg.live_inplay.arm_file = str(ip_arm) if if_ else str(tmp_path / "NOPE_IP")
+                    g = live.LiveGate(cfg, kalshi_client=_OkClient(), poly_client=_OkClient())
+                    assert g.may_place("pre") is (pe and pf)
+                    assert g.may_place("inplay") is (ie and if_)
 
 
 # --------------------------------------------------------------------------- #
@@ -207,12 +229,13 @@ def test_summary_by_sport_and_phase_math():
     now = datetime(2026, 7, 17, 20, 0, 0, tzinfo=timezone.utc)
     st.record({"event": "quote", "sport": "mlb", "phase": "pre", "at_best": True}, now)
     st.record({"event": "quote", "sport": "mlb", "phase": "pre", "at_best": False}, now)
-    st.record({"event": "fill", "sport": "mlb", "phase": "pre", "locked_net": 1.2, "locked_pnl": 0.6}, now)
+    st.record({"event": "fill", "sport": "mlb", "phase": "pre", "game": "G1", "market_key": "ml2",
+               "locked_net": 1.2, "locked_pnl": 0.6}, now)
     st.record({"event": "quote", "sport": "ufc", "phase": "inplay", "at_best": True}, now)
     st.record({"event": "behind", "sport": "ufc", "phase": "inplay"}, now)
     st.record_achievable("mlb", "pre", 0.004, now)
     summ = st.summary("shadow", {}, now)
-    assert summ["schema"] == 2
+    assert summ["schema"] == 3
     assert summ["by_sport"]["mlb"]["quotes"] == 2 and summ["by_sport"]["mlb"]["fills"] == 1
     assert summ["by_sport"]["mlb"]["at_best_share"] == 0.5
     assert summ["by_sport"]["ufc"]["quotes"] == 1 and summ["by_sport"]["ufc"]["behind_best"] == 1
