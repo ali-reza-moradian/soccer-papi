@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import sys
 import time
 from typing import Any, Optional
 
@@ -179,6 +180,12 @@ def main(argv: Optional[list] = None) -> int:
     setup_logging()
     log = get_logger("maker_rt")
     cfg = mrt_config.load_maker_rt_config()
+    args = sys.argv[1:] if argv is None else argv
+    if "--selfcheck" in args:
+        # READ-ONLY credential/readiness diagnostic — constructs the real order clients and probes
+        # each self-check item individually. Places NOTHING; never starts the feeds.
+        from .selfcheck import run_selfcheck
+        return run_selfcheck(cfg, log=log)
     try:
         return asyncio.run(_run(cfg, log))
     except KeyboardInterrupt:
