@@ -43,10 +43,13 @@ class LiveConfig:
     locked, refuse-everything posture: enabled False, so the live path never arms in this build."""
     enabled: bool = False
     arm_file: str = os.path.join(OPS_DIR, "ARM_MAKER")
-    quote_usd_max: float = 25.0
+    quote_usd_max: float = 5.0            # PILOT: rest-leg notional cap (hedged pair ~2x -> the per-bet limit)
     max_open_quotes: int = 2
-    max_fills_per_day: int = 6
+    max_fills_per_day: int = 10
     max_daily_loss_usd: float = 25.0
+    # SUM of ALL legs committed today (rest fills + hedges + unwinds). A new quote whose projected pair
+    # stake would push the running total past this is REFUSED and quoting HALTS for the day (+Telegram).
+    max_daily_stake_usd: float = 100.0
     hedge_timeout_ms: int = 3000
     unwind_on_hedge_fail: bool = True
 
@@ -171,7 +174,7 @@ def load_maker_rt_config(config_path: Optional[str] = None,
     live_blk = dict(live_blk) if isinstance(live_blk, dict) else {}
     lc = LiveConfig()
     for name in ("enabled", "arm_file", "quote_usd_max", "max_open_quotes", "max_fills_per_day",
-                 "max_daily_loss_usd", "hedge_timeout_ms", "unwind_on_hedge_fail"):
+                 "max_daily_loss_usd", "max_daily_stake_usd", "hedge_timeout_ms", "unwind_on_hedge_fail"):
         if live_blk.get(name) is not None:
             setattr(lc, name, live_blk[name])
     lc.enabled = bool(lc.enabled)
@@ -179,6 +182,7 @@ def load_maker_rt_config(config_path: Optional[str] = None,
     lc.max_open_quotes = int(lc.max_open_quotes)
     lc.max_fills_per_day = int(lc.max_fills_per_day)
     lc.max_daily_loss_usd = float(lc.max_daily_loss_usd)
+    lc.max_daily_stake_usd = float(lc.max_daily_stake_usd)
     lc.hedge_timeout_ms = int(lc.hedge_timeout_ms)
     lc.unwind_on_hedge_fail = bool(lc.unwind_on_hedge_fail)
     cfg.live = lc

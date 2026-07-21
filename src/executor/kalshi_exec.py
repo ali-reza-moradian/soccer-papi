@@ -297,3 +297,9 @@ class KalshiExec:
 
     def get_positions(self) -> Any:
         return self._request("GET", "/portfolio/positions")
+
+    def get_orders(self, *, status: Optional[str] = None, ticker: Optional[str] = None) -> Any:
+        """List orders (optionally by status e.g. 'resting' / ticker). Used by the startup stray-order
+        sweep to find + cancel any of ours (client_order_id prefix) left resting by a previous run."""
+        params = {k: v for k, v in (("status", status), ("ticker", ticker)) if v}
+        return self._request("GET", "/portfolio/orders", params=params or None)

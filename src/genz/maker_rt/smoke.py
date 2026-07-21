@@ -1,0 +1,417 @@
+"""SMOKE MODE — `python -m src.genz.maker_rt --smoke`. One real, tiny, near-zero-fill order lifecycle.
+
+Runs ONLY when the pre-game gate would arm (enabled + arm file + self-check). It:
+  1. sweeps + cancels any stray resting orders from a previous run (both venues),
+  2. picks the most liquid PRE-GAME MLB moneyline (ml2) Polymarket token,
+  3. rests ONE GTC bid of ~5 shares at max(tick, best_bid - 5 ticks) -- deep enough that a fill is
+     ~impossible (rest-leg notional is capped by maker_rt.live.quote_usd_max),
+  4. confirms the resting order BOTH via the Poly USER websocket AND an authoritative REST read,
+  5. holds ~30s, then cancels and confirms the cancellation (REST + socket),
+  6. prints the full lifecycle and exits 0.
+
+Safety: a SIGINT/SIGTERM/SIGBREAK during the hold fires a synchronous cancel-all BEFORE exit (the
+shutdown-safety proof). Any UNEXPECTED state -- no order id, or an unexpected real fill -- triggers a
+cancel-all and a non-zero exit. This never quotes continuously; it is a single-shot plumbing test.
+"""
+from __future__ import annotations
+
+import asyncio
+import os
+import signal
+import time
+from typing import Any, Optional
+
+from .caps import LiveCaps
+from .clients import build_pregame_order_clients
+from .feeds import PolyUserFeed
+from .live import LiveGate
+from .orders import PolyOrderClient
+from .quotes import round_down_tick
+from .store import BookStore
+from .universe import build_universe, load_trees
+
+# Process-global handle the signal handler reads (a handler cannot take args). Set once an order rests.
+_SHUTDOWN: dict = {"poly": None, "oids": [], "log": None, "tele": None}
+
+
+# --------------------------------------------------------------------------- #
+# small output helpers                                                          #
+# --------------------------------------------------------------------------- #
+def _p(msg: str) -> None:
+    print(msg, flush=True)
+
+
+def _emit(msg: str, log: Any = None, tele: Any = None) -> None:
+    print(msg, flush=True)
+    if log:
+        try:
+            log.warning(msg)
+        except Exception:  # noqa: BLE001
+            pass
+    if tele:
+        try:
+            tele(msg)
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def _telegram_sender(log: Any):
+    key, chat = os.environ.get("TELEGRAM_BOT_KEY"), os.environ.get("TELEGRAM_GROUP_ID")
+    if not (key and chat):
+        return None
+    try:
+        from ...telegram import send_message
+    except Exception:  # noqa: BLE001
+        return None
+    return lambda text: send_message(key, chat, text, log)
+
+
+# --------------------------------------------------------------------------- #
+# shutdown safety (cancel-all on signal)                                        #
+# --------------------------------------------------------------------------- #
+def _install_shutdown_handlers(poly: Any, oids: list, log: Any, tele: Any) -> None:
+    _SHUTDOWN.update(poly=poly, oids=list(oids), log=log, tele=tele)
+    for name in ("SIGINT", "SIGTERM", "SIGBREAK"):
+        sig = getattr(signal, name, None)
+        if sig is None:
+            continue
+        try:
+            signal.signal(sig, _shutdown_handler)
+        except (ValueError, OSError, RuntimeError):
+            pass
+
+
+def _cancel_tracked(poly: Any, oids: list, log: Any = None, tele: Any = None) -> int:
+    """Cancel every tracked order id then cancel-all (belt-and-suspenders). Returns how many tracked
+    ids were cancelled. Pure w.r.t. process exit so it is unit-testable."""
+    n = 0
+    for oid in oids or []:
+        try:
+            poly.cancel_order(oid)
+            n += 1
+        except Exception as exc:  # noqa: BLE001
+            _emit(f"[MAKER_RT][SMOKE] cancel {oid} on shutdown FAILED: {exc}", log, None)
+    try:
+        poly.cancel_all()
+    except Exception as exc:  # noqa: BLE001
+        _emit(f"[MAKER_RT][SMOKE] cancel_all on shutdown FAILED: {exc}", log, None)
+    return n
+
+
+def _shutdown_handler(signum, frame) -> None:  # noqa: ANN001
+    poly, log, tele = _SHUTDOWN.get("poly"), _SHUTDOWN.get("log"), _SHUTDOWN.get("tele")
+    _emit(f"[MAKER_RT][SMOKE] SHUTDOWN signal {signum} -> cancel-all firing BEFORE exit.", log, tele)
+    n = _cancel_tracked(poly, _SHUTDOWN.get("oids") or [], log, tele)
+    _emit(f"[MAKER_RT][SMOKE] cancel-all fired on shutdown (cancelled {n} tracked order(s)); exiting.",
+          log, tele)
+    os._exit(0)
+
+
+def _cancel_all(poly: Any, log: Any) -> None:
+    try:
+        poly.cancel_all()
+        _p("[SMOKE] cancel_all() issued.")
+    except Exception as exc:  # noqa: BLE001
+        _p(f"[SMOKE] cancel_all() FAILED: {exc}")
+
+
+# --------------------------------------------------------------------------- #
+# token selection + status reads                                                #
+# --------------------------------------------------------------------------- #
+def _phase(kickoff_ts: float, now_ts: float, cutoff: float) -> str:
+    if now_ts < kickoff_ts - cutoff:
+        return "pre"
+    return "gap" if now_ts < kickoff_ts else "inplay"
+
+
+def _select_mlb_token(cfg: Any, poly: Any, log: Any) -> Optional[dict]:
+    """Most liquid PRE-GAME MLB moneyline (ml2) Poly token, with its deep-bid price + size inputs.
+    Prefers a token whose deep price >= $0.20 (so ~5 shares clears the venue $1 minimum)."""
+    now_ts = time.time()
+    cutoff = float(getattr(cfg, "expire_before_kickoff_s", 120))
+    universe = build_universe(load_trees(), now_ts, max_games=cfg.max_games,
+                              expire_before_kickoff_s=cfg.expire_before_kickoff_s,
+                              horizon_hours=cfg.inplay.horizon_hours)
+    raw: list = []
+    for qm in universe:
+        if getattr(qm, "sport", "") != "mlb" or str(getattr(qm, "market_key", "")) != "ml2":
+            continue
+        if _phase(qm.kickoff_ts, now_ts, cutoff) != "pre":
+            continue
+        for side, node in qm.sides.items():
+            tok = getattr(node, "poly_token_id", None)
+            if tok:
+                raw.append((qm, side, tok))
+    if not raw:
+        return None
+    scored: list = []
+    for qm, side, tok in raw:
+        try:
+            tick_s, neg = poly._tick_and_negrisk(tok)
+            tick = float(tick_s)
+            bids = (poly.get_orderbook(tok) or {}).get("bids") or []      # descending (price, size)
+            if not bids:
+                continue
+            best_bid = float(bids[0][0])
+            depth = sum(float(s) for _p2, s in bids)
+            deep = round_down_tick(max(tick, best_bid - 5 * tick), tick)
+            if deep < tick - 1e-9:
+                continue
+            scored.append({"game": qm.game, "side": side, "token": tok, "tick": tick,
+                           "neg": bool(neg), "best_bid": best_bid, "deep": deep, "depth": depth})
+        except Exception as exc:  # noqa: BLE001 - a token whose book/tick we can't read is skipped
+            if log:
+                log.warning("[SMOKE] book/tick fetch failed for %s...: %s", str(tok)[:10], exc)
+    if not scored:
+        return None
+    clean = [s for s in scored if s["deep"] >= 0.20 - 1e-9]       # 5 shares clears the $1 venue minimum
+    pool = clean or scored
+    pool.sort(key=lambda s: s["depth"], reverse=True)
+    return pool[0]
+
+
+def _rest_status(poly: Any, oid: str) -> dict:
+    """Authoritative REST read of one order, normalized (never raises)."""
+    try:
+        o = poly.get_order(oid)
+    except Exception as exc:  # noqa: BLE001 - a gone order may 404 -> treat as not-found
+        return {"status": "NOT-FOUND/ERROR", "error": str(exc), "raw": None}
+    if not isinstance(o, dict):
+        return {"status": str(o), "raw": o}
+    return {"status": str(o.get("status") or o.get("state") or "?"),
+            "size_matched": o.get("size_matched"), "market": o.get("market"), "raw": o}
+
+
+def _matched(st: dict) -> float:
+    try:
+        return float(st.get("size_matched") or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _is_cancelled(st: dict) -> bool:
+    s = str(st.get("status") or "").upper()
+    return s in ("CANCELED", "CANCELLED") or "NOT-FOUND" in s or "ERROR" in s
+
+
+# --------------------------------------------------------------------------- #
+# user-socket watcher                                                           #
+# --------------------------------------------------------------------------- #
+class _UserWatch:
+    def __init__(self) -> None:
+        self.orders: dict = {}
+        self.trades: list = []
+
+    def on_order(self, e: dict) -> None:
+        oid = e.get("order_id")
+        if oid:
+            self.orders[oid] = e
+
+    def on_trade(self, e: dict) -> None:
+        self.trades.append(e)
+
+
+async def _await_order_seen(watch: _UserWatch, oid: str, timeout: float) -> Optional[dict]:
+    t0 = time.monotonic()
+    while time.monotonic() - t0 < timeout:
+        if oid in watch.orders:
+            return watch.orders[oid]
+        await asyncio.sleep(0.25)
+    return None
+
+
+# --------------------------------------------------------------------------- #
+# runner                                                                        #
+# --------------------------------------------------------------------------- #
+async def run_smoke(cfg: Any, *, log: Any = None, hold_s: float = 30.0,
+                    shutdown_proof: bool = False) -> int:
+    _p("=" * 78)
+    _p("maker_rt --smoke  (ONE real tiny near-zero-fill order: place -> confirm -> hold -> cancel)")
+    _p("=" * 78)
+    tele = _telegram_sender(log)
+
+    # 1) real clients + gate check (runs ONLY when the gate would arm) --------
+    kalshi, poly = build_pregame_order_clients(cfg, log=log)
+    gate = LiveGate(cfg, kalshi_client=kalshi, poly_client=poly, log=log)
+    g = gate.evaluate()
+    if not g.armed:
+        _p(f"SMOKE REFUSED: pre-game gate would NOT arm -> {g.reason} | checks={g.checks}")
+        return 2
+    ipg = gate.evaluate_inplay()
+    _p(f"gate: pre-game ARMED ({g.checks}); in-play {ipg.reason!r} (must stay refused).")
+
+    caps = LiveCaps(cfg.live, telegram=tele, log=log)
+
+    # 2) startup stray-order sweep (both venues) -----------------------------
+    swept = _startup_stray_cancel(poly, kalshi, log)
+    _p(f"startup stray-cancel: {swept} order(s) cancelled.")
+
+    # 3) pick the most-liquid pre-game MLB ml2 token -------------------------
+    sel = _select_mlb_token(cfg, poly, log)
+    if sel is None:
+        _p("SMOKE REFUSED: no liquid PRE-GAME MLB moneyline (ml2) token available right now.")
+        return 3
+    price, tick, neg = sel["deep"], sel["tick"], sel["neg"]
+    size = caps.size_shares(price)
+    notional = round(size * price, 4)
+    proj = caps.projected_pair_stake(price, size, 1.0 - price, size)     # worst-case pair stake
+    ok, reason = caps.can_place(proj)
+    if not ok:
+        _p(f"SMOKE REFUSED by caps: {reason} (projected pair ${proj:.2f}, "
+           f"stake_today ${caps.stake_today:.2f}, cap ${caps.max_daily_stake_usd:.0f}).")
+        return 5
+    _p(f"selected: {sel['game']} [{sel['side']}] token {sel['token'][:12]}... "
+       f"best_bid={sel['best_bid']:.4f} deep_bid={price:.4f} (best_bid-5t) tick={tick} "
+       f"neg_risk={neg} depth={sel['depth']:.0f}")
+    _p(f"order: BUY {size} shares @ {price:.4f} (~${notional:.2f}; rest-leg cap ${caps.quote_usd_max:.0f})")
+
+    # 4) place ONE GTC bid ---------------------------------------------------
+    order_client = PolyOrderClient(poly, log=log)
+    t_place = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    res = order_client.rest(sel["token"], price, size, tick_size=tick, neg_risk=neg)
+    oid = res.get("order_id")
+    _p(f"[{t_place}] PLACE -> status={res.get('status')} order_id={oid}")
+    if not oid:
+        _p(f"SMOKE FAIL: no order_id in place result: {res}. Running cancel-all.")
+        _cancel_all(poly, log)
+        return 4
+    caps.on_open()
+    _install_shutdown_handlers(poly, [oid], log, tele)
+    _emit(f"[MAKER_RT][SMOKE] rested {size}@{price:.4f} on {sel['game']} [{sel['side']}] "
+          f"order_id={oid} -- confirming + holding {hold_s:.0f}s.", log, tele)
+
+    # 5) confirm placement: REST (authoritative) + user socket ----------------
+    st = _rest_status(poly, oid)
+    _p(f"REST confirm: status={st.get('status')} size_matched={st.get('size_matched')} "
+       f"market={st.get('market')}")
+    if _matched(st) > 0:
+        _p("UNEXPECTED: order shows a fill at placement -> cancel-all + abort.")
+        _cancel_all(poly, log)
+        return 6
+    cond = st.get("market")
+
+    watch = _UserWatch()
+    feed = feed_task = None
+    try:
+        creds = poly.derive_l2_creds()
+    except Exception as exc:  # noqa: BLE001
+        creds = None
+        _p(f"WARN: L2 creds derive failed (user socket skipped): {exc}")
+    if creds and creds.get("apiKey"):
+        feed = PolyUserFeed(BookStore(), [cond] if cond else [], creds,
+                            on_user_trade=watch.on_trade, on_user_order=watch.on_order, log=log)
+        feed_task = asyncio.create_task(feed.run())
+        seen = await _await_order_seen(watch, oid, timeout=15.0)
+        if seen:
+            _p(f"USER-SOCKET confirm: order {oid} observed (status={seen.get('status')}, "
+               f"price={seen.get('price')}).")
+        else:
+            _p("USER-SOCKET confirm: order not observed within 15s (REST read is authoritative).")
+    else:
+        _p("USER-SOCKET confirm: SKIPPED (no L2 creds).")
+
+    # 6) hold (a signal here fires cancel-all before exit) -------------------
+    if shutdown_proof:
+        _p(f"AWAITING_SHUTDOWN_SIGNAL order_id={oid} (holding up to {hold_s:.0f}s; send CTRL_BREAK now)")
+    else:
+        _p(f"HOLDING {hold_s:.0f}s with the order resting...")
+    await asyncio.sleep(hold_s)
+
+    # re-check for an unexpected fill during the hold
+    st_hold = _rest_status(poly, oid)
+    if _matched(st_hold) > 0:
+        _p(f"UNEXPECTED: order filled during hold (size_matched={st_hold.get('size_matched')}) "
+           "-> cancel-all + abort.")
+        _cancel_all(poly, log)
+        _stop_feed(feed, feed_task)
+        return 6
+
+    # 7) cancel + confirm cancellation (REST + socket) -----------------------
+    t_cancel = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    try:
+        order_client.cancel(oid)
+    except Exception as exc:  # noqa: BLE001
+        _p(f"CANCEL error: {exc} -> cancel-all fallback.")
+        _cancel_all(poly, log)
+    caps.on_close()
+    st2 = _rest_status(poly, oid)
+    cancelled = _is_cancelled(st2)
+    _p(f"[{t_cancel}] CANCEL -> REST status={st2.get('status')} (cancelled={cancelled})")
+    ws_cancel = watch.orders.get(oid)
+    _p(f"USER-SOCKET cancel event: {ws_cancel.get('status') if ws_cancel else 'not observed'}")
+    await _drain_feed(feed, feed_task)
+
+    # 8) lifecycle summary ---------------------------------------------------
+    _p("-" * 78)
+    _p("LIFECYCLE:")
+    _p(f"  order_id     : {oid}")
+    _p(f"  token        : {sel['token']}")
+    _p(f"  placed       : {t_place}  BUY {size} @ {price:.4f}  (~${notional:.2f})")
+    _p(f"  rest confirm : {st.get('status')}  (size_matched={st.get('size_matched')})")
+    _p(f"  socket seen  : {'yes' if oid in watch.orders else 'no'}")
+    _p(f"  cancelled    : {t_cancel}  REST={st2.get('status')}  cancelled={cancelled}")
+    _p("-" * 78)
+    if not cancelled:
+        _emit("[MAKER_RT][SMOKE] order NOT confirmed cancelled -> cancel-all + non-zero exit.", log, tele)
+        _cancel_all(poly, log)
+        return 7
+    _emit(f"[MAKER_RT][SMOKE] PASS -- placed + confirmed + cancelled cleanly (order_id={oid}).", log, tele)
+    _p("=" * 78)
+    _p("SMOKE PASS")
+    _p("=" * 78)
+    return 0
+
+
+def _stop_feed(feed: Any, feed_task: Any) -> None:
+    if feed:
+        feed.stop()
+    if feed_task:
+        feed_task.cancel()
+
+
+async def _drain_feed(feed: Any, feed_task: Any) -> None:
+    _stop_feed(feed, feed_task)
+    if feed_task:
+        await asyncio.gather(feed_task, return_exceptions=True)
+
+
+def _startup_stray_cancel(poly: Any, kalshi: Any, log: Any, prefix: str = "mrt-") -> int:
+    """Cancel any resting order left by a previous run. On Poly every resting order on the account is
+    ours -> cancel it. On Kalshi cancel only those whose client_order_id starts with our ``prefix``."""
+    n = 0
+    try:
+        oo = poly.open_orders()
+        orders = oo if isinstance(oo, list) else ((oo or {}).get("data") or (oo or {}).get("orders") or [])
+        for o in orders or []:
+            oid = (o.get("id") or o.get("orderID") or o.get("order_id")) if isinstance(o, dict) else None
+            if oid:
+                try:
+                    poly.cancel_order(oid)
+                    n += 1
+                    if log:
+                        log.info("[SMOKE] stray-cancel poly %s", oid)
+                except Exception as exc:  # noqa: BLE001
+                    if log:
+                        log.warning("[SMOKE] stray-cancel poly %s failed: %s", oid, exc)
+    except Exception as exc:  # noqa: BLE001
+        if log:
+            log.warning("[SMOKE] poly open-orders list failed: %s", exc)
+    try:
+        resp = kalshi.get_orders(status="resting")
+        korders = resp.get("orders") if isinstance(resp, dict) else (resp or [])
+        for o in korders or []:
+            coid = str((o or {}).get("client_order_id") or "")
+            oid = (o or {}).get("order_id") or (o or {}).get("id")
+            if oid and coid.startswith(prefix):
+                try:
+                    kalshi.cancel_order(oid)
+                    n += 1
+                    if log:
+                        log.info("[SMOKE] stray-cancel kalshi %s", oid)
+                except Exception as exc:  # noqa: BLE001
+                    if log:
+                        log.warning("[SMOKE] stray-cancel kalshi %s failed: %s", oid, exc)
+    except Exception as exc:  # noqa: BLE001
+        if log:
+            log.warning("[SMOKE] kalshi orders list failed: %s", exc)
+    return n

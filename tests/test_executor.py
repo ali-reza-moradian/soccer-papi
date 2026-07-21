@@ -245,6 +245,34 @@ def test_poly_place_order_fok_normalizes(monkeypatch):
     assert opts.tick_size == "0.01" and opts.neg_risk is False
 
 
+def test_poly_place_order_gtc_accepted_is_resting_not_filled(monkeypatch):
+    """A GTC that is ACCEPTED simply RESTS (status 'live', nothing matched). It must classify as
+    'resting' with 0 shares — NOT 'filled' (a false fill would make a maker fire a phantom hedge on
+    every quote). The response's ``size`` (order qty) must never be read as a fill."""
+    import types
+    clob_types = types.ModuleType("py_clob_client_v2.clob_types")
+    clob_types.OrderArgs = lambda **kw: types.SimpleNamespace(**kw)
+    clob_types.OrderType = types.SimpleNamespace(FOK="FOK", GTC="GTC")
+    clob_types.PartialCreateOrderOptions = lambda **kw: types.SimpleNamespace(**kw)
+    constants = types.ModuleType("py_clob_client_v2.order_builder.constants")
+    constants.BUY, constants.SELL = "BUY", "SELL"
+    monkeypatch.setitem(sys.modules, "py_clob_client_v2.clob_types", clob_types)
+    monkeypatch.setitem(sys.modules, "py_clob_client_v2.order_builder.constants", constants)
+
+    # Real GTC-accept shape: success + status 'live' + the order size echoed (NOT a match) + no matched field.
+    client = _FakePolyClient(post_result={"success": True, "status": "live", "size": "5",
+                                          "orderID": "0xabc"})
+    res = poly_exec.PolyExec(client=client).place_order("TOK", 0.46, 5, "BUY", order_type="GTC")
+    assert res["status"] == "resting" and res["shares"] == 0.0
+    assert res["order_id"] == "0xabc"
+
+    # A subsequently matched GTC (status 'matched') classifies as filled.
+    client2 = _FakePolyClient(post_result={"success": True, "status": "matched",
+                                           "size_matched": "5", "orderID": "0xdef"})
+    res2 = poly_exec.PolyExec(client=client2).place_order("TOK", 0.46, 5, "BUY", order_type="GTC")
+    assert res2["status"] == "filled" and res2["shares"] == 5
+
+
 def test_poly_get_balance_passes_signature_type(monkeypatch):
     """get_balance() must scope the read to the FUNDER/PROXY by passing signature_type (and the v2
     client is built with that same signature_type), else it reads the empty signer EOA and a funded

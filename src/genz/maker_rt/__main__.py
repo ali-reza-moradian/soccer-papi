@@ -15,6 +15,7 @@ from typing import Any, Optional
 
 from ...logsetup import get_logger, setup_logging
 from . import config as mrt_config
+from .clients import build_pregame_order_clients
 from .driver import QuoteDriver
 from .feeds import KalshiFeed, PolyMarketFeed
 from .gitguard import head_changed, read_head_sha
@@ -73,8 +74,14 @@ async def _run(cfg: Any, log: Any) -> int:
     mrt_config.ensure_dirs()
     now0 = utcnow()
     restarts = bump_restart(now0)                     # crash-loop signal (persisted, per UTC day)
-    live_gate = LiveGate(cfg, log=log)                # no order clients in shadow -> both gates stay closed
-    gate = live_gate.evaluate()                       # SHADOW unless enabled+armed+self-check pass (pre-game)
+    # PRE-GAME live: construct order clients ONLY when live.enabled (a shadow/default config NEVER
+    # builds a client), and inject them so the pre-game gate can arm. NOTE: the CONTINUOUS pre-game
+    # placement executor is a SEPARATE, later enable — this build injects clients + shares one-in-flight
+    # but does NOT place pre-game orders (refresh_quotes stays shadow). Use `--smoke` for live placement.
+    kalshi_oc, poly_oc = build_pregame_order_clients(cfg, log=log)
+    in_flight = InFlightGuard()                       # ONE fill in flight, shared pre-game + in-play
+    live_gate = LiveGate(cfg, kalshi_client=kalshi_oc, poly_client=poly_oc, log=log)
+    gate = live_gate.evaluate()                       # armed only when enabled+arm file+self-check pass
     inplay_gate = live_gate.evaluate_inplay()
     mode = "live" if gate.armed else "shadow"
     log.info("[MAKER_RT] starting in %s mode (pre-game: %s | in-play: %s) — restart #%d today",
@@ -84,10 +91,13 @@ async def _run(cfg: Any, log: Any) -> int:
     state = MakerState(log=log)
     state.restarts_today = restarts
     state.gates = {"pre": bool(gate.armed), "inplay": bool(inplay_gate.armed)}
-    # IN-PLAY LIVE executor — built + wired, but LOCKED (its gate never opens in this build; every driver
-    # hook is a no-op). No order clients are injected in shadow, so it can never place an order.
+    # IN-PLAY stays HARD-REFUSED in this build (its gate is separate, enabled False) — re-assert it and
+    # give its hedger NO order clients, so it can never place even if some future flip armed its gate.
+    if inplay_gate.armed:
+        log.error("[MAKER_RT] IN-PLAY gate unexpectedly ARMED — refusing (in-play live is NOT enabled "
+                  "in this build).")
     executor = InplayLiveExecutor(cfg, live_gate, LiveHedger(poly_rate=cfg.poly_fee_rate, log=log),
-                                  in_flight=InFlightGuard(), telegram=_telegram_sender(log),
+                                  in_flight=in_flight, telegram=_telegram_sender(log),
                                   state=state, log=log)
     driver = QuoteDriver(cfg, state, log=log, inplay_exec=executor)
     horizon = cfg.inplay.horizon_hours
@@ -97,6 +107,11 @@ async def _run(cfg: Any, log: Any) -> int:
     log.info("[MAKER_RT] universe: %d markets (%s), %d poly tokens, %d kalshi tickers.",
              len(universe), _sport_breakdown(universe), len(poly_tokens(universe)),
              len(kalshi_tickers(universe)))
+    if gate.armed:
+        log.warning("[MAKER_RT] PRE-GAME gate ARMED (order clients injected) — but the CONTINUOUS live "
+                    "placement executor is NOT wired in this build; quoting stays SHADOW. Run "
+                    "`python -m src.genz.maker_rt --smoke` to exercise live placement. Continuous "
+                    "at-best quoting is a SEPARATE explicit enable.")
 
     def on_prints(prints):
         driver.consume_prints(prints, store, utcnow(), time.time())
@@ -175,6 +190,18 @@ def _load_env() -> None:
         pass
 
 
+def _arg_value(args: list, name: str, *, default: Any, cast: Any) -> Any:
+    """Value following ``name`` in argv (e.g. ``--hold 90``), cast, else ``default``."""
+    if name in args:
+        i = args.index(name)
+        if i + 1 < len(args):
+            try:
+                return cast(args[i + 1])
+            except (ValueError, TypeError):
+                return default
+    return default
+
+
 def main(argv: Optional[list] = None) -> int:
     _load_env()
     setup_logging()
@@ -186,6 +213,14 @@ def main(argv: Optional[list] = None) -> int:
         # each self-check item individually. Places NOTHING; never starts the feeds.
         from .selfcheck import run_selfcheck
         return run_selfcheck(cfg, log=log)
+    if "--smoke" in args:
+        # ONE real, tiny, near-zero-fill order lifecycle (place -> confirm -> hold -> cancel). Runs only
+        # when the pre-game gate would arm. --hold <s> sets the rest duration; --shutdown-proof holds
+        # for the cancel-on-signal test.
+        from .smoke import run_smoke
+        hold = _arg_value(args, "--hold", default=30.0, cast=float)
+        return asyncio.run(run_smoke(cfg, log=log, hold_s=hold,
+                                     shutdown_proof=("--shutdown-proof" in args)))
     try:
         return asyncio.run(_run(cfg, log))
     except KeyboardInterrupt:

@@ -427,7 +427,10 @@ def test_config_defaults_and_live_locked(tmp_path):
     cfg = mrt_config.load_maker_rt_config(config_path=str(empty))
     assert cfg.max_games == 20 and cfg.quote_usd == 100.0 and cfg.target_net == 0.010
     assert cfg.live.enabled is False                              # ships LOCKED
-    assert cfg.live.quote_usd_max == 25.0 and cfg.live.max_open_quotes == 2
+    # PILOT caps (dataclass defaults): rest-leg $5, daily-stake $100, 10 fills/day, 2 open, $25 loss.
+    assert cfg.live.quote_usd_max == 5.0 and cfg.live.max_open_quotes == 2
+    assert cfg.live.max_daily_stake_usd == 100.0 and cfg.live.max_fills_per_day == 10
+    assert cfg.live.max_daily_loss_usd == 25.0
     # in-play rail defaults come from the dataclass, not the live file
     assert cfg.inplay.fresh_s == 10.0 and cfg.inplay.shock_move == 0.05 and cfg.inplay.persist_ms == 1500
     assert cfg.poly_leg_cap == {"tennis": 0.65, "ufc": 0.65}

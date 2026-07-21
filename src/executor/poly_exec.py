@@ -274,11 +274,16 @@ class PolyExec:
     def _normalize(self, raw: Any, *, price: float, requested_shares: float) -> dict[str, Any]:
         """Map a post_order response to {status, shares, usd, avg_price, order_id, raw}.
 
-        Polymarket FOK either fully fills or is killed; we classify strictly: shares filled == 0
-        -> "none"; >= requested -> "filled"; otherwise "partial"."""
+        A FOK either fully fills or is killed; a GTC that is ACCEPTED simply RESTS (nothing matched
+        yet) — that is NOT a fill. We classify by the MATCHED amount (never the order ``size``, which is
+        the requested quantity, not a fill) plus the response ``status``: 0 matched + a live/open status
+        -> "resting"; 0 matched otherwise -> "none"; >= requested -> "filled"; else "partial". (Treating
+        an accepted rest as "filled" would make a maker fire a phantom hedge on every quote.)"""
         d = raw if isinstance(raw, dict) else {}
+        resp_status = str(d.get("status") or "").lower()
+        resting_states = ("live", "open", "resting", "delayed", "new")
         filled = None
-        for k in ("size_matched", "filled_size", "matched_size", "makingAmount", "size"):
+        for k in ("size_matched", "filled_size", "matched_size", "makingAmount"):
             if d.get(k) is not None:
                 try:
                     filled = float(d[k])
@@ -286,8 +291,13 @@ class PolyExec:
                 except (TypeError, ValueError):
                     continue
         success = d.get("success")
-        if filled is None:
-            filled = float(requested_shares) if success else 0.0
+        if filled is None:                                     # no matched field -> infer from status
+            if resp_status in resting_states:
+                filled = 0.0
+            elif resp_status == "matched":
+                filled = float(requested_shares)
+            else:
+                filled = float(requested_shares) if success else 0.0
         avg = None
         for k in ("price", "avg_price", "average_price"):
             if d.get(k) is not None:
@@ -299,7 +309,7 @@ class PolyExec:
         if avg is None:
             avg = float(price)
         if filled <= 0:
-            status = "none"
+            status = "resting" if resp_status in resting_states else "none"
         elif filled >= float(requested_shares) - 1e-9:
             status = "filled"
         else:
@@ -315,6 +325,35 @@ class PolyExec:
             "order_id": d.get("orderID") or d.get("order_id") or d.get("id"),
             "raw": raw,
         }
+
+    # -- cancels / order reads (live maker lifecycle) ------------------------
+    def cancel_order(self, order_id: str) -> Any:
+        """Cancel ONE resting order by its CLOB order id. v2's cancel takes an ``OrderPayload`` (not a
+        bare string) — wrap it so the maker's PolyOrderClient.cancel(order_id) works end-to-end."""
+        from py_clob_client_v2.clob_types import OrderPayload
+        return self.client.cancel_order(OrderPayload(orderID=order_id))
+
+    def cancel_all(self) -> Any:
+        """Cancel EVERY resting order on the account (shutdown / stray-order safety)."""
+        return self.client.cancel_all()
+
+    def open_orders(self, *, market: Optional[str] = None, token_id: Optional[str] = None) -> Any:
+        """List resting orders, optionally filtered to a market (condition_id) or token. Used for the
+        startup stray-order sweep (any live order left by a previous run is ours -> cancel it)."""
+        from py_clob_client_v2.clob_types import OpenOrderParams
+        params = OpenOrderParams(market=market, asset_id=token_id) if (market or token_id) else None
+        return self.client.get_open_orders(params)
+
+    def get_order(self, order_id: str) -> Any:
+        """Authoritative REST status read for one order (confirm placement / cancellation)."""
+        return self.client.get_order(order_id)
+
+    def derive_l2_creds(self) -> dict[str, Any]:
+        """The L2 API creds for the Poly USER websocket auth. create-or-derive is idempotent; normalize
+        ApiCreds -> the WS ``{apiKey, secret, passphrase}`` shape the user channel expects."""
+        creds = self.client.create_or_derive_api_key()
+        get = (lambda k: getattr(creds, k, None)) if not isinstance(creds, dict) else creds.get
+        return {"apiKey": get("api_key"), "secret": get("api_secret"), "passphrase": get("api_passphrase")}
 
     # -- reads ---------------------------------------------------------------
     def get_orderbook(self, token_id: str) -> dict[str, Any]:

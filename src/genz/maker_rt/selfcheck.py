@@ -208,10 +208,10 @@ def run_selfcheck(cfg: Any, *, log: Any = None) -> int:
     print(f"  in-play  : armed={ip.armed} reason={ip.reason!r} checks={ip.checks}")
 
     print("\n-- NOTE --")
-    print("  The RUNNING maker_rt process (src/genz/maker_rt/__main__.py) builds LiveGate withOUT order")
-    print("  clients, so its startup self-check reports kalshi_balance/poly_balance as FAILED whenever a")
-    print("  gate is armed (enabled + arm file). That is the SHADOW lock and is INDEPENDENT of the probes")
-    print("  above -- this build never injects clients into the running gate, by design.")
+    print("  The RUNNING maker_rt process now injects order clients into LiveGate when")
+    print("  maker_rt.live.enabled is true, so its startup gate ARMS (gates.pre=true) exactly as the")
+    print("  probes above show. But the CONTINUOUS pre-game placement executor is NOT wired yet, so")
+    print("  normal operation still quotes SHADOW. Use `--smoke` to place one real order end-to-end.")
 
     required = ("kalshi_balance", "poly_balance", "poly_preflight")
     all_ok = all(bool(results.get(k)) for k in required) and (results.get("poly_tick") in (True, None))

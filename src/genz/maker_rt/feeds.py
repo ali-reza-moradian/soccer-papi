@@ -183,11 +183,13 @@ class PolyUserFeed(_BaseFeed):
     """LIVE ONLY: our real fills (event_type 'trade') and order lifecycle. Started only when armed."""
     name = "poly_user"
 
-    def __init__(self, store, condition_ids: list, creds: dict, *, on_user_trade: Callable = None, **kw) -> None:
+    def __init__(self, store, condition_ids: list, creds: dict, *, on_user_trade: Callable = None,
+                 on_user_order: Callable = None, **kw) -> None:
         super().__init__(store, **kw)
         self.condition_ids = list(condition_ids)
         self.creds = creds
         self.on_user_trade = on_user_trade or (lambda e: None)
+        self.on_user_order = on_user_order or (lambda e: None)   # order PLACEMENT/UPDATE/CANCELLATION
 
     async def _session(self) -> None:
         ws = await _connect(mrt_config.POLY_USER_WS)
@@ -208,6 +210,8 @@ class PolyUserFeed(_BaseFeed):
                 for e in parsing.parse_poly_user(data):
                     if e.get("kind") == "poly_user_trade":
                         self.on_user_trade(e)
+                    elif e.get("kind") == "poly_user_order":
+                        self.on_user_order(e)
         finally:
             self.connected = False
             await ws.close()
