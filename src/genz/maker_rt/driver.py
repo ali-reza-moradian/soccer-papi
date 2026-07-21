@@ -263,19 +263,19 @@ class QuoteDriver:
                 self.viable_since.pop(c.key, None)
 
             # STRICTER LIVE IN-PLAY RAIL: place only once the node has been unfrozen AND both-books-fresh
-            # for >= freeze_cooloff_s. No-op in shadow (executor locked -> armed() is False).
-            if (phase == "inplay" and self.inplay_exec is not None and self.inplay_exec.armed()
-                    and not self.inplay_exec.cooloff_ok(store, c, self.freeze_until.get(c.node3, 0.0), now_ts)):
+            # for >= freeze_cooloff_s. No-op in shadow (in-play gate not armed -> inplay_armed() False).
+            if (phase == "inplay" and self.pregame_exec is not None and self.pregame_exec.inplay_armed()
+                    and not self.pregame_exec.cooloff_ok(store, c, self.freeze_until.get(c.node3, 0.0), now_ts)):
                 self._expire_if_open(c, now, "inplay_cooloff", phase)
                 continue
 
-            # PRE-GAME LIVE (rest-poly only, armed): drive a REAL resting order instead of the shadow
-            # model. The executor re-checks never-crossable on the live book + caps before every POST.
-            if self.pregame_exec is not None and self.pregame_exec.eligible(c, phase):
+            # LIVE (rest-poly only, gate armed for this phase): drive a REAL resting order instead of the
+            # shadow model. The executor re-checks never-crossable on the live book + caps before POST.
+            if self.pregame_exec is not None and self.pregame_exec.eligible(c, phase, now_ts):
                 live_open = c.key in self.pregame_exec.open_orders
                 if live_open and not needs_reprice(prev, dec, tick):
                     continue                              # unchanged within a tick -> keep resting
-                self.pregame_exec.place_or_reprice(c, dec, rest, store, now, now_ts)
+                self.pregame_exec.place_or_reprice(c, dec, rest, store, now, now_ts, phase)
                 self.last_event[c.key] = "quote"
                 continue
 

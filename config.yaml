@@ -516,15 +516,17 @@ maker_rt:
   # (freeze cool-off + a hedge re-verify at fill). DO NOT flip enabled here — this build stays shadow
   # in-play. See src/genz/maker_rt/inplay_exec.py.
   live_inplay:
-    enabled: false
+    enabled: true                   # IN-PLAY LIVE ARMED — fully autonomous, rest-poly, under the rails + SHARED caps
     arm_file: data/ops/ARM_MAKER_INPLAY
-    quote_usd_max: 25               # hard cap on a live in-play quote notional
-    max_open_quotes: 1
-    max_fills_per_day: 4
-    max_daily_loss_usd: 20          # first-negative-day auto-halt: pnl_today <= -this -> stop quoting for the day
+    quote_usd_max: 5                # match pre-game (sizing is governed by the SHARED caps.quote_usd_max)
+    max_open_quotes: 1              # INFORMATIONAL — the SHARED live.max_open_quotes (2) governs pre+inplay combined
+    max_fills_per_day: 4            # INFORMATIONAL — the SHARED live.max_fills_per_day (10) governs pre+inplay
+    max_daily_loss_usd: 20          # INFORMATIONAL — the SHARED live.max_daily_loss_usd (25) governs pre+inplay
     hedge_timeout_ms: 1500          # miss/partial after this -> market-unwind the fill + freeze market
     freeze_cooloff_s: 10            # place only after the node has been unfrozen AND both-books-fresh this long
     hedge_decline_floor: -0.010     # re-verify at fill: if the walked hedge nets below this, decline + unwind
+    first_fill_pause_s: 120         # after the day's FIRST in-play fill, pause in-play placement this long (pre-game unaffected)
+    halt_locked_net: -0.020         # any in-play fill with locked_net <= this HALTS in-play for the day (pre-game continues)
 
 # ===========================================================================
 # OG MULTI-SPORT (src/og_multi/) — the 4-book layer (Kalshi, Polymarket, Pinnacle, 1xbet) for

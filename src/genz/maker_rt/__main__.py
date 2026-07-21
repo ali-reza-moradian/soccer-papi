@@ -21,7 +21,7 @@ from .driver import QuoteDriver
 from .feeds import KalshiFeed, PolyMarketFeed, PolyUserFeed
 from .gitguard import head_changed, read_head_sha
 from .hedge import LiveHedger
-from .inplay_exec import InFlightGuard, InplayLiveExecutor
+from .inplay_exec import InFlightGuard
 from .live import LiveGate
 from .state import MakerState, bump_restart, utcnow
 from .store import BookStore
@@ -113,11 +113,15 @@ def _startup_stray_cancel_armed(poly_oc: Any, kalshi_oc: Any, log: Any) -> int:
         return 0
 
 
-def _armed_startup_alert(cfg: Any, telegram: Any, swept: int, log: Any) -> None:
-    msg = ("[MAKER_RT][LIVE] CONTINUOUS PRE-GAME LIVE ARMED (rest-poly only). stray-cancel=%d. "
-           "caps: quote<=$%.0f, daily_stake<=$%.0f, open<=%d, fills/day<=%d, loss<=$%.0f."
-           % (swept, cfg.live.quote_usd_max, cfg.live.max_daily_stake_usd, cfg.live.max_open_quotes,
-              cfg.live.max_fills_per_day, cfg.live.max_daily_loss_usd))
+def _armed_startup_alert(cfg: Any, pre_armed: bool, inplay_armed: bool, telegram: Any, swept: int,
+                         log: Any) -> None:
+    phases = "+".join(p for p, on in (("pre", pre_armed), ("inplay", inplay_armed)) if on) or "none"
+    msg = ("[MAKER_RT][LIVE] LIVE ARMED (rest-poly; phases: %s). stray-cancel=%d. SHARED caps: "
+           "quote<=$%.0f, daily_stake<=$%.0f, open<=%d, fills/day<=%d, loss<=$%.0f. in-play circuit: "
+           "first-fill pause %.0fs, day-halt at locked_net %.1f%%."
+           % (phases, swept, cfg.live.quote_usd_max, cfg.live.max_daily_stake_usd, cfg.live.max_open_quotes,
+              cfg.live.max_fills_per_day, cfg.live.max_daily_loss_usd,
+              cfg.live_inplay.first_fill_pause_s, cfg.live_inplay.halt_locked_net * 100))
     log.warning(msg)
     if telegram is None:
         log.warning("[MAKER_RT][LIVE] ARMED but TELEGRAM_* env is ABSENT — no live-action alerts will be "
@@ -166,7 +170,7 @@ async def _run(cfg: Any, log: Any) -> int:
     live_gate = LiveGate(cfg, kalshi_client=kalshi_oc, poly_client=poly_oc, log=log)
     gate = live_gate.evaluate()                       # armed only when enabled+arm file+self-check pass
     inplay_gate = live_gate.evaluate_inplay()
-    mode = "live" if gate.armed else "shadow"
+    mode = "live" if (gate.armed or inplay_gate.armed) else "shadow"
     log.info("[MAKER_RT] starting in %s mode (pre-game: %s | in-play: %s) — restart #%d today",
              mode.upper(), gate.reason, inplay_gate.reason, restarts)
 
@@ -174,22 +178,15 @@ async def _run(cfg: Any, log: Any) -> int:
     state = MakerState(log=log)
     state.restarts_today = restarts
     state.gates = {"pre": bool(gate.armed), "inplay": bool(inplay_gate.armed)}
-    # IN-PLAY stays HARD-REFUSED in this build (its gate is separate, enabled False) — re-assert it and
-    # give its hedger NO order clients, so it can never place even if some future flip armed its gate.
-    if inplay_gate.armed:
-        log.error("[MAKER_RT] IN-PLAY gate unexpectedly ARMED — refusing (in-play live is NOT enabled "
-                  "in this build).")
     telegram = _telegram_sender(log)
-    executor = InplayLiveExecutor(cfg, live_gate, LiveHedger(poly_rate=cfg.poly_fee_rate, log=log),
-                                  in_flight=in_flight, telegram=telegram, state=state, log=log)
-    # PRE-GAME CONTINUOUS LIVE (rest-poly only) — built ONLY when the pre-game gate is armed AND the order
-    # clients exist. Its hedger gets the REAL clients (the in-play hedger above stays client-less).
-    pregame_exec = _build_pregame_exec(cfg, live_gate, gate.armed, kalshi_oc, poly_oc, in_flight,
-                                       telegram, state, log)
+    # UNIFIED LIVE executor (rest-poly, BOTH phases) — built when EITHER gate is armed AND the order
+    # clients exist. ONE shared LiveCaps budget + ONE global in-flight guard govern pre+inplay together.
+    pregame_exec = _build_pregame_exec(cfg, live_gate, gate.armed or inplay_gate.armed, kalshi_oc,
+                                       poly_oc, in_flight, telegram, state, log)
     if pregame_exec is not None:
         swept = _startup_stray_cancel_armed(poly_oc, kalshi_oc, log)
-        _armed_startup_alert(cfg, telegram, swept, log)
-    driver = QuoteDriver(cfg, state, log=log, inplay_exec=executor, pregame_exec=pregame_exec)
+        _armed_startup_alert(cfg, gate.armed, inplay_gate.armed, telegram, swept, log)
+    driver = QuoteDriver(cfg, state, log=log, inplay_exec=None, pregame_exec=pregame_exec)
     horizon = cfg.inplay.horizon_hours
     universe = build_universe(load_trees(), time.time(), max_games=cfg.max_games,
                               expire_before_kickoff_s=cfg.expire_before_kickoff_s, horizon_hours=horizon)
@@ -227,14 +224,13 @@ async def _run(cfg: Any, log: Any) -> int:
             driver.process_drift(store, now, now_ts)
             driver.expire_kickoff(now, now_ts)
             if pregame_exec is not None:
-                # DISARM mid-run (operator removed the arm file) -> cancel every open quote immediately.
-                if not pregame_exec.armed() and pregame_exec.open_count() > 0:
-                    pregame_exec.cancel_all("disarmed", now)
+                pregame_exec.roll_day(now)                        # reset in-play circuit + caps at UTC midnight
+                pregame_exec.enforce_arm_state(now)               # a phase disarmed mid-run -> cancel its opens
                 pregame_exec.set_feed_ok(bool(pm_user is not None and pm_user.connected), now)
                 if now_ts - last_fill_poll >= LIVE_FILL_POLL_S:      # REST backup fill detector
                     last_fill_poll = now_ts
                     pregame_exec.poll_open_orders(store, now, now_ts)
-                state.live = pregame_exec.snapshot()
+                state.live = pregame_exec.snapshot(now_ts)
             poly_user_up = bool(pm_user is not None and pm_user.connected)
             sockets = {"poly_market": pm.connected, "poly_user": poly_user_up, "kalshi": ks.connected}
             if now_ts - last_hb >= HEARTBEAT_EVERY_S:

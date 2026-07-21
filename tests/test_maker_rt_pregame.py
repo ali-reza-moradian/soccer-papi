@@ -4,6 +4,8 @@ every cap refusal (incl. projected daily-stake), user-feed-down halt+cancel, and
 integration (eligible -> live, disarm -> cancel). No network, no real orders."""
 from __future__ import annotations
 
+import os
+from datetime import datetime, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -89,6 +91,9 @@ class _Store:
     def poly_tick(self, token, default=0.01):
         return 0.01
 
+    def is_fresh(self, ident, now_ts, s):
+        return True                       # books always "fresh" in the executor unit tests
+
 
 class _State:
     def __init__(self):
@@ -116,7 +121,7 @@ def _cand(direction="rest-poly", token="TOK1"):
     return SimpleNamespace(
         key=("mlb", "G1", "ml2", "Home", direction), sport="mlb", game="G1", market_key="ml2",
         rest_side="Home", direction=direction, rest_ref=("polymarket", token, "BUY"),
-        rest_venue="polymarket", hedge_venue="kalshi", poly_rate=0.05,
+        rest_venue="polymarket", hedge_venue="kalshi", poly_rate=0.05, rest_id=token, hedge_id="KX-1",
         hedge_lookup={"venue": "kalshi", "ticker": "KX-1", "side": "yes"})
 
 
@@ -128,9 +133,13 @@ def _dec(price=0.46, hedge_ask=0.50):
 def _exec(tmp_path, *, caps=None, poly=None, hedger=None, order_client=None, state=None, guard=None):
     arm = tmp_path / "ARM_MAKER"
     arm.write_text("1")
+    ip_arm = tmp_path / "ARM_MAKER_INPLAY"
+    ip_arm.write_text("1")
     cfg = mrt_config.MakerRtConfig()
     cfg.live.enabled = True
     cfg.live.arm_file = str(arm)
+    cfg.live_inplay.enabled = True                 # arm BOTH phases for the executor unit tests
+    cfg.live_inplay.arm_file = str(ip_arm)
     caps = caps or LiveCaps(cfg.live)
     poly = poly or _Poly()
     hedger = hedger or _Hedger(SimpleNamespace(status="locked", hedged_shares=5, hedge_avg_price=0.50,
@@ -149,10 +158,11 @@ def _exec(tmp_path, *, caps=None, poly=None, hedger=None, order_client=None, sta
 def test_eligible_only_restpoly_pre_armed_feedup(tmp_path):
     ex, _ = _exec(tmp_path)
     assert ex.eligible(_cand("rest-poly"), "pre") is True
-    assert ex.eligible(_cand("rest-kalshi"), "pre") is False     # rest-kalshi stays shadow
-    assert ex.eligible(_cand("rest-poly"), "inplay") is False    # pre-game only
+    assert ex.eligible(_cand("rest-kalshi"), "pre") is False     # rest-kalshi stays shadow (both phases)
+    assert ex.eligible(_cand("rest-kalshi"), "inplay", 1000.0) is False
     ex.feed_ok = False
     assert ex.eligible(_cand("rest-poly"), "pre") is False       # user feed down -> not eligible
+    assert ex.eligible(_cand("rest-poly"), "inplay", 1000.0) is False
 
 
 def test_place_on_armed(tmp_path):
@@ -312,10 +322,16 @@ class _FakePregame:
         self.placed = []
         self.cancelled = []
 
-    def eligible(self, c, phase):
+    def eligible(self, c, phase, now_ts=0.0):
         return phase == "pre" and c.direction == "rest-poly"
 
-    def place_or_reprice(self, c, dec, rest, store, now, now_ts):
+    def inplay_armed(self):
+        return False
+
+    def cooloff_ok(self, store, c, freeze_until_ts, now_ts):
+        return True
+
+    def place_or_reprice(self, c, dec, rest, store, now, now_ts, phase="pre"):
         self.placed.append((c.key, dec.quote_price))
         self.open_orders[c.key] = {"price": dec.quote_price}
 
@@ -395,3 +411,138 @@ def test_driver_churn_cancels_live_order():
     drv.set_universe([], now=now)                             # the game vanished from the tree
     assert any(reason == "churn_gone" for _k, reason in fake.cancelled)
     assert not fake.open_orders                               # live order was cancelled on churn
+
+
+# --------------------------------------------------------------------------- #
+# IN-PLAY LIVE (phase-aware): eligibility, cool-off, shared caps, circuit        #
+# --------------------------------------------------------------------------- #
+_DT = datetime(2026, 7, 21, 12, 0, 0, tzinfo=timezone.utc)
+
+
+def test_inplay_eligibility_gated_by_gate_pause_halt(tmp_path):
+    ex, cfg = _exec(tmp_path)                                  # both gates armed, feed_ok True
+    c = _cand("rest-poly")
+    assert ex.eligible(c, "inplay", 1000.0) is True
+    assert ex.eligible(c, "inplay", 1000.0) and not ex.eligible(_cand("rest-kalshi"), "inplay", 1000.0)
+    ex.inplay_pause_until = 2000.0                             # inside the first-fill pause
+    assert ex.eligible(c, "inplay", 1000.0) is False
+    assert ex.eligible(c, "pre", 1000.0) is True               # PRE unaffected by the in-play pause
+    ex.inplay_pause_until = 0.0
+    ex.inplay_halted = True                                    # in-play day-halt
+    assert ex.eligible(c, "inplay", 1000.0) is False
+    assert ex.eligible(c, "pre", 1000.0) is True               # PRE continues through an in-play halt
+    ex.inplay_halted = False
+    os.remove(cfg.live_inplay.arm_file)                        # in-play gate disarmed
+    assert ex.eligible(c, "inplay", 1000.0) is False
+    assert ex.eligible(c, "pre", 1000.0) is True               # PRE gate still armed
+
+
+def test_inplay_cooloff_rail(tmp_path):
+    ex, _ = _exec(tmp_path)
+    c = _cand("rest-poly")
+    store = _Store()
+    assert ex.cooloff_ok(store, c, 0.0, 1000.0) is True        # never frozen -> ok
+    assert ex.cooloff_ok(store, c, 1005.0, 1000.0) is False    # frozen until 1005 > now
+    assert ex.cooloff_ok(store, c, 995.0, 1000.0) is False     # thawed only 5s ago (< 10 cool-off)
+    assert ex.cooloff_ok(store, c, 985.0, 1000.0) is True      # thawed 15s ago (>= 10)
+
+
+def test_shared_caps_across_pre_and_inplay(tmp_path):
+    oc = _OrderClient()
+    caps = LiveCaps(mrt_config.LiveConfig(quote_usd_max=5, max_daily_stake_usd=1000,
+                                          max_open_quotes=9, max_fills_per_day=9))
+    hedger = _Hedger(SimpleNamespace(status="locked", hedged_shares=5, hedge_avg_price=0.50,
+                                     locked_pnl=0.10, unwind_cost=None))
+    ex, _ = _exec(tmp_path, order_client=oc, caps=caps, hedger=hedger)
+    assert ex.caps is caps                                     # ONE shared caps instance
+    store = _Store(poly_best_ask=0.60, kalshi_ask=0.50)
+    ex.place_or_reprice(_cand("rest-poly", "A"), _dec(0.46), None, store, None, 1.0, "pre")
+    ex.on_order_update({"order_id": oc.rests[0]["oid"], "size_matched": 5, "price": 0.46}, store, None, 2.0)
+    c2 = _cand("rest-poly", "B"); c2.key = ("mlb", "G2", "ml2", "Home", "rest-poly")
+    ex.place_or_reprice(c2, _dec(0.46), None, store, None, 3.0, "inplay")
+    ex.on_order_update({"order_id": oc.rests[1]["oid"], "size_matched": 5, "price": 0.46}, store, None, 4.0)
+    assert caps.fills_today == 2                               # BOTH phases incremented the ONE budget
+    assert caps.stake_today > 0
+
+
+def test_inplay_first_fill_pauses_and_resumes(tmp_path):
+    oc = _OrderClient()
+    hedger = _Hedger(SimpleNamespace(status="locked", hedged_shares=5, hedge_avg_price=0.50,
+                                     locked_pnl=0.10, unwind_cost=None))
+    ex, _ = _exec(tmp_path, order_client=oc, hedger=hedger)
+    ex.roll_day(_DT)
+    store = _Store(poly_best_ask=0.60, kalshi_ask=0.50)
+    c = _cand("rest-poly")
+    ex.place_or_reprice(c, _dec(0.46), None, store, None, 100.0, "inplay")
+    ex.on_order_update({"order_id": oc.rests[0]["oid"], "size_matched": 5, "price": 0.46}, store, None, 101.0)
+    assert ex.inplay_fills_today == 1
+    assert ex.inplay_pause_until == 101.0 + 120.0             # paused first_fill_pause_s
+    assert ex.eligible(c, "inplay", 150.0) is False           # within the pause
+    assert ex.eligible(c, "pre", 150.0) is True                # PRE unaffected
+    assert ex.eligible(c, "inplay", 101.0 + 121.0) is True     # auto-resumes after the pause
+
+
+def test_inplay_day_halt_on_bad_locked_net(tmp_path):
+    oc = _OrderClient()
+    poly = _Poly(order_status="CANCELED", sell_price=0.30)
+    hedger = _Hedger(SimpleNamespace(status="locked"), poly=poly)     # not reached (declined)
+    ex, _ = _exec(tmp_path, order_client=oc, hedger=hedger, poly=poly)
+    ex.roll_day(_DT)
+    store = _Store(poly_best_ask=0.60, kalshi_ask=0.62)       # locked_net ~ -9% <= -2% halt threshold
+    c = _cand("rest-poly")
+    ex.place_or_reprice(c, _dec(0.46, hedge_ask=0.62), None, store, None, 100.0, "inplay")
+    ex.on_order_update({"order_id": oc.rests[0]["oid"], "size_matched": 3, "price": 0.46}, store, None, 101.0)
+    assert ex.inplay_halted is True
+    assert ex.eligible(c, "inplay", 200.0) is False
+    assert ex.eligible(_cand("rest-poly", "P"), "pre", 200.0) is True   # PRE continues
+
+
+def test_one_in_flight_shared_pre_inplay_defers(tmp_path):
+    oc = _OrderClient()
+    guard = _Guard()
+    hedger = _Hedger(SimpleNamespace(status="locked", hedged_shares=5, hedge_avg_price=0.50,
+                                     locked_pnl=0.10, unwind_cost=None))
+    ex, _ = _exec(tmp_path, order_client=oc, hedger=hedger, guard=guard)
+    store = _Store(poly_best_ask=0.60, kalshi_ask=0.50)
+    c = _cand("rest-poly")
+    ex.place_or_reprice(c, _dec(0.46), None, store, None, 1.0, "inplay")
+    oid = oc.rests[0]["oid"]
+    guard.acquire(("live", ("some-pregame-fill",)))           # a pre-game hedge already in flight
+    ex.on_order_update({"order_id": oid, "size_matched": 5, "price": 0.46}, store, None, 2.0)
+    assert hedger.calls == []                                  # in-play fill DEFERRED (guard busy)
+    assert ex.open_orders[c.key].matched_seen == 0.0           # not advanced -> retried later
+    guard.release()
+    ex.on_order_update({"order_id": oid, "size_matched": 5, "price": 0.46}, store, None, 3.0)
+    assert len(hedger.calls) == 1                              # hedged once the guard freed
+
+
+def test_driver_freeze_cancels_live_inplay_order():
+    from src.genz.maker_rt import parsing
+    from src.genz.maker_rt.driver import QuoteDriver
+    from src.genz.maker_rt.store import BookStore
+    from src.genz.maker_rt.universe import _kickoff_ts, build_universe
+    ko = "2026-07-17T20:00:00Z"; ko_ts = _kickoff_ts(ko)
+    n = lambda side, tok, kt, ks: {"market_type": "ml2", "market_key": "ml2", "side": side,  # noqa: E731
+        "line": None, "kind": "2way", "poly_token_id": tok, "poly_side": side.title(),
+        "poly_fee_rate": 0.05, "kalshi_ticker": kt, "kalshi_side": ks}
+    tree = {"games": {"G1": {"away": "A", "home": "B", "kickoff_utc": ko, "sport": "mlb",
+        "nodes": [n("away", "T_A", "KX-1", "YES"), n("home", "T_B", "KX-1", "NO")]}}}
+    uni = build_universe({"mlb": tree}, ko_ts + 60, max_games=20, horizon_hours={"mlb": 4.5})
+    cfg = mrt_config.MakerRtConfig(); cfg.inplay.persist_ms = 0
+    st = _DriverState(); fake = _FakePregame()
+    key = ("mlb", "G1", "ml2", "away", "rest-poly")
+    fake.open_orders[key] = {"phase": "inplay"}                # a live in-play order resting on the node
+    drv = QuoteDriver(cfg, st, pregame_exec=fake); drv.set_universe(uni)
+    now = datetime(2026, 7, 17, 20, 1, 0, tzinfo=timezone.utc)
+    store = BookStore(); t0 = ko_ts + 60
+    store.apply_poly(parsing.parse_poly_market({"event_type": "book", "asset_id": "T_A",
+        "bids": [{"price": "0.45", "size": "300"}], "asks": [{"price": "0.55", "size": "300"}]}), t0)
+    store.apply_kalshi(parsing.parse_kalshi({"type": "orderbook_snapshot", "sid": 1, "seq": 1,
+        "msg": {"market_ticker": "KX-1", "yes_dollars_fp": [["0.5000", "5000"]],
+                "no_dollars_fp": [["0.5000", "5000"]]}}), t0)
+    store.apply_kalshi(parsing.parse_kalshi({"type": "orderbook_snapshot", "sid": 1, "seq": 2,
+        "msg": {"market_ticker": "KX-1", "yes_dollars_fp": [["0.6000", "5000"]],
+                "no_dollars_fp": [["0.4000", "5000"]]}}), t0 + 1)     # +0.10 shock
+    drv.refresh_quotes(store, now, t0 + 1)                     # shock -> freeze -> cancel live order
+    assert any(reason == "shock_freeze" for _k, reason in fake.cancelled)
+    assert key not in fake.open_orders

@@ -68,6 +68,11 @@ class InplayLiveConfig:
     hedge_timeout_ms: int = 1500
     freeze_cooloff_s: float = 10.0   # place only after the node has been unfrozen AND both-books-fresh this long
     hedge_decline_floor: float = -0.010   # re-verify at fill: if walked hedge nets below this, decline+unwind
+    # FIRST-FILL soft circuit (replaces the calendar guard): after the day's first IN-PLAY fill, pause
+    # in-play placement this long (pre-game unaffected) + Telegram the fill->hedge->locked_net chain.
+    first_fill_pause_s: float = 120.0
+    # Any in-play fill whose locked_net is <= this HALTS in-play for the rest of the day (pre-game continues).
+    halt_locked_net: float = -0.020
 
 
 @dataclass
@@ -191,7 +196,8 @@ def load_maker_rt_config(config_path: Optional[str] = None,
     li_blk = dict(li_blk) if isinstance(li_blk, dict) else {}
     li = InplayLiveConfig()
     for name in ("enabled", "arm_file", "quote_usd_max", "max_open_quotes", "max_fills_per_day",
-                 "max_daily_loss_usd", "hedge_timeout_ms", "freeze_cooloff_s", "hedge_decline_floor"):
+                 "max_daily_loss_usd", "hedge_timeout_ms", "freeze_cooloff_s", "hedge_decline_floor",
+                 "first_fill_pause_s", "halt_locked_net"):
         if li_blk.get(name) is not None:
             setattr(li, name, li_blk[name])
     li.enabled = bool(li.enabled)
@@ -202,6 +208,8 @@ def load_maker_rt_config(config_path: Optional[str] = None,
     li.hedge_timeout_ms = int(li.hedge_timeout_ms)
     li.freeze_cooloff_s = float(li.freeze_cooloff_s)
     li.hedge_decline_floor = float(li.hedge_decline_floor)
+    li.first_fill_pause_s = float(li.first_fill_pause_s)
+    li.halt_locked_net = float(li.halt_locked_net)
     cfg.live_inplay = li
     return cfg
 

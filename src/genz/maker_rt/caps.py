@@ -40,6 +40,19 @@ class LiveCaps:
         self.open_quotes = 0
         self.halted = False
         self.halt_reason: Optional[str] = None
+        self._day = ""                   # UTC day of the running counters (rolled by roll())
+
+    def roll(self, day: str) -> None:
+        """Reset the per-DAY counters (stake/fills/pnl + halt) at a new UTC day. ``open_quotes`` is NOT
+        reset — a resting order survives midnight. A daily-cap halt clears with the new day."""
+        if day == self._day:
+            return
+        self._day = day
+        self.stake_today = 0.0
+        self.fills_today = 0
+        self.pnl_today = 0.0
+        self.halted = False
+        self.halt_reason = None
 
     # -- sizing --------------------------------------------------------------
     def size_shares(self, price: float, *, min_shares: int = 5) -> int:
