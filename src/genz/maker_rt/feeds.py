@@ -194,9 +194,15 @@ class PolyUserFeed(_BaseFeed):
     async def _session(self) -> None:
         ws = await _connect(mrt_config.POLY_USER_WS)
         self.connected = True
+        if self.log:
+            self.log.info("[MAKER_RT] poly_user socket connected (markets=%d).", len(self.condition_ids))
         try:
             await ws.send(json.dumps({"auth": self.creds, "markets": self.condition_ids, "type": "user"}))
+            last_ping = time.monotonic()
             while not self._stop:
+                if time.monotonic() - last_ping >= 10:      # keepalive: the server closes an idle socket
+                    await ws.send("PING")
+                    last_ping = time.monotonic()
                 try:
                     raw = await asyncio.wait_for(ws.recv(), timeout=10)
                 except asyncio.TimeoutError:

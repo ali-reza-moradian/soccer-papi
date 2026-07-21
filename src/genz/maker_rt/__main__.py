@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import signal
 import sys
 import time
 from typing import Any, Optional
@@ -17,7 +18,7 @@ from ...logsetup import get_logger, setup_logging
 from . import config as mrt_config
 from .clients import build_pregame_order_clients
 from .driver import QuoteDriver
-from .feeds import KalshiFeed, PolyMarketFeed
+from .feeds import KalshiFeed, PolyMarketFeed, PolyUserFeed
 from .gitguard import head_changed, read_head_sha
 from .hedge import LiveHedger
 from .inplay_exec import InFlightGuard, InplayLiveExecutor
@@ -27,6 +28,23 @@ from .store import BookStore
 from .universe import build_universe, kalshi_tickers, load_trees, poly_tokens, tree_mtimes
 
 HEARTBEAT_EVERY_S = 2.5
+LIVE_FILL_POLL_S = 1.5                        # REST backup fill-poll cadence (socket is the primary signal)
+STOP_ALL_PATH = os.path.join(mrt_config.OPS_DIR, "STOP_ALL")
+_STOP = {"flag": False}                       # set by a SIGTERM/SIGBREAK handler -> graceful cancel-all + exit
+
+
+def _install_signal_handlers(log: Any) -> None:
+    """SIGTERM/SIGBREAK -> request a graceful stop (the loop then cancels all live orders + exits). SIGINT
+    already unwinds via KeyboardInterrupt -> the _run finally. Best-effort; unsupported signals are skipped."""
+    def _handler(signum, frame):  # noqa: ANN001
+        _STOP["flag"] = True
+    for name in ("SIGTERM", "SIGBREAK"):
+        sig = getattr(signal, name, None)
+        if sig is not None:
+            try:
+                signal.signal(sig, _handler)
+            except (ValueError, OSError, RuntimeError):  # pragma: no cover - platform dependent
+                pass
 
 
 def _telegram_sender(log: Any):
@@ -70,6 +88,71 @@ def _spawn_feeds(store: BookStore, universe: list, cfg: Any, log: Any) -> tuple:
     return pm, ks
 
 
+def _build_pregame_exec(cfg: Any, live_gate: Any, armed: bool, kalshi_oc: Any, poly_oc: Any,
+                        in_flight: Any, telegram: Any, state: Any, log: Any) -> Any:
+    """The PRE-GAME continuous live executor, or None when not armed / no clients. rest-poly only."""
+    if not (armed and poly_oc is not None):
+        return None
+    from .caps import LiveCaps
+    from .orders import PolyOrderClient
+    from .pregame_exec import PregameLiveExecutor
+    caps = LiveCaps(cfg.live, telegram=telegram, log=log)
+    order_client = PolyOrderClient(poly_oc, log=log)
+    hedger = LiveHedger(kalshi_client=kalshi_oc, poly_client=poly_oc, poly_rate=cfg.poly_fee_rate, log=log)
+    return PregameLiveExecutor(cfg, live_gate, order_client, hedger, caps, poly_oc,
+                               in_flight=in_flight, telegram=telegram, state=state, log=log)
+
+
+def _startup_stray_cancel_armed(poly_oc: Any, kalshi_oc: Any, log: Any) -> int:
+    """Startup net: cancel any order a previous run left resting (the graceful-stop gap's backstop)."""
+    try:
+        from .smoke import _startup_stray_cancel
+        return _startup_stray_cancel(poly_oc, kalshi_oc, log)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("[MAKER_RT][LIVE] startup stray-cancel failed: %s", exc)
+        return 0
+
+
+def _armed_startup_alert(cfg: Any, telegram: Any, swept: int, log: Any) -> None:
+    msg = ("[MAKER_RT][LIVE] CONTINUOUS PRE-GAME LIVE ARMED (rest-poly only). stray-cancel=%d. "
+           "caps: quote<=$%.0f, daily_stake<=$%.0f, open<=%d, fills/day<=%d, loss<=$%.0f."
+           % (swept, cfg.live.quote_usd_max, cfg.live.max_daily_stake_usd, cfg.live.max_open_quotes,
+              cfg.live.max_fills_per_day, cfg.live.max_daily_loss_usd))
+    log.warning(msg)
+    if telegram is None:
+        log.warning("[MAKER_RT][LIVE] ARMED but TELEGRAM_* env is ABSENT — no live-action alerts will be "
+                    "sent. Set TELEGRAM_BOT_KEY + TELEGRAM_GROUP_ID (the wrapper sources secrets.local.ps1).")
+    else:
+        try:
+            telegram(msg)
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def _spawn_user_feed(store: BookStore, pregame_exec: Any, poly_oc: Any, log: Any) -> tuple:
+    """Start the Poly USER socket when armed, routing order updates to the executor. (None, None) if not
+    armed or L2 creds can't be derived — in that case the REST poll is the only fill signal, so the
+    executor's feed_ok stays False and placement halts."""
+    if pregame_exec is None:
+        return None, None
+    try:
+        creds = poly_oc.derive_l2_creds()
+    except Exception as exc:  # noqa: BLE001
+        log.error("[MAKER_RT][LIVE] L2 creds derive FAILED (%s) — user socket not started; placement will "
+                  "halt (feed down). REST fill-poll still runs as a safety net.", exc)
+        return None, None
+    if not (creds and creds.get("apiKey")):
+        log.error("[MAKER_RT][LIVE] no L2 creds — user socket not started; placement halts (feed down).")
+        return None, None
+
+    def _on_user_order(e):
+        pregame_exec.on_order_update(e, store, utcnow(), time.time())
+
+    pm_user = PolyUserFeed(store, [], creds, on_user_order=_on_user_order,
+                           on_user_trade=lambda e: None, log=log)
+    return pm_user, asyncio.create_task(pm_user.run())
+
+
 async def _run(cfg: Any, log: Any) -> int:
     mrt_config.ensure_dirs()
     now0 = utcnow()
@@ -96,10 +179,17 @@ async def _run(cfg: Any, log: Any) -> int:
     if inplay_gate.armed:
         log.error("[MAKER_RT] IN-PLAY gate unexpectedly ARMED — refusing (in-play live is NOT enabled "
                   "in this build).")
+    telegram = _telegram_sender(log)
     executor = InplayLiveExecutor(cfg, live_gate, LiveHedger(poly_rate=cfg.poly_fee_rate, log=log),
-                                  in_flight=in_flight, telegram=_telegram_sender(log),
-                                  state=state, log=log)
-    driver = QuoteDriver(cfg, state, log=log, inplay_exec=executor)
+                                  in_flight=in_flight, telegram=telegram, state=state, log=log)
+    # PRE-GAME CONTINUOUS LIVE (rest-poly only) — built ONLY when the pre-game gate is armed AND the order
+    # clients exist. Its hedger gets the REAL clients (the in-play hedger above stays client-less).
+    pregame_exec = _build_pregame_exec(cfg, live_gate, gate.armed, kalshi_oc, poly_oc, in_flight,
+                                       telegram, state, log)
+    if pregame_exec is not None:
+        swept = _startup_stray_cancel_armed(poly_oc, kalshi_oc, log)
+        _armed_startup_alert(cfg, telegram, swept, log)
+    driver = QuoteDriver(cfg, state, log=log, inplay_exec=executor, pregame_exec=pregame_exec)
     horizon = cfg.inplay.horizon_hours
     universe = build_universe(load_trees(), time.time(), max_games=cfg.max_games,
                               expire_before_kickoff_s=cfg.expire_before_kickoff_s, horizon_hours=horizon)
@@ -107,11 +197,6 @@ async def _run(cfg: Any, log: Any) -> int:
     log.info("[MAKER_RT] universe: %d markets (%s), %d poly tokens, %d kalshi tickers.",
              len(universe), _sport_breakdown(universe), len(poly_tokens(universe)),
              len(kalshi_tickers(universe)))
-    if gate.armed:
-        log.warning("[MAKER_RT] PRE-GAME gate ARMED (order clients injected) — but the CONTINUOUS live "
-                    "placement executor is NOT wired in this build; quoting stays SHADOW. Run "
-                    "`python -m src.genz.maker_rt --smoke` to exercise live placement. Continuous "
-                    "at-best quoting is a SEPARATE explicit enable.")
 
     def on_prints(prints):
         driver.consume_prints(prints, store, utcnow(), time.time())
@@ -120,24 +205,49 @@ async def _run(cfg: Any, log: Any) -> int:
     pm.on_prints = on_prints
     ks.on_prints = on_prints
     tasks = [asyncio.create_task(pm.run()), asyncio.create_task(ks.run())]
+    # Poly USER socket (our real fills/order updates) — started ONLY when armed. Route order updates to
+    # the executor's fill detector; the REST poll below is the reliable backup.
+    pm_user, user_task = _spawn_user_feed(store, pregame_exec, poly_oc, log)
 
     head0 = read_head_sha(mrt_config.REPO_ROOT)
     mtimes = tree_mtimes()
     last_hb = 0.0
     last_achv_log = 0.0
+    last_fill_poll = 0.0
     try:
         while True:
             now, now_ts = utcnow(), time.time()
+            # GRACEFUL STOP: the supervisor drops data/ops/STOP_ALL (or a SIGTERM/SIGBREAK arrives) —
+            # return 0 so the finally cancels every live order BEFORE the supervisor can force-kill us.
+            if _STOP["flag"] or os.path.exists(STOP_ALL_PATH):
+                log.warning("[MAKER_RT] graceful stop (%s) — cancelling live orders + exiting.",
+                            "STOP_ALL" if os.path.exists(STOP_ALL_PATH) else "signal")
+                return 0
             driver.refresh_quotes(store, now, now_ts)
             driver.process_drift(store, now, now_ts)
             driver.expire_kickoff(now, now_ts)
-            sockets = {"poly_market": pm.connected, "poly_user": False, "kalshi": ks.connected}
+            if pregame_exec is not None:
+                # DISARM mid-run (operator removed the arm file) -> cancel every open quote immediately.
+                if not pregame_exec.armed() and pregame_exec.open_count() > 0:
+                    pregame_exec.cancel_all("disarmed", now)
+                pregame_exec.set_feed_ok(bool(pm_user is not None and pm_user.connected), now)
+                if now_ts - last_fill_poll >= LIVE_FILL_POLL_S:      # REST backup fill detector
+                    last_fill_poll = now_ts
+                    pregame_exec.poll_open_orders(store, now, now_ts)
+                state.live = pregame_exec.snapshot()
+            poly_user_up = bool(pm_user is not None and pm_user.connected)
+            sockets = {"poly_market": pm.connected, "poly_user": poly_user_up, "kalshi": ks.connected}
             if now_ts - last_hb >= HEARTBEAT_EVERY_S:
                 state.write_heartbeat(mode, sockets, driver.open_quote_count(), now)
                 summ = state.summary(mode, sockets, now)
                 state.write_summary(mode, sockets, now)
                 if now_ts - last_achv_log >= 60.0:            # a compact per-sport achievable heartbeat
                     last_achv_log = now_ts
+                    if pregame_exec is not None:
+                        lv = pregame_exec.snapshot()
+                        log.info("[MAKER_RT][LIVE] feed_ok=%s open=%d stake=$%.2f/%.0f fills=%d pnl=$%.2f "
+                                 "halted=%s", lv["feed_ok"], lv["open_quotes"], lv["stake_today"],
+                                 lv["stake_cap"], lv["fills_today"], lv["pnl_today"], lv["halted"])
                     for sp, sd in (summ.get("by_sport") or {}).items():
                         a = sd.get("achievable") or {}
                         if a.get("n"):
@@ -166,17 +276,28 @@ async def _run(cfg: Any, log: Any) -> int:
     except asyncio.CancelledError:
         raise
     finally:
-        # SHUTDOWN: cancel all LIVE orders FIRST (armed only), then stop the feeds.
-        # (In shadow there are no live orders; the hook is here for the armed path.)
+        # SHUTDOWN: cancel ALL live orders FIRST (every exit path — STOP_ALL, HEAD change, signal,
+        # exception — runs this), then stop the feeds. An unhedged resting order must never be stranded.
+        if pregame_exec is not None:
+            try:
+                n = pregame_exec.cancel_all("shutdown", utcnow())
+                log.warning("[MAKER_RT][LIVE] shutdown cancel-all: %d open order(s) cancelled.", n)
+            except Exception as exc:  # noqa: BLE001 — a cancel failure must not mask the shutdown
+                log.error("[MAKER_RT][LIVE] shutdown cancel-all FAILED: %s", exc)
         # FLUSH pending drift so a HEAD-change/restart never silently drops a fill's drift numbers.
         try:
             driver.flush_drift(utcnow())
         except Exception as exc:  # noqa: BLE001 — a flush failure must not mask the real shutdown
             log.warning("[MAKER_RT] drift flush on shutdown failed: %s", exc)
         pm.stop(); ks.stop()
+        if pm_user is not None:
+            pm_user.stop()
         for t in tasks:
             t.cancel()
-        await asyncio.gather(*tasks, return_exceptions=True)
+        if user_task is not None:
+            user_task.cancel()
+        await asyncio.gather(*tasks, *( [user_task] if user_task is not None else [] ),
+                             return_exceptions=True)
         state.write_heartbeat(mode, {"poly_market": False, "poly_user": False, "kalshi": False},
                               0, utcnow())
 
@@ -221,6 +342,7 @@ def main(argv: Optional[list] = None) -> int:
         hold = _arg_value(args, "--hold", default=30.0, cast=float)
         return asyncio.run(run_smoke(cfg, log=log, hold_s=hold,
                                      shutdown_proof=("--shutdown-proof" in args)))
+    _install_signal_handlers(log)             # SIGTERM/SIGBREAK -> graceful cancel-all + exit
     try:
         return asyncio.run(_run(cfg, log))
     except KeyboardInterrupt:

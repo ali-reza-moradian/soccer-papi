@@ -1,0 +1,397 @@
+"""Tests for the CONTINUOUS pre-game live executor (rest-poly): place-on-armed, never-crossable
+re-check, reprice atomicity (cancel->confirm->place), fill->hedge routing (decline+unwind, partial),
+every cap refusal (incl. projected daily-stake), user-feed-down halt+cancel, and the driver
+integration (eligible -> live, disarm -> cancel). No network, no real orders."""
+from __future__ import annotations
+
+from types import SimpleNamespace
+
+import pytest
+
+from src.genz.maker_rt import config as mrt_config
+from src.genz.maker_rt.caps import LiveCaps
+from src.genz.maker_rt.pregame_exec import PregameLiveExecutor
+
+
+# --------------------------------------------------------------------------- #
+# fakes                                                                          #
+# --------------------------------------------------------------------------- #
+class _OrderClient:
+    """PolyOrderClient stand-in: rest() returns a resting order id; cancel() confirms via the response."""
+    def __init__(self):
+        self.rests = []
+        self.cancels = []
+        self._n = 0
+        self.rest_result = None            # override to force an immediate-fill / no-id result
+
+    def rest(self, token, price, size, *, tick_size=None, neg_risk=None):
+        self._n += 1
+        oid = f"oid{self._n}"
+        self.rests.append({"token": token, "price": price, "size": size, "oid": oid})
+        if self.rest_result is not None:
+            return dict(self.rest_result, order_id=self.rest_result.get("order_id", oid))
+        return {"status": "resting", "shares": 0, "avg_price": price, "order_id": oid}
+
+    def cancel(self, oid):
+        self.cancels.append(oid)
+        return {"canceled": [oid]}
+
+
+class _Poly:
+    """PolyExec stand-in for REST reads / unwind / neg-risk / cancel-all."""
+    def __init__(self, *, order_status="CANCELED", size_matched=0.0, sell_price=0.45):
+        self.order_status = order_status
+        self.size_matched = size_matched
+        self.sell_price = sell_price
+        self.market_sells = []
+        self.cancel_all_calls = 0
+
+    def get_order(self, oid):
+        return {"status": self.order_status, "size_matched": self.size_matched}
+
+    def _tick_and_negrisk(self, token):
+        return ("0.01", False)
+
+    def place_market_sell(self, token, shares):
+        self.market_sells.append({"token": token, "shares": shares})
+        return {"status": "filled", "avg_price": self.sell_price, "shares": shares}
+
+    def cancel_all(self):
+        self.cancel_all_calls += 1
+        return {"canceled": []}
+
+
+class _Hedger:
+    def __init__(self, result, poly=None):
+        self.result = result
+        self.calls = []
+        self.poly = poly
+
+    def hedge(self, fill, spec):
+        self.calls.append({"fill": fill, "spec": spec})
+        return self.result
+
+
+class _Store:
+    """poly_view/kalshi_view/poly_tick stand-in."""
+    def __init__(self, *, poly_best_ask=0.55, kalshi_ask=0.50):
+        self.poly_best_ask = poly_best_ask
+        self.kalshi_ask = kalshi_ask
+
+    def poly_view(self, token):
+        return SimpleNamespace(best_ask=self.poly_best_ask, best_bid=self.poly_best_ask - 0.02,
+                               ask_ladder=[(self.poly_best_ask, 500)])
+
+    def kalshi_view(self, ticker, side):
+        return SimpleNamespace(best_ask=self.kalshi_ask, best_bid=self.kalshi_ask - 0.01,
+                               ask_ladder=[(self.kalshi_ask, 500)])
+
+    def poly_tick(self, token, default=0.01):
+        return 0.01
+
+
+class _State:
+    def __init__(self):
+        self.rows = []
+
+    def record(self, row, now):
+        self.rows.append(row)
+
+
+class _Guard:
+    def __init__(self):
+        self.held = None
+
+    def acquire(self, who):
+        if self.held is not None:
+            return False
+        self.held = who
+        return True
+
+    def release(self, who=None):
+        self.held = None
+
+
+def _cand(direction="rest-poly", token="TOK1"):
+    return SimpleNamespace(
+        key=("mlb", "G1", "ml2", "Home", direction), sport="mlb", game="G1", market_key="ml2",
+        rest_side="Home", direction=direction, rest_ref=("polymarket", token, "BUY"),
+        rest_venue="polymarket", hedge_venue="kalshi", poly_rate=0.05,
+        hedge_lookup={"venue": "kalshi", "ticker": "KX-1", "side": "yes"})
+
+
+def _dec(price=0.46, hedge_ask=0.50):
+    return SimpleNamespace(quote_price=price, hedge_best_ask=hedge_ask, size_shares=5, at_best=True,
+                           viable=True)
+
+
+def _exec(tmp_path, *, caps=None, poly=None, hedger=None, order_client=None, state=None, guard=None):
+    arm = tmp_path / "ARM_MAKER"
+    arm.write_text("1")
+    cfg = mrt_config.MakerRtConfig()
+    cfg.live.enabled = True
+    cfg.live.arm_file = str(arm)
+    caps = caps or LiveCaps(cfg.live)
+    poly = poly or _Poly()
+    hedger = hedger or _Hedger(SimpleNamespace(status="locked", hedged_shares=5, hedge_avg_price=0.50,
+                                               locked_pnl=0.11, unwind_cost=None), poly=poly)
+    order_client = order_client or _OrderClient()
+    state = state or _State()
+    ex = PregameLiveExecutor(cfg, gate=None, order_client=order_client, hedger=hedger, caps=caps,
+                             poly=poly, in_flight=guard or _Guard(), telegram=None, state=state, log=None)
+    ex.feed_ok = True                 # simulate the Poly USER socket being UP (set by _run in production)
+    return ex, cfg
+
+
+# --------------------------------------------------------------------------- #
+# eligibility + place-on-armed                                                  #
+# --------------------------------------------------------------------------- #
+def test_eligible_only_restpoly_pre_armed_feedup(tmp_path):
+    ex, _ = _exec(tmp_path)
+    assert ex.eligible(_cand("rest-poly"), "pre") is True
+    assert ex.eligible(_cand("rest-kalshi"), "pre") is False     # rest-kalshi stays shadow
+    assert ex.eligible(_cand("rest-poly"), "inplay") is False    # pre-game only
+    ex.feed_ok = False
+    assert ex.eligible(_cand("rest-poly"), "pre") is False       # user feed down -> not eligible
+
+
+def test_place_on_armed(tmp_path):
+    oc = _OrderClient()
+    ex, _ = _exec(tmp_path, order_client=oc)
+    ex.place_or_reprice(_cand(), _dec(price=0.46), None, _Store(poly_best_ask=0.55), now=None, now_ts=1.0)
+    assert len(oc.rests) == 1 and oc.rests[0]["price"] == 0.46
+    assert ex.open_count() == 1 and ex.caps.open_quotes == 1
+
+
+def test_never_crossable_recheck_refuses(tmp_path):
+    oc = _OrderClient()
+    ex, _ = _exec(tmp_path, order_client=oc)
+    # live best_ask == price -> price > best_ask - tick -> would cross -> NO place.
+    ex.place_or_reprice(_cand(), _dec(price=0.50), None, _Store(poly_best_ask=0.50), now=None, now_ts=1.0)
+    assert oc.rests == [] and ex.open_count() == 0
+
+
+# --------------------------------------------------------------------------- #
+# reprice atomicity                                                             #
+# --------------------------------------------------------------------------- #
+def test_reprice_cancels_confirms_then_places(tmp_path):
+    oc = _OrderClient()
+    poly = _Poly(order_status="CANCELED")
+    ex, _ = _exec(tmp_path, order_client=oc, poly=poly)
+    store = _Store(poly_best_ask=0.60)
+    ex.place_or_reprice(_cand(), _dec(price=0.46), None, store, now=None, now_ts=1.0)
+    ex.place_or_reprice(_cand(), _dec(price=0.48), None, store, now=None, now_ts=2.0)   # reprice
+    assert oc.cancels == ["oid1"]                     # cancelled the first
+    assert len(oc.rests) == 2 and oc.rests[1]["price"] == 0.48
+    assert ex.open_count() == 1 and ex.caps.open_quotes == 1   # never exceeded max_open mid-transition
+
+
+def test_reprice_not_confirmed_does_not_double_place(tmp_path):
+    oc = _OrderClient()
+    poly = _Poly(order_status="LIVE")                 # cancel NOT confirmed (still live) + response empty
+    poly_resp = None
+
+    class _OCNoConfirm(_OrderClient):
+        def cancel(self, oid):
+            self.cancels.append(oid)
+            return {"not_canceled": {oid: "x"}}       # explicitly not canceled
+
+    oc = _OCNoConfirm()
+    ex, _ = _exec(tmp_path, order_client=oc, poly=poly)
+    store = _Store(poly_best_ask=0.60)
+    ex.place_or_reprice(_cand(), _dec(price=0.46), None, store, now=None, now_ts=1.0)
+    ex.place_or_reprice(_cand(), _dec(price=0.48), None, store, now=None, now_ts=2.0)
+    assert oc.cancels == ["oid1"]
+    assert len(oc.rests) == 1                          # did NOT place the reprice (cancel unconfirmed)
+    assert ex.open_count() == 1
+
+
+# --------------------------------------------------------------------------- #
+# fill -> hedge routing                                                         #
+# --------------------------------------------------------------------------- #
+def test_fill_routes_to_hedge_locked(tmp_path):
+    oc = _OrderClient()
+    hedger = _Hedger(SimpleNamespace(status="locked", hedged_shares=5, hedge_avg_price=0.50,
+                                     locked_pnl=0.11, unwind_cost=None))
+    ex, _ = _exec(tmp_path, order_client=oc, hedger=hedger)
+    store = _Store(poly_best_ask=0.60, kalshi_ask=0.50)
+    ex.place_or_reprice(_cand(), _dec(price=0.46), None, store, now=None, now_ts=1.0)
+    oid = oc.rests[0]["oid"]
+    ex.on_order_update({"order_id": oid, "size_matched": 5, "price": 0.46}, store, None, 2.0)
+    assert len(hedger.calls) == 1 and hedger.calls[0]["fill"]["size"] == 5
+    assert ex.caps.fills_today == 1 and ex.caps.pnl_today == pytest.approx(0.11)
+    assert ex.open_count() == 0                        # fully filled -> no longer resting
+
+
+def test_fill_declines_and_unwinds_when_hedge_too_dear(tmp_path):
+    oc = _OrderClient()
+    poly = _Poly(sell_price=0.44)
+    hedger = _Hedger(SimpleNamespace(status="locked"), poly=poly)     # should NOT be reached
+    ex, _ = _exec(tmp_path, order_client=oc, hedger=hedger, poly=poly)
+    store = _Store(poly_best_ask=0.60, kalshi_ask=0.62)   # hedge ask 0.62 -> locked well below -1% floor
+    ex.place_or_reprice(_cand(), _dec(price=0.46, hedge_ask=0.62), None, store, now=None, now_ts=1.0)
+    oid = oc.rests[0]["oid"]
+    ex.on_order_update({"order_id": oid, "size_matched": 5, "price": 0.46}, store, None, 2.0)
+    assert hedger.calls == []                          # DECLINED -> never legged into the bad hedge
+    assert poly.market_sells and poly.market_sells[0]["shares"] == 5   # unwound the naked fill
+    assert ex.caps.fills_today == 1                    # counts as a (losing) fill
+
+
+def test_partial_fill_hedges_each_delta(tmp_path):
+    oc = _OrderClient()
+    hedger = _Hedger(SimpleNamespace(status="locked", hedged_shares=3, hedge_avg_price=0.50,
+                                     locked_pnl=0.05, unwind_cost=None))
+    ex, _ = _exec(tmp_path, order_client=oc, hedger=hedger)
+    store = _Store(poly_best_ask=0.60, kalshi_ask=0.50)
+    ex.place_or_reprice(_cand(), _dec(price=0.46), None, store, now=None, now_ts=1.0)
+    oid = oc.rests[0]["oid"]
+    ex.on_order_update({"order_id": oid, "size_matched": 3, "price": 0.46}, store, None, 2.0)
+    assert ex.open_count() == 1 and hedger.calls[0]["fill"]["size"] == 3   # remainder still resting
+    ex.on_order_update({"order_id": oid, "size_matched": 5, "price": 0.46}, store, None, 3.0)
+    assert len(hedger.calls) == 2 and hedger.calls[1]["fill"]["size"] == 2 # hedged only the delta
+    assert ex.open_count() == 0
+
+
+# --------------------------------------------------------------------------- #
+# caps refusals (incl. projected daily-stake)                                   #
+# --------------------------------------------------------------------------- #
+def test_cap_refuses_on_projected_daily_stake_and_halts(tmp_path):
+    caps = LiveCaps(mrt_config.LiveConfig(quote_usd_max=5, max_daily_stake_usd=100,
+                                          max_open_quotes=9, max_fills_per_day=9))
+    caps.commit_stake(98.0)
+    oc = _OrderClient()
+    ex, _ = _exec(tmp_path, order_client=oc, caps=caps)
+    # projected pair for 5@0.46 + hedge 5@0.50 ~ $4.80 -> 98 + 4.8 > 100 -> refuse + HALT
+    ex.place_or_reprice(_cand(), _dec(price=0.46, hedge_ask=0.50), None, _Store(poly_best_ask=0.60),
+                        now=None, now_ts=1.0)
+    assert oc.rests == [] and caps.halted is True
+    assert ex.eligible(_cand("rest-poly"), "pre") is False    # halted -> no longer eligible
+
+
+def test_cap_refuses_on_max_open(tmp_path):
+    caps = LiveCaps(mrt_config.LiveConfig(max_open_quotes=1, max_daily_stake_usd=1000, max_fills_per_day=9))
+    oc = _OrderClient()
+    ex, _ = _exec(tmp_path, order_client=oc, caps=caps)
+    store = _Store(poly_best_ask=0.60)
+    ex.place_or_reprice(_cand(direction="rest-poly", token="A"), _dec(0.46), None, store, None, 1.0)
+    c2 = _cand(direction="rest-poly", token="B"); c2.key = ("mlb", "G2", "ml2", "Home", "rest-poly")
+    ex.place_or_reprice(c2, _dec(0.46), None, store, None, 2.0)
+    assert len(oc.rests) == 1 and ex.open_count() == 1        # second refused by max_open_quotes
+
+
+# --------------------------------------------------------------------------- #
+# user-feed-down halt + cancel                                                  #
+# --------------------------------------------------------------------------- #
+def test_feed_down_cancels_all_and_halts(tmp_path):
+    oc = _OrderClient()
+    poly = _Poly(order_status="CANCELED")
+    ex, _ = _exec(tmp_path, order_client=oc, poly=poly)
+    ex.place_or_reprice(_cand(), _dec(0.46), None, _Store(poly_best_ask=0.60), None, 1.0)
+    assert ex.open_count() == 1
+    ex.set_feed_ok(False)
+    assert ex.open_count() == 0 and oc.cancels == ["oid1"]    # feed down -> open quote cancelled
+    assert ex.feed_ok is False
+    assert ex.eligible(_cand("rest-poly"), "pre") is False    # placement halted while feed down
+
+
+def test_cancel_all_confirms(tmp_path):
+    oc = _OrderClient()
+    poly = _Poly(order_status="CANCELED")
+    ex, _ = _exec(tmp_path, order_client=oc, poly=poly)
+    ex.place_or_reprice(_cand("rest-poly", "A"), _dec(0.46), None, _Store(poly_best_ask=0.60), None, 1.0)
+    n = ex.cancel_all("shutdown")
+    assert n == 1 and poly.cancel_all_calls == 1 and ex.open_count() == 0
+
+
+# --------------------------------------------------------------------------- #
+# DRIVER integration: eligible -> live (shadow suppressed); churn -> cancel      #
+# --------------------------------------------------------------------------- #
+class _FakePregame:
+    def __init__(self):
+        self.open_orders = {}
+        self.placed = []
+        self.cancelled = []
+
+    def eligible(self, c, phase):
+        return phase == "pre" and c.direction == "rest-poly"
+
+    def place_or_reprice(self, c, dec, rest, store, now, now_ts):
+        self.placed.append((c.key, dec.quote_price))
+        self.open_orders[c.key] = {"price": dec.quote_price}
+
+    def cancel(self, c, now, reason):
+        self.cancelled.append((c.key, reason))
+        self.open_orders.pop(c.key, None)
+        return True
+
+    def cancel_key(self, key, now, reason):
+        self.cancelled.append((key, reason))
+        self.open_orders.pop(key, None)
+        return True
+
+
+class _DriverState:
+    def __init__(self):
+        self.rows = []
+
+    def record(self, row, now):
+        self.rows.append(row)
+
+    def record_achievable(self, *a, **k):
+        pass
+
+
+def _mlb_universe():
+    from src.genz.maker_rt.universe import build_universe
+    future = "2027-01-01T00:00:00Z"
+    n = lambda side, tok, kt, ks: {"market_type": "ml2", "market_key": "ml2", "side": side,  # noqa: E731
+        "line": None, "kind": "2way", "poly_token_id": tok, "poly_side": side.title(),
+        "poly_fee_rate": 0.05, "kalshi_ticker": kt, "kalshi_side": ks}
+    tree = {"games": {"G1": {"away": "A", "home": "B", "kickoff_utc": future, "nodes": [
+        n("away", "TOK_A", "KX-1", "YES"), n("home", "TOK_B", "KX-1", "NO")]}}}
+    return build_universe({"mlb": tree}, now_ts=0.0, max_games=20, expire_before_kickoff_s=120)
+
+
+def _books():
+    from src.genz.maker_rt import parsing
+    from src.genz.maker_rt.store import BookStore
+    bs = BookStore()
+    bs.apply_poly(parsing.parse_poly_market({"event_type": "book", "asset_id": "TOK_A",
+        "bids": [{"price": "0.45", "size": "300"}], "asks": [{"price": "0.55", "size": "300"}]}))
+    bs.apply_kalshi(parsing.parse_kalshi({"type": "orderbook_snapshot", "sid": 1, "seq": 1,
+        "msg": {"market_ticker": "KX-1", "yes_dollars_fp": [["0.5000", "5000"]],
+                "no_dollars_fp": [["0.4500", "5000"]]}}))
+    return bs
+
+
+def test_driver_routes_restpoly_to_live_and_suppresses_shadow():
+    from datetime import datetime, timezone
+    from src.genz.maker_rt.driver import QuoteDriver
+    st = _DriverState()
+    fake = _FakePregame()
+    drv = QuoteDriver(mrt_config.MakerRtConfig(), st, pregame_exec=fake)
+    drv.set_universe(_mlb_universe())
+    now = datetime(2026, 7, 16, 18, 0, 0, tzinfo=timezone.utc)
+    drv.refresh_quotes(_books(), now, now_ts=100.0)
+    # the viable rest-poly candidate went LIVE (placed), at 0.46...
+    assert any(k[4] == "rest-poly" and px == 0.46 for k, px in fake.placed)
+    # ...and NO shadow 'quote' row was written for a rest-poly direction (shadow suppressed for live).
+    assert not any(r.get("event") == "quote" and r.get("direction") == "rest-poly" for r in st.rows)
+    # a public print through the live quote must NOT create a shadow fill (live fills come off the socket).
+    drv.consume_prints([(("polymarket", "TOK_A", "BUY"), 0.45, 10.0)], _books(), now, now_ts=101.0)
+    assert not any(r.get("event") == "fill" for r in st.rows)
+
+
+def test_driver_churn_cancels_live_order():
+    from datetime import datetime, timezone
+    from src.genz.maker_rt.driver import QuoteDriver
+    st = _DriverState()
+    fake = _FakePregame()
+    drv = QuoteDriver(mrt_config.MakerRtConfig(), st, pregame_exec=fake)
+    drv.set_universe(_mlb_universe())
+    now = datetime(2026, 7, 16, 18, 0, 0, tzinfo=timezone.utc)
+    drv.refresh_quotes(_books(), now, now_ts=100.0)
+    assert fake.open_orders                                   # a live order is resting
+    drv.set_universe([], now=now)                             # the game vanished from the tree
+    assert any(reason == "churn_gone" for _k, reason in fake.cancelled)
+    assert not fake.open_orders                               # live order was cancelled on churn

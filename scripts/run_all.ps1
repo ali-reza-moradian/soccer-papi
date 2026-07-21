@@ -68,11 +68,25 @@ function Start-Component($name) {
 }
 
 function Stop-AllComponents {
+    # GRACEFUL-STOP FIX: maker_rt holds LIVE Polymarket orders. It polls data\ops\STOP_ALL every loop and
+    # self-cancels all orders + exits when it appears. Give the python maker up to 10s to do that BEFORE
+    # any Stop-Process -Force, so a resting order is never stranded by a hard kill.
+    $graceDeadline = (Get-Date).AddSeconds(10)
+    while ((Get-Date) -lt $graceDeadline) {
+        $maker = @(Get-CimInstance Win32_Process |
+                   Where-Object { $_.CommandLine -and $_.CommandLine -like '*-m src.genz.maker_rt*' })
+        if ($maker.Count -eq 0) { break }
+        Log "waiting for maker_rt to self-cancel + exit gracefully ($($maker.Count) alive)..."
+        Start-Sleep -Milliseconds 500
+    }
     foreach ($k in $components.Keys) {
         $m = $components[$k].match
         Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and $_.CommandLine -like "*$m*" } |
             ForEach-Object { try { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue } catch {} }
     }
+    # Backstop: force-kill the python maker directly (its cmdline doesn't match the wrapper match).
+    Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and $_.CommandLine -like '*-m src.genz.maker_rt*' } |
+        ForEach-Object { try { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue } catch {} }
 }
 
 function Current-Pids {

@@ -156,15 +156,16 @@ class MakerState:
     pnl_today: float = 0.0
     restarts_today: int = 0                             # process starts today (crash-loop signal; set at startup)
     gates: dict = field(default_factory=dict)          # {"pre": bool, "inplay": bool} — armed states, set at startup
+    live: dict = field(default_factory=dict)           # PRE-GAME live snapshot (open_quotes/stake/fills/pnl/halt/feed_ok)
     buckets: dict = field(default_factory=dict)        # (sport, phase) -> _Bucket
     log: Any = None                                    # optional logger (artifact-guard WARNINGs)
     _rng: Any = field(default_factory=lambda: random.Random(1234))
 
     def _roll(self, day: str) -> None:
         if day != self.day:
-            log, restarts, gates = self.log, self.restarts_today, self.gates   # survive the daily reset
+            keep = (self.log, self.restarts_today, self.gates, self.live)   # survive the daily reset
             self.__init__(day=day)  # type: ignore[misc]
-            self.log, self.restarts_today, self.gates = log, restarts, gates
+            self.log, self.restarts_today, self.gates, self.live = keep
 
     def _bucket(self, sport: str, phase: str) -> _Bucket:
         return self.buckets.setdefault((str(sport or "?"), str(phase or "pre")), _Bucket())
@@ -264,7 +265,8 @@ class MakerState:
             "drift_median_1": _median(self.drift1), "drift_median_5": _median(self.drift5),
             "drift_median_30": _median(self.drift30),
             "pnl_today": round(self.pnl_today, 4), "restarts_today": self.restarts_today,
-            "gates": dict(self.gates), "by_sport": self._by_sport(), "by_phase": self._by_phase(),
+            "gates": dict(self.gates), "live": dict(self.live),
+            "by_sport": self._by_sport(), "by_phase": self._by_phase(),
         }
 
     def write_summary(self, mode: str, sockets: dict, now: datetime,
@@ -275,7 +277,8 @@ class MakerState:
         return {"ts": now.strftime("%Y-%m-%dT%H:%M:%SZ"), "schema": SCHEMA, "mode": mode,
                 "sockets": dict(sockets), "open_quotes": open_quotes,
                 "fills_today": self.n_fills, "pnl_today": round(self.pnl_today, 4),
-                "restarts_today": self.restarts_today, "gates": dict(self.gates)}
+                "restarts_today": self.restarts_today, "gates": dict(self.gates),
+                "live": dict(self.live)}
 
     def write_heartbeat(self, mode: str, sockets: dict, open_quotes: int, now: datetime,
                         path: Optional[str] = None) -> None:

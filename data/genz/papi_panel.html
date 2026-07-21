@@ -662,17 +662,31 @@ function makerStripHtml(m){   // PURE: the MAKER RT v3 strip (top line + per-spo
     +' ('+mrtPctInt(ph&&ph.fill_rate)+') behind '+((ph&&ph.behind_best)||0);}
   var phaseLine='<div class="mrtsub"><span class="v">phase:</span> '+phaseSeg('PRE',pre)
     +' <span class="v">|</span> <span class="lv">LIVE</span> '+phaseSeg('',ip).replace('<b></b> ','')+'</div>';
+  // PRE-GAME LIVE line: open quotes, today's committed stake vs the $ cap, fills, pnl + HALT/USER-DOWN.
+  var liveLine='';
+  if(preOn){
+    var L=m.live||{}, st=(+L.stake_today||0), cap=(+L.stake_cap||100);
+    var pct=cap?Math.round(100*st/cap):0;
+    var userUp=!!(m.sockets&&m.sockets.poly_user);
+    var halt=L.halted?' <span class="mbadge" style="background:#e5484d;color:#fff" title="caps auto-halt">HALTED</span>':'';
+    var udown=userUp?'':' <span class="mbadge" style="background:#e5484d;color:#fff" title="Poly user socket DOWN: open quotes auto-cancel + placement halted (fills we cannot see cannot be hedged)">USER SOCKET DOWN</span>';
+    liveLine='<div class="mrtsub"><span class="lv">PRE LIVE</span> open <b>'+(+L.open_quotes||0)+'</b>'
+      +' &middot; stake <b>$'+st.toFixed(2)+'</b>/$'+cap+' <span class="v">('+pct+'%)</span>'
+      +' &middot; fills <b>'+(+L.fills_today||0)+'</b> &middot; pnl <b>$'+((+L.pnl_today||0).toFixed(2))+'</b>'+halt+udown+'</div>';
+  }
   // Per-sport mini-rows (SPORTS order; only sports present in by_sport).
   var bys=m.by_sport||{},rows='';
   SPORTS.forEach(function(sp){var k=sp[0];if(bys[k])rows+=mrtSportRow(sp[1],bys[k]);});
-  return top+phaseLine+rows;
+  return top+phaseLine+liveLine+rows;
 }
 function makerStrip(){   // MAKER RT v2 strip + a red banner when the heartbeat is >90s stale
   var el=document.getElementById('mrtstrip'),banner=document.getElementById('mrtbanner');
   if(!el)return;
   if(!MRT){el.className='mrtstrip';el.innerHTML='<span class="lbl">MAKER RT</span> <span class="v">&mdash; no data yet (start scripts\\run_maker_rt_loop.ps1).</span>';if(banner)banner.classList.remove('show');return;}
   var hbts=Date.parse((MRTHB&&MRTHB.ts)||MRT.updated_utc),stale=!hbts||(Date.now()-hbts)/1000>90;
-  el.className='mrtstrip'+(stale?' alarm':'');
+  // Armed pre-game live but the user socket is down -> RED: fills we can't see can't be hedged.
+  var userDown=!!(MRT.gates&&MRT.gates.pre)&&!(MRT.sockets&&MRT.sockets.poly_user);
+  el.className='mrtstrip'+((stale||userDown)?' alarm':'');
   el.innerHTML=makerStripHtml(MRT)+(stale?' &middot; <span class="v">stale</span>':'');
   if(banner)banner.classList.toggle('show',stale);
 }

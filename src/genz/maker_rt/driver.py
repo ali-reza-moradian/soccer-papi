@@ -54,13 +54,17 @@ class Candidate:
 
 
 class QuoteDriver:
-    def __init__(self, cfg: Any, state: Any, *, log: Any = None, inplay_exec: Any = None) -> None:
+    def __init__(self, cfg: Any, state: Any, *, log: Any = None, inplay_exec: Any = None,
+                 pregame_exec: Any = None) -> None:
         self.cfg = cfg
         self.state = state
         self.log = log
         # The IN-PLAY LIVE executor (built + tested, but LOCKED — armed() is False in this build, so every
         # hook below is a no-op and the shadow path is byte-identical). Set only by __main__.
         self.inplay_exec = inplay_exec
+        # The PRE-GAME CONTINUOUS LIVE executor (rest-poly only). None in shadow; when set + eligible, the
+        # arm branch drives a REAL order and every disarm path cancels it. Set only by __main__ when armed.
+        self.pregame_exec = pregame_exec
         self.fills = ShadowFillModel()
         self.universe: list = []
         self.prev: dict = {}                 # key -> last QuoteDecision (reprice detection)
@@ -93,6 +97,12 @@ class QuoteDriver:
                 self.last_event.pop(key, None)
                 self.viable_since.pop(key, None)
         self.drift_pending = [d for d in self.drift_pending if d["key"] in live]
+        # LIVE CHURN SAFETY: cancel any REAL order whose candidate vanished from the rebuilt universe
+        # (a game/market that dropped can never fill on a stale book).
+        if self.pregame_exec is not None:
+            for key in list(self.pregame_exec.open_orders):
+                if key not in live:
+                    self.pregame_exec.cancel_key(key, now or utcnow(), "churn_gone")
 
     def _candidates(self, qm: Any) -> list:
         out: list = []
@@ -259,6 +269,16 @@ class QuoteDriver:
                 self._expire_if_open(c, now, "inplay_cooloff", phase)
                 continue
 
+            # PRE-GAME LIVE (rest-poly only, armed): drive a REAL resting order instead of the shadow
+            # model. The executor re-checks never-crossable on the live book + caps before every POST.
+            if self.pregame_exec is not None and self.pregame_exec.eligible(c, phase):
+                live_open = c.key in self.pregame_exec.open_orders
+                if live_open and not needs_reprice(prev, dec, tick):
+                    continue                              # unchanged within a tick -> keep resting
+                self.pregame_exec.place_or_reprice(c, dec, rest, store, now, now_ts)
+                self.last_event[c.key] = "quote"
+                continue
+
             was_open = c.key in self.fills.quotes
             if was_open and not needs_reprice(prev, dec, tick):
                 continue                                  # unchanged within a tick
@@ -284,6 +304,10 @@ class QuoteDriver:
         for key in list(self.fills.quotes):
             if key[:3] == node3:
                 self.fills.disarm(key)
+        if self.pregame_exec is not None:                 # LIVE: cancel any real order on the frozen node
+            for key in list(self.pregame_exec.open_orders):
+                if key[:3] == node3:
+                    self.pregame_exec.cancel_key(key, now, "shock_freeze")
         for c2 in self._cands:
             if c2.node3 == node3:
                 self.last_event[c2.key] = None
@@ -311,6 +335,9 @@ class QuoteDriver:
                            "rails_ok": rails_ok}, now)
 
     def _expire_if_open(self, c: Candidate, now: Any, reason: str, phase: str = "pre") -> None:
+        # LIVE first: cancel a real resting order (with confirmation) on ANY expire/refuse reason.
+        if self.pregame_exec is not None and c.key in self.pregame_exec.open_orders:
+            self.pregame_exec.cancel(c, now, reason)
         if c.key in self.fills.quotes:
             self.fills.disarm(c.key)
             self.state.record({"event": "expire", "mode": "shadow", "sport": c.sport, "game": c.game,
