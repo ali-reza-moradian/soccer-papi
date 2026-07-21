@@ -22,7 +22,7 @@ import json
 import os
 import re
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 from .. import kalshi as ks
@@ -97,6 +97,8 @@ class Game:
     poly_base_slug: str
     poly_slug_alts: list = field(default_factory=list)
     competition: str = "world_cup"        # POST-WC: which competition discovered this game (legacy = world_cup)
+    kalshi_series: list = field(default_factory=list)   # non-WC: the competition's Kalshi series (moneyline)
+    poly_prefix: str = ""                 # non-WC: the Poly slug prefix for the token-scan resolver
 
     @property
     def ctx(self) -> mr.GameCtx:
@@ -773,34 +775,62 @@ def save_series_map(m: dict) -> None:
         pass
 
 
-def _scan_soccer_series(kalshi_client: Any, comp: Any, log: Any = None) -> list[str]:
-    """Best-effort scan of the Kalshi series CATALOG for a competition's game-winner series (title/ticker
-    heuristic). Returns candidate tickers, or [] when the client exposes NO catalog listing — we NEVER
-    hardcode a guessed ticker (the evidence-first rule); [] means 'report zero, configure explicit'."""
-    lister = getattr(kalshi_client, "list_series", None) or getattr(kalshi_client, "series_list", None)
+# Per-competition TITLE keywords that uniquely name the game-winner series in the live Kalshi catalog
+# (verified 2026-07: 'Major League Soccer Game'->KXMLSGAME, 'UEFA Champions League Game'->KXUCLGAME,
+# 'Club Friendlies'->KXCLUBFGAME). Kept tight so 'champions league' can't grab AFC/Women's variants.
+_COMP_SERIES_KEYWORDS: dict[str, tuple] = {
+    "mls": ("major league soccer", "mls"),
+    "ucl_qualifying": ("uefa champions league",),
+    "club_friendlies": ("club friendlies", "club friendly"),
+}
+
+
+def _is_soccer_series(s: dict) -> bool:
+    tags = [str(t).lower() for t in (s.get("tags") or [])]
+    return "soccer" in tags or "football" in tags
+
+
+def _scan_soccer_series(kalshi_client: Any, comp: Any, log: Any = None, *, ends: str = "GAME") -> list[str]:
+    """Scan the Kalshi series CATALOG (list_series, category='Sports') for a competition's series ending
+    ``ends`` ('GAME' = the per-match 3-way winner; 'TOTAL' = the 2-way goal totals), soccer-tagged and
+    matched by the competition's TITLE keywords. REPORTS candidates. [] (honest zero) when the client
+    can't list the catalog or nothing matches — never a hardcoded guess."""
+    lister = getattr(kalshi_client, "list_series", None)
     if not callable(lister):
-        if log:
+        if log and ends == "GAME":
             log.info("[GENZ][SOCCER] AUTO %s: Kalshi client has no series catalog listing — reporting "
-                     "zero (set an explicit kalshi_series once a real series is confirmed).", comp.name)
+                     "zero.", comp.name)
         return []
     try:
-        rows = lister(category="Soccer")
+        rows = lister(category="Sports")
     except Exception as exc:  # noqa: BLE001
         if log:
             log.warning("[GENZ][SOCCER] AUTO %s catalog scan failed: %s — reporting zero.", comp.name, exc)
         return []
-    toks = set(re.findall(r"[a-z]+", str(comp.name).lower()))
+    kws = _COMP_SERIES_KEYWORDS.get(comp.name) or (str(comp.name).replace("_", " "),)
     hits: list[str] = []
-    for r in rows or []:
-        if not isinstance(r, dict):
+    for s in rows or []:
+        if not isinstance(s, dict) or not _is_soccer_series(s):
             continue
-        ticker = str(r.get("ticker") or r.get("series_ticker") or "")
-        blob = f"{ticker} {r.get('title') or ''}".lower()
-        if any(t in blob for t in toks) and any(w in blob for w in ("game", "winner", "match", "moneyline")):
+        ticker = str(s.get("ticker") or "")
+        if not ticker.endswith(ends):
+            continue
+        blob = f"{ticker} {s.get('title') or ''}".lower()
+        if any(k in blob for k in kws):
             hits.append(ticker)
-    if log:
-        log.info("[GENZ][SOCCER] AUTO %s: catalog scan -> candidates %s.", comp.name, hits or "none")
-    return hits
+    if log and ends == "GAME":
+        log.info("[GENZ][SOCCER] AUTO %s: catalog candidates %s.", comp.name, hits or "none")
+    return sorted(dict.fromkeys(hits))
+
+
+# Kalshi decorates a per-player/team yes_sub_title with a period prefix on some competitions
+# (UCL: 'Reg Time: Levski Sofia' / 'Reg Time: Tie'). Strip it before the name is read.
+_REG_PREFIX_RE = re.compile(r"^\s*(reg(?:ulation)?\s*time|full\s*time|ft)\s*[:\-]\s*", re.IGNORECASE)
+_DRAW_WORDS = frozenset({"tie", "draw"})
+
+
+def _clean_sub(sub: str) -> str:
+    return _REG_PREFIX_RE.sub("", str(sub or "")).strip()
 
 
 def resolve_kalshi_series(comp: Any, kalshi_client: Any, series_map: dict, log: Any = None) -> list[str]:
@@ -840,12 +870,34 @@ def _competition_slug(prefix: str, away: str, home: str, date: str) -> str:
     return f"{prefix}-{toks(away)}-{toks(home)}-{date}" if prefix else ""
 
 
+def _competition_teams(mkts: list[dict]) -> Optional[tuple[str, str]]:
+    """The two team names for a non-WC event. PRIMARY: the per-team markets' yes_sub_title (strip a
+    'Reg Time:' prefix, exclude the Tie/Draw market) — verified live for MLS ('San Jose'/'Tie') and UCL
+    ('Reg Time: Levski Sofia'/'Reg Time: Tie'). Order fixed by the title ('A vs B Winner?') when it
+    parses, else market order. Returns (away, home) or None."""
+    teams: list[str] = []
+    for m in mkts:
+        sub = _clean_sub(m.get("yes_sub_title"))
+        if sub and sub.lower() not in _DRAW_WORDS and sub not in teams:
+            teams.append(sub)
+    if len(teams) < 2:
+        return None
+    title_names = next((n for n in (_soccer_names_from_title(m.get("title")) for m in mkts) if n), None)
+    if title_names:                                        # order the yes_sub teams by the title's order
+        ordered = [next((t for t in teams if _soccer_team_match(t, tn)), tn) for tn in title_names]
+        if ordered[0] and ordered[1] and ordered[0] != ordered[1]:
+            return (ordered[0], ordered[1])
+    return (teams[0], teams[1])
+
+
 def _discover_competition_games(kalshi_client: Any, comp: Any, series_list: list[str], *,
-                                now: datetime, lookahead_hours: float, log: Any = None) -> list["Game"]:
-    """Generic (non-WC) discovery: enumerate a competition's game-winner series, group by event, parse
-    the two teams from the market titles, and build Game objects with the competition's poly slug prefix.
-    EVIDENCE-FIRST: an event whose title won't parse is REPORTED (for the next raw dump), never guessed;
-    a series with no open markets -> honest zero. Reused team-name matching pairs it downstream."""
+                                now: datetime, lookahead_hours: float, log: Any = None,
+                                pair_series: Optional[list[str]] = None) -> list["Game"]:
+    """Generic (non-WC) discovery: enumerate a competition's GAME-WINNER series (``series_list``), group
+    by event, read the two teams from yes_sub_title (title fixes order). ``pair_series`` (game + total)
+    is stored on each Game for the pairing step. A series with no open markets -> honest zero; an event
+    whose teams won't resolve is REPORTED (for the next raw dump), never guessed."""
+    pair_series = pair_series if pair_series is not None else series_list
     by_event: dict[str, list[dict]] = {}
     for series in series_list:
         try:
@@ -856,22 +908,100 @@ def _discover_competition_games(kalshi_client: Any, comp: Any, series_list: list
             if log:
                 log.warning("[GENZ][SOCCER] %s series %s fetch failed: %s.", comp.name, series, exc)
     games: list[Game] = []
+    horizon = now.timestamp() + lookahead_hours * 3600.0
     for et, mkts in by_event.items():
-        names = next((n for n in (_soccer_names_from_title(m.get("title")) for m in mkts) if n), None)
+        teams = _competition_teams(mkts)
         iso = ks._event_commence_iso(et)
         date = iso[:10] if iso else None
-        if not names or not date:
+        if not teams or not date:
             if log:
-                log.info("[GENZ][SOCCER] %s: unparsed event %s (title=%r) — reported for evidence, "
+                log.info("[GENZ][SOCCER] %s: unresolved event %s (title=%r) — reported for evidence, "
                          "not paired.", comp.name, et, (mkts[0].get("title") if mkts else ""))
             continue
-        away, home = names
-        base = _competition_slug(comp.poly_slug_prefix, away, home, date)
+        ts = _parse_iso(f"{date}T12:00:00Z")
+        if ts is None or ts > horizon or ts < now.timestamp() - 24 * 3600.0:
+            continue
+        away, home = teams
         suffix = ks._game_key(et) or et
         games.append(Game(game_id=suffix, kalshi_suffix=suffix, date=date, home=home, away=away,
-                          kickoff_iso=f"{date}T12:00:00Z", poly_base_slug=base, poly_slug_alts=[base],
-                          competition=comp.name))
+                          kickoff_iso=f"{date}T12:00:00Z",
+                          poly_base_slug=_competition_slug(comp.poly_slug_prefix, away, home, date),
+                          poly_slug_alts=[], competition=comp.name,
+                          kalshi_series=list(pair_series), poly_prefix=comp.poly_slug_prefix))
     return games
+
+
+# --------------------------------------------------------------------------- #
+# Non-WC team-name token matching (venue truncations: 'Los Angeles G' <-> 'Los Angeles Galaxy';        #
+# 'San Jose' <-> 'San Jose Earthquakes'). Prefix-aware so a truncated token still matches, but 'G' vs  #
+# 'F' stays DISTINCT (LA Galaxy vs LAFC) — a plain drop-short-token match would collide them.           #
+# --------------------------------------------------------------------------- #
+def _sig_tokens(name: str) -> list[str]:
+    return re.findall(r"[a-z0-9]+", str(name or "").lower())
+
+
+def _soccer_team_match(a: str, b: str) -> bool:
+    ta, tb = _sig_tokens(a), _sig_tokens(b)
+    if not ta or not tb:
+        return False
+    short, long = (ta, tb) if len(ta) <= len(tb) else (tb, ta)
+    used: set = set()
+    for t in short:
+        m = next((i for i, u in enumerate(long)
+                  if i not in used and (u == t or u.startswith(t) or t.startswith(u))), None)
+        if m is None:
+            return False
+        used.add(m)
+    return True
+
+
+def _resolve_competition_poly(game: "Game", poly_client: Any, log: Any = None) -> Optional[dict]:
+    """Find the Polymarket base event for a non-WC game via TARGETED /public-search on the two team
+    names (Poly's offset pagination caps below the soccer tag's size, so a full tag sweep is not an
+    option). Accept an event only when its slug carries the competition's prefix, its slug DATE is
+    within ±1, and its two title teams TOKEN-MATCH ours. Sets game.poly_base_slug; None -> Poly-absent
+    (honest one-sided). Verified: MLS games resolve ('mls-<a>-<b>-<date>'); UCL qualifiers do not."""
+    prefix = str(getattr(game, "poly_prefix", "") or "").lower()
+    want_dates = {game.date, _shift_date(game.date, -1), _shift_date(game.date, 1)}
+    try:
+        res = poly_client.search(f"{game.away} {game.home}")
+    except Exception as exc:  # noqa: BLE001
+        if log:
+            log.debug("[GENZ][SOCCER] poly search failed for %s: %s", game.game_id, exc)
+        return None
+    events = res.get("events") if isinstance(res, dict) else res
+    for e in events or []:
+        if not isinstance(e, dict):
+            continue
+        base = _game_base_slug(str(e.get("slug") or ""))
+        if prefix and not base.startswith(prefix + "-"):
+            continue
+        if not re.search(r"\d{4}-\d{2}-\d{2}$", base) or base[-10:] not in want_dates:
+            continue
+        players = _soccer_names_from_title(e.get("title"))
+        if not players:
+            continue
+        pa, pb = players
+        if ((_soccer_team_match(game.away, pa) and _soccer_team_match(game.home, pb))
+                or (_soccer_team_match(game.away, pb) and _soccer_team_match(game.home, pa))):
+            game.poly_base_slug = base
+            game.poly_slug_alts = [base]
+            return e
+    return None
+
+
+def _shift_date(date: str, days: int) -> str:
+    try:
+        return (datetime.strptime(date, "%Y-%m-%d").date() + timedelta(days=days)).isoformat()
+    except ValueError:
+        return date
+
+
+def _game_base_slug(slug: str) -> str:
+    """The base game slug from a Poly slug (strip a '-<sibling>' suffix): 'mls-fcc-vwh-2026-07-22' or
+    '...-2026-07-22-more-markets' -> 'mls-fcc-vwh-2026-07-22'."""
+    m = re.match(r"^([a-z0-9]+-[a-z0-9]+-[a-z0-9]+-\d{4}-\d{2}-\d{2})", str(slug or "").lower())
+    return m.group(1) if m else str(slug or "")
 
 
 # --------------------------------------------------------------------------- #
@@ -899,7 +1029,7 @@ class SoccerSpec:
         # COMPETITION-DRIVEN. Each enabled competition resolves its Kalshi game-winner series (AUTO ->
         # discovered + reported + persisted) and its Poly events; world_cup reuses the WC machinery.
         all_games: list[Game] = []
-        ctx: dict[str, Any] = {"world_cup_events": [], "comp_events": {}}
+        ctx: dict[str, Any] = {"world_cup_events": []}
         series_map = load_series_map()
         for comp in comps:
             if not getattr(comp, "enabled", True):
@@ -909,10 +1039,13 @@ class SoccerSpec:
                 gs = discover_games(kalshi_client, now=now, lookahead_hours=cfg.lookahead_hours, log=log)
                 ctx["world_cup_events"] = fetch_series_events(poly_client, cfg.poly_series_slug, log)
             else:
+                # game-winner (3-way, moneyline) + the 2-way TOTAL series (what the engine actually arbs).
+                total_series = _scan_soccer_series(kalshi_client, comp, log, ends="TOTAL")
                 gs = _discover_competition_games(kalshi_client, comp, series_list, now=now,
-                                                 lookahead_hours=cfg.lookahead_hours, log=log)
-                ctx["comp_events"][comp.name] = (fetch_series_events(poly_client, comp.poly_slug_prefix, log)
-                                                 if comp.poly_slug_prefix else [])
+                                                 lookahead_hours=cfg.lookahead_hours, log=log,
+                                                 pair_series=series_list + total_series)
+                # Poly is resolved per-game by targeted search in pair_markets (no tag pre-fetch — the
+                # soccer tag exceeds Poly's offset-pagination cap).
             all_games.extend(gs)
             if log:
                 log.info("[GENZ][SOCCER] competition %s: kalshi_series=%s -> %d game(s) in window.",
@@ -927,17 +1060,49 @@ class SoccerSpec:
         if comp == "world_cup":
             se = poly_ctx.get("world_cup_events") if isinstance(poly_ctx, dict) else poly_ctx
             return self._pair_world_cup(kalshi_client, poly_client, game, se or [], cfg, log=log)
-        # NON-WC: discovered + REPORTED, but the evidence-based pairing rules for this competition don't
-        # exist yet (families/match_rules are competition-agnostic, but its market shapes are unconfirmed)
-        # -> an HONEST zero-node entry that names the game so a dump-raw can add rules. Never forced.
+        # NON-WC: evidence-based MONEYLINE (3-way home/away/draw) pairing, reusing the WC machinery.
+        return self._pair_competition(kalshi_client, poly_client, game, cfg, log=log)
+
+    def _pair_competition(self, kalshi_client: Any, poly_client: Any, game: "Game",
+                          cfg: gz_config.GenzConfig, *, log: Any = None) -> dict[str, Any]:
+        """Pair one non-WC soccer game's WINNER market (the proven-same 3-way: home/away/draw). Poly side
+        is resolved by targeted team-name search (slugs carry undecodable team codes); the Kalshi
+        moneyline comes from the competition's game-winner series. Poly-absent -> honest one-sided."""
+        comp = getattr(game, "competition", "?")
+        ev = _resolve_competition_poly(game, poly_client, log)
+        if ev is None:
+            if log:
+                log.info("[GENZ][SOCCER] %s %s vs %s: Kalshi-only (no Poly event this week) — 0 nodes.",
+                         comp, game.away, game.home)
+            return {"kalshi_suffix": game.kalshi_suffix, "poly_base_slug": game.poly_base_slug,
+                    "home": game.home, "away": game.away, "date": game.date, "kickoff_utc": game.kickoff_iso,
+                    "sport": "soccer", "competition": comp, "nodes": [], "unmatched": [],
+                    "coverage": {"kalshi_ok": 0, "kalshi_failed": [], "poly_ok": 0,
+                                 "poly_failed": [game.poly_base_slug], "period_mismatch_dropped": 0,
+                                 "poly_absent": True}}
+        # Fetch the Poly '-more-markets' sibling (the 2-way totals/spreads) alongside the 1x2 base event.
+        sibs = [ev]
+        try:
+            more = poly_client.events_by_slug(f"{game.poly_base_slug}-more-markets")
+            if isinstance(more, list):
+                sibs.extend(e for e in more if isinstance(e, dict))
+        except Exception as exc:  # noqa: BLE001 — no siblings -> 1x2 only, never abort the game
+            if log:
+                log.debug("[GENZ][SOCCER] %s more-markets fetch failed: %s", game.game_id, exc)
+        kickoff = _game_kickoff(game, sibs) or game.kickoff_iso
+        k_opts, k_cov = kalshi_options(kalshi_client, game, list(getattr(game, "kalshi_series", []) or []), log)
+        p_opts, p_cov = poly_options(sibs, game, log)
+        nodes, unmatched = join_game(k_opts, p_opts, log=log, game_id=game.game_id)
+        entry = {"kalshi_suffix": game.kalshi_suffix, "poly_base_slug": game.poly_base_slug,
+                 "home": game.home, "away": game.away, "date": game.date, "kickoff_utc": kickoff,
+                 "sport": "soccer", "competition": comp, "nodes": nodes, "unmatched": unmatched,
+                 "coverage": {"kalshi_ok": k_cov["ok"], "kalshi_failed": k_cov["failed"],
+                              "poly_ok": p_cov["ok"], "poly_failed": p_cov["failed"],
+                              "period_mismatch_dropped": 0}}
         if log:
-            log.info("[GENZ][SOCCER] %s (%s) %s vs %s: discovered, awaiting evidence — 0 nodes "
-                     "(dump-raw this game to add its pairing rules).", comp, game.game_id, game.away, game.home)
-        return {"kalshi_suffix": game.kalshi_suffix, "poly_base_slug": game.poly_base_slug,
-                "home": game.home, "away": game.away, "date": game.date, "kickoff_utc": game.kickoff_iso,
-                "sport": "soccer", "competition": comp, "nodes": [], "unmatched": [],
-                "coverage": {"kalshi_ok": 0, "kalshi_failed": [], "poly_ok": 0, "poly_failed": [],
-                             "period_mismatch_dropped": 0, "needs_evidence": True}}
+            log.info("[GENZ][SOCCER] %s %s vs %s: %d node(s) | poly=%s (%d markets).", comp, game.away,
+                     game.home, len(nodes), game.poly_base_slug, p_cov["ok"])
+        return entry
 
     def _pair_world_cup(self, kalshi_client: Any, poly_client: Any, game: "Game",
                         series_events: list[dict], cfg: gz_config.GenzConfig, *,

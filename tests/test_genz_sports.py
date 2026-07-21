@@ -124,37 +124,73 @@ def test_config_yaml_seeds_competitions_world_cup_disabled():
     assert names["world_cup"].kalshi_series == ["KXWCGAME"] and names["mls"].kalshi_series == "AUTO"
 
 
+MLS_NOW = datetime(2026, 7, 21, 12, 0, 0, tzinfo=timezone.utc)     # MLS game kicks off 2026-07-22
+_MLS_ET = "KXMLSGAME-26JUL22FCCVWH"
+
+
+def _mls_markets():                                        # the real 3-way shape (2 teams + Tie)
+    t = "FC Cincinnati vs Vancouver Winner?"
+    return [{"event_ticker": _MLS_ET, "ticker": _MLS_ET + "-TIE", "yes_sub_title": "Tie", "title": t},
+            {"event_ticker": _MLS_ET, "ticker": _MLS_ET + "-FCC", "yes_sub_title": "FC Cincinnati", "title": t},
+            {"event_ticker": _MLS_ET, "ticker": _MLS_ET + "-VWH", "yes_sub_title": "Vancouver", "title": t}]
+
+
 class _MlsKalshi:
     def iter_markets(self, *, series_ticker=None, status="open", **k):
-        if series_ticker == "KXMLSGAME":
-            return [{"event_ticker": "KXMLSGAME-26JUL21LAFSEA", "ticker": "x-1", "yes_sub_title": "LAFC",
-                     "title": "Will LAFC win the LAFC vs Seattle Sounders match?"}]
-        return []
+        return _mls_markets() if series_ticker == "KXMLSGAME" else []
 
-    def markets(self, **k):
-        return {"markets": []}
+    def markets(self, *, series_ticker=None, event_ticker=None, status="open", **k):
+        return {"markets": _mls_markets() if event_ticker == _MLS_ET else []}
+
+    def list_series(self, *, category=None):               # the real catalog shape (tags + GAME ticker)
+        return [{"ticker": "KXMLSGAME", "title": "Major League Soccer Game", "tags": ["Soccer"]},
+                {"ticker": "KXMLSEAST", "title": "MLS Western Conference winner?", "tags": ["Soccer"]},  # not GAME
+                {"ticker": "KXNBAGAME", "title": "NBA Game", "tags": ["Basketball"]}]                     # not soccer
+
+
+def _mls_poly_event():
+    return {"slug": "mls-fcc-vwh-2026-07-22", "closed": False, "startTime": "2026-07-22T23:30:00Z",
+            "title": "FC Cincinnati vs. Vancouver Whitecaps FC", "markets": [
+                _single("FC Cincinnati", "fcc_y"), _single("Vancouver Whitecaps FC", "vwh_y"),
+                {"groupItemTitle": "Draw (FC Cincinnati vs. Vancouver Whitecaps FC)", "question": "draw?",
+                 "outcomes": ["Yes", "No"], "clobTokenIds": ["drw_y", "drw_n"]}]}
+
+
+class _MlsPoly:
+    def search(self, q):
+        return {"events": [_mls_poly_event()]}
 
 
 class _EmptyPoly:
-    def events_by_series(self, slug, **k):
-        return []
+    def search(self, q):
+        return {"events": []}
 
 
-def test_non_wc_competition_discovers_reports_honest_zero(monkeypatch, tmp_path):
+def test_non_wc_competition_pairs_moneyline_on_both_venues(monkeypatch, tmp_path):
+    """MLS is on BOTH venues (verified live): teams from yes_sub_title, Poly by team-token scan under the
+    'mls-' prefix -> a 3-way moneyline pairs (home/away/draw)."""
     monkeypatch.setattr(tb, "SOCCER_SERIES_MAP_PATH", str(tmp_path / "smap.json"))
     cfg = GenzConfig()
     cfg.competitions = [Competition(name="mls", kalshi_series=["KXMLSGAME"], poly_slug_prefix="mls")]
-    tree = tb.build_tree(_MlsKalshi(), _EmptyPoly(), cfg, now=NOW)
-    g = tree["games"]["26JUL21LAFSEA"]
-    assert g["away"] == "LAFC" and g["home"] == "Seattle Sounders" and g["competition"] == "mls"
-    assert g["nodes"] == [] and g["coverage"]["needs_evidence"] is True             # honest zero, named
-    assert g["poly_base_slug"] == "mls-lafc-seattle-sounders-2026-07-21"            # prefix slug built
+    tree = tb.build_tree(_MlsKalshi(), _MlsPoly(), cfg, now=MLS_NOW)
+    g = tree["games"]["26JUL22FCCVWH"]
+    assert g["competition"] == "mls" and g["away"] == "FC Cincinnati" and g["home"] == "Vancouver"
+    sides = {n["side"] for n in g["nodes"] if n["market_type"] == "moneyline"}
+    assert sides == {"home", "away", "draw"}                          # the proven-same 3-way winner paired
+    assert g["poly_base_slug"] == "mls-fcc-vwh-2026-07-22"            # resolved by token scan, not a guess
+    assert all(n["kalshi_ticker"] and n["poly_token_id"] for n in g["nodes"])   # both venues on each node
 
 
-class _CatalogKalshi(_MlsKalshi):
-    def list_series(self, *, category=None):
-        return [{"ticker": "KXMLSGAME", "title": "MLS Game Winner"},
-                {"ticker": "KXNBAGAME", "title": "NBA Game Winner"}]     # non-soccer -> filtered out
+def test_non_wc_competition_honest_one_sided_when_poly_absent(monkeypatch, tmp_path):
+    """UCL qualifiers are on Kalshi but NOT Polymarket -> the game is discovered + named but honest
+    one-sided (0 nodes, poly_absent)."""
+    monkeypatch.setattr(tb, "SOCCER_SERIES_MAP_PATH", str(tmp_path / "smap.json"))
+    cfg = GenzConfig()
+    cfg.competitions = [Competition(name="mls", kalshi_series=["KXMLSGAME"], poly_slug_prefix="mls")]
+    tree = tb.build_tree(_MlsKalshi(), _EmptyPoly(), cfg, now=MLS_NOW)
+    g = tree["games"]["26JUL22FCCVWH"]
+    assert g["away"] == "FC Cincinnati" and g["home"] == "Vancouver" and g["nodes"] == []
+    assert g["coverage"]["poly_absent"] is True                      # honest one-sided, not forced
 
 
 def test_auto_series_discovery_reports_and_persists(monkeypatch, tmp_path):
@@ -162,16 +198,89 @@ def test_auto_series_discovery_reports_and_persists(monkeypatch, tmp_path):
     monkeypatch.setattr(tb, "SOCCER_SERIES_MAP_PATH", mp)
     smap = {}
     comp = Competition(name="mls", kalshi_series="AUTO", poly_slug_prefix="mls")
-    got = tb.resolve_kalshi_series(comp, _CatalogKalshi(), smap)
-    assert got == ["KXMLSGAME"] and smap["mls"] == ["KXMLSGAME"]          # discovered + learned
+    got = tb.resolve_kalshi_series(comp, _MlsKalshi(), smap)         # scans the catalog, filters to GAME+soccer
+    assert got == ["KXMLSGAME"] and smap["mls"] == ["KXMLSGAME"]     # KXMLSEAST (not GAME) + NBA filtered out
     tb.save_series_map(smap)
     assert json.load(open(mp, encoding="utf-8"))["mls"] == ["KXMLSGAME"]  # persisted
 
 
+class _NoCatalogKalshi:
+    def iter_markets(self, **k):
+        return []
+
+
 def test_auto_series_discovery_honest_zero_without_catalog():
-    # The default Kalshi client exposes NO catalog listing -> AUTO returns [] (never a hardcoded guess).
+    # A client exposing NO catalog listing -> AUTO returns [] (never a hardcoded guess).
     comp = Competition(name="ucl_qualifying", kalshi_series="AUTO", poly_slug_prefix="ucl")
-    assert tb.resolve_kalshi_series(comp, _MlsKalshi(), {}) == []
+    assert tb.resolve_kalshi_series(comp, _NoCatalogKalshi(), {}) == []
+
+
+# --------------------------------------------------------------------------- #
+# EVIDENCE PASS — pairing built against COMMITTED REAL payloads (dump-raw fixtures) #
+# --------------------------------------------------------------------------- #
+_RAW = os.path.join(os.path.dirname(__file__), "fixtures", "raw")
+
+
+def _load_raw(name):
+    with open(os.path.join(_RAW, name), encoding="utf-8") as fh:
+        return json.load(fh)
+
+
+class _FixtureKalshi:
+    def __init__(self, kfix):
+        self._series, self._et, self._mkts = kfix["series"], kfix["event_ticker"], kfix["markets"]
+
+    def iter_markets(self, *, series_ticker=None, status="open", **k):
+        return list(self._mkts) if series_ticker == self._series else []
+
+    def markets(self, *, series_ticker=None, event_ticker=None, status="open", **k):
+        return {"markets": list(self._mkts) if event_ticker == self._et else []}
+
+    def list_series(self, *, category=None):
+        return [{"ticker": self._series, "title": self._series, "tags": ["Soccer"]}]
+
+
+class _FixturePoly:
+    def __init__(self, pfix):
+        self._ev = pfix["event"]
+
+    def search(self, q):
+        return {"events": [self._ev] if self._ev else []}
+
+
+def _build_from_fixture(name, comp_name, prefix, now):
+    kfix, pfix = _load_raw(f"{name}_kalshi.json"), _load_raw(f"{name}_poly.json")
+    cfg = GenzConfig()
+    cfg.competitions = [Competition(name=comp_name, kalshi_series=[kfix["series"]], poly_slug_prefix=prefix)]
+    tree = tb.build_tree(_FixtureKalshi(kfix), _FixturePoly(pfix), cfg, now=now)
+    return tree, kfix
+
+
+def test_mls_moneyline_pairs_from_real_fixture():
+    """The committed real Cincinnati-vs-Vancouver payloads (KXMLSGAME + mls-fcc-vwh) pair the 3-way
+    winner across both venues, and the REAL Kalshi rules text parses to 'regulation' (90'+stoppage)."""
+    tree, kfix = _build_from_fixture("mls_game", "mls", "mls",
+                                     datetime(2026, 7, 22, 0, 0, 0, tzinfo=timezone.utc))
+    g = next(iter(tree["games"].values()))
+    assert g["competition"] == "mls" and g["poly_base_slug"] == "mls-fcc-vwh-2026-07-22"
+    sides = {n["side"] for n in g["nodes"] if n["market_type"] == "moneyline"}
+    assert sides == {"home", "away", "draw"}                          # proven-same 3-way winner
+    assert all(n["kalshi_ticker"] and n["poly_token_id"] for n in g["nodes"])   # both venues per node
+    from src.genz import match_rules as mr
+    txt = " ".join(str(kfix["markets"][0].get(x) or "") for x in ("rules_primary", "rules_secondary"))
+    assert mr.parse_settlement_period(txt) == "regulation"           # no ET/penalties -> regulation
+
+
+def test_ucl_moneyline_pairs_from_real_fixture():
+    """UCL qualifiers ARE on both venues (KXUCLGAME + ucl-<a>-<b>-<date>); the 'Reg Time:' yes_sub
+    prefix is stripped and the winner pairs."""
+    tree, _ = _build_from_fixture("ucl_game", "ucl_qualifying", "ucl",
+                                  datetime(2026, 7, 22, 0, 0, 0, tzinfo=timezone.utc))
+    g = next(iter(tree["games"].values()))
+    assert g["competition"] == "ucl_qualifying" and g["poly_base_slug"].startswith("ucl-egn-cel")
+    assert g["away"] == "Egnatia Rrogozhine" and g["home"] == "NK Celje"   # 'Reg Time:' stripped
+    sides = {n["side"] for n in g["nodes"] if n["market_type"] == "moneyline"}
+    assert {"home", "away"} <= sides                                  # winner sides paired
 
 
 # =========================================================================== #

@@ -102,6 +102,35 @@ class KalshiClient:
         """GET /series/{series_ticker} — confirm the series exists and read its title/metadata."""
         return self._get(f"/series/{series_ticker}", {})
 
+    def list_series(self, category: Optional[str] = None) -> list[dict[str, Any]]:
+        """GET /series[?category=<...>] — the series CATALOG (each: ticker/title/category/tags/...). Used
+        by the soccer AUTO series discovery to find a competition's game-winner series (verified live:
+        category='Sports' returns ~2964 soccer/other series in ONE response; a `cursor` is followed
+        defensively in case the API starts paginating). CACHED per client instance (per build)."""
+        cache_key = str(category or "")
+        cached = getattr(self, "_series_cache", None)
+        if cached is None:
+            cached = {}
+            self._series_cache = cached
+        if cache_key in cached:
+            return cached[cache_key]
+        out: list[dict[str, Any]] = []
+        cursor: Optional[str] = None
+        for _ in range(50):
+            params: dict[str, Any] = {}
+            if category:
+                params["category"] = category
+            if cursor:
+                params["cursor"] = cursor
+            page = self._get("/series", params)
+            batch = (page or {}).get("series") or []
+            out.extend(s for s in batch if isinstance(s, dict))
+            cursor = (page or {}).get("cursor") or None
+            if not cursor or not batch:
+                break
+        cached[cache_key] = out
+        return out
+
     def markets(self, *, series_ticker: Optional[str] = None, event_ticker: Optional[str] = None,
                 status: Optional[str] = "open", limit: int = 100,
                 cursor: Optional[str] = None) -> Any:
