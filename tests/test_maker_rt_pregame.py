@@ -857,9 +857,11 @@ def test_kalshi_order_client_rest_cancel_status():
             self.orders = []
             self.canceled = []
 
-        def place_order(self, ticker, side, count, price, *, time_in_force=None, client_order_id=None):
+        def place_order(self, ticker, side, count, price, *, action="buy", time_in_force=None,
+                        post_only=False, client_order_id=None):
             self.orders.append({"ticker": ticker, "side": side, "count": count, "price": price,
-                                "tif": time_in_force, "coid": client_order_id})
+                                "action": action, "tif": time_in_force, "post_only": post_only,
+                                "coid": client_order_id})
             return {"status": "resting", "fill_count": 0, "avg_price": price, "order_id": f"o{len(self.orders)}"}
 
         def cancel_order(self, oid):
@@ -871,7 +873,8 @@ def test_kalshi_order_client_rest_cancel_status():
     ex = _Ex()
     koc = KalshiOrderClient(ex)
     res = koc.rest("KX-1", "yes", 0.40, 3)
-    assert ex.orders[0]["tif"] is None                 # RESTING (not IOC)
+    assert ex.orders[0]["tif"] == "good_till_canceled" and ex.orders[0]["post_only"] is True   # v2 resting maker
+    assert ex.orders[0]["action"] == "buy"
     assert ex.orders[0]["coid"].startswith(KALSHI_COID_PREFIX) and ex.orders[0]["count"] == 3
     assert koc.order_status("o1")["status"] == "resting" and koc.order_status("zz") == {}
     koc.cancel(res["order_id"])

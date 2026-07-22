@@ -571,16 +571,23 @@ async def run_smoke_kalshi(cfg: Any, *, log: Any = None) -> int:
         _p("SMOKE-KALSHI FAIL: resting order not confirmed cancelled.")
         return 5
 
-    # (ii) UNWIND proof: buy ~$3 at market (IOC) -> IOC-unwind -> REST-verify flat via positions.
+    # (ii) UNWIND proof: buy ~$3 through THE EXACT HEDGER path (LiveHedger.hedge -> kalshi IOC), then
+    # IOC-unwind (place_market_sell — the exact executor unwind path) -> REST-verify flat via positions.
     import math
+    from .hedge import LiveHedger
     n = max(1, math.ceil(3.0 / max(best_ask, 0.05)))
-    _p(f"--- (ii) unwind proof: buy ~$3 ({n} contracts) at market, IOC-unwind, REST-verify flat ---")
-    buy = kalshi.place_order(ticker, side, n, 0.99, time_in_force="immediate_or_cancel",
-                             client_order_id="mrt-smoke-buy")
-    filled = int(buy.get("fill_count") or 0)
-    _p(f"BUY : status={buy.get('status')} fill_count={filled} avg={buy.get('avg_price')} id={buy.get('order_id')}")
+    _p(f"--- (ii) unwind proof: buy ~$3 ({n}) via LiveHedger.hedge (kalshi IOC), IOC-unwind, verify flat ---")
+    hedger = LiveHedger(kalshi_client=kalshi, poly_client=poly, poly_rate=cfg.poly_fee_rate, log=log)
+    hres = hedger.hedge({"token_id": "smoke", "side": "BUY", "price": best_ask, "size": n},
+                        {"ticker": ticker, "side": side, "best_ask": best_ask})
+    buy_detail = (getattr(hres, "detail", None) or {}).get("kalshi") or {}
+    buy_id = buy_detail.get("order_id")
+    buy_avg = getattr(hres, "hedge_avg_price", None)
+    filled = int(round(float(getattr(hres, "hedged_shares", 0) or 0)))
+    _p(f"HEDGE-BUY (LiveHedger.hedge -> kalshi IOC): status={getattr(hres,'status',None)} filled={filled} "
+       f"avg={buy_avg} id={buy_id}")
     if filled < 1:
-        _p("SMOKE-KALSHI: buy filled 0 (thin book) — nothing to unwind; INCONCLUSIVE.")
+        _p("SMOKE-KALSHI: hedge buy filled 0 (thin book) — nothing to unwind; INCONCLUSIVE.")
         return 4
     _p(f"position after BUY (REST): {_kalshi_pos(kalshi, ticker)} contracts")
     sell = kalshi.place_market_sell(ticker, side, filled, client_order_id="mrt-smoke-unwind")
@@ -597,7 +604,7 @@ async def run_smoke_kalshi(cfg: Any, *, log: Any = None) -> int:
     _p("-" * 78)
     _p("VENUE-CONFIRMED RECEIPTS:")
     _p(f"  REST order {oid}  @ {rest_px}  -> cancelled (confirmed gone)")
-    _p(f"  BUY  order {buy.get('order_id')}  {filled} @ {buy.get('avg_price')}")
+    _p(f"  BUY  order {buy_id}  {filled} @ {buy_avg}  (via LiveHedger.hedge)")
     _p(f"  SELL order {sell.get('order_id')}  {sell.get('fill_count')} @ {sell.get('avg_price')}")
     _p(f"  final position (REST-verified): {flat_pos} contracts")
     _p("-" * 78)

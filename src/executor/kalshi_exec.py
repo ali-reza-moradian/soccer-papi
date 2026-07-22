@@ -63,6 +63,36 @@ def yes_book_price(side: str, price: float) -> float:
     return p
 
 
+# --------------------------------------------------------------------------- #
+# V2 order encoding — PURE functions (the create-order-v2 book is YES-space)     #
+# --------------------------------------------------------------------------- #
+# Kalshi's v2 create-order endpoint (POST /portfolio/events/orders) speaks a single YES-space book:
+# `side` is "bid" (buy YES) or "ask" (sell YES), and `price` is ALWAYS the YES price. Every outcome/
+# action collapses onto that book. The dangerous case is the UNWIND: closing a YES position is a SELL of
+# YES ("ask"), but closing a NO position is a BUY of YES ("bid") — a sign error there turns a closer into
+# an opener, so these are pure + exhaustively unit-tested (v2_order_side / v2_yes_price).
+def v2_order_side(outcome: str, action: str) -> str:
+    """v2 book side for (outcome in {YES,NO}, action in {buy,sell}): "bid" = buy YES, "ask" = sell YES.
+    buy NO == sell YES ("ask"); sell NO == buy YES ("bid")."""
+    o = str(outcome).strip().upper()
+    a = str(action).strip().lower()
+    if o not in ("YES", "NO"):
+        raise KalshiExecError(f"outcome must be YES or NO, got {outcome!r}")
+    if a not in ("buy", "sell"):
+        raise KalshiExecError(f"action must be buy or sell, got {action!r}")
+    buys_yes = (o == "YES" and a == "buy") or (o == "NO" and a == "sell")
+    return "bid" if buys_yes else "ask"
+
+
+def v2_yes_price(outcome: str, price: float) -> float:
+    """YES-space price for an order in ``outcome``'s own price terms: a YES order passes its price as-is;
+    a NO order at price p is the YES price (1 - p) (direction is carried by bid/ask, NOT the price)."""
+    o = str(outcome).strip().upper()
+    if o not in ("YES", "NO"):
+        raise KalshiExecError(f"outcome must be YES or NO, got {outcome!r}")
+    return float(price) if o == "YES" else round(1.0 - float(price), 6)
+
+
 def fmt_count(count: int) -> str:
     """Kalshi wire format for an integer contract count: 'N.00'."""
     return f"{int(count)}.00"
@@ -224,55 +254,47 @@ class KalshiExec:
 
     # -- orders --------------------------------------------------------------
     def place_order(self, ticker: str, side: str, count: int, price: float, *,
-                    time_in_force: str = "immediate_or_cancel",
-                    client_order_id: Optional[str] = None) -> dict[str, Any]:
-        """Place a BACK (buy) order. YES->bid@price, NO->ask@(1-price) on the YES book. Returns a
-        normalized {status, fill_count, avg_price, order_id, raw} with STRICT fill classification."""
-        book_price = yes_book_price(side, price)
+                    action: str = "buy", time_in_force: str = "immediate_or_cancel",
+                    post_only: bool = False, client_order_id: Optional[str] = None) -> dict[str, Any]:
+        """Create a v2 order (POST /portfolio/events/orders). ``side`` = outcome YES|NO, ``action`` =
+        buy|sell, ``price`` = price in the OUTCOME's own terms (dollars). Encoded onto the YES-space book
+        via v2_order_side / v2_yes_price (the pure, tested mappers — buy NO = ask@(1-p), sell NO = bid@(1-p)).
+        Returns a normalized {status, fill_count, avg_price, order_id, raw} with STRICT fill classification."""
         body = {
             "ticker": ticker,
-            "action": "buy",
-            "side": str(side).lower(),
+            "side": v2_order_side(side, action),
             "count": fmt_count(count),
-            "type": "limit",
-            "price": fmt_price(book_price),
-            "yes_price": fmt_price(book_price) if str(side).upper() == "YES" else None,
+            "price": fmt_price(v2_yes_price(side, price)),
             "time_in_force": time_in_force,
-            "self_trade_prevention": "cancel_resting",
+            "self_trade_prevention_type": "taker_at_cross",
             "client_order_id": client_order_id or f"exec-{int(time.time()*1000)}",
         }
-        body = {k: v for k, v in body.items() if v is not None}
-        raw = self._request("POST", "/portfolio/orders", json_body={"order": body})
+        if post_only:
+            body["post_only"] = True
+        raw = self._request("POST", "/portfolio/events/orders", json_body=body)
         return self._normalize_order_response(raw, count)
 
     def place_market_sell(self, ticker: str, side: str, count: int, *,
                           client_order_id: Optional[str] = None) -> dict[str, Any]:
-        """UNWIND: market-sell ``count`` contracts of ``side`` to flatten an unhedged position."""
-        body = {
-            "ticker": ticker,
-            "action": "sell",
-            "side": str(side).lower(),
-            "count": fmt_count(count),
-            "type": "market",
-            "time_in_force": "immediate_or_cancel",
-            "self_trade_prevention": "cancel_resting",
-            "client_order_id": client_order_id or f"unwind-{int(time.time()*1000)}",
-        }
-        raw = self._request("POST", "/portfolio/orders", json_body={"order": body})
-        return self._normalize_order_response(raw, count)
+        """UNWIND: marketable IOC SELL of ``count`` contracts of the HELD outcome ``side`` (YES|NO) to
+        flatten. Sells at an aggressive outcome-price (0.01) so it crosses; the v2 side is the UNWIND flip
+        (sell YES -> ask, sell NO -> bid) done inside place_order/v2_order_side."""
+        return self.place_order(ticker, side, count, 0.01, action="sell",
+                                time_in_force="immediate_or_cancel",
+                                client_order_id=client_order_id or f"unwind-{int(time.time()*1000)}")
 
     def cancel_order(self, order_id: str) -> Any:
-        return self._request("DELETE", f"/portfolio/orders/{order_id}")
+        return self._request("DELETE", f"/portfolio/events/orders/{order_id}")
 
     def _normalize_order_response(self, raw: Any, requested: int) -> dict[str, Any]:
         order = (raw or {}).get("order", raw) if isinstance(raw, dict) else {}
         filled = 0
         for k in ("fill_count", "filled_count", "taker_fill_count", "count_filled"):
             if order.get(k) is not None:
-                filled = int(order[k])
+                filled = int(float(order[k]))        # v2 counts are fixed-point strings ("3.00")
                 break
         avg = None
-        for k in ("avg_fill_price", "average_fill_price", "fill_price", "avg_price"):
+        for k in ("average_fill_price", "avg_fill_price", "fill_price", "avg_price"):
             if order.get(k) is not None:
                 avg = _avg_price_cents_to_dollars(order[k])
                 break

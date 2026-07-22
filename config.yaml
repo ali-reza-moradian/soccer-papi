@@ -477,6 +477,7 @@ maker_rt:
   max_games: 30                     # nearest-by-kickoff games to quote across BOTH sports combined
   quote_usd: 100                    # shadow quote notional per node/direction
   target_net: 0.010                 # min net edge a hedged maker combo must clear at the quote price
+  directions: [rest_poly, rest_kalshi]   # LIVE rest directions (both SMOKE-proven); shared caps + one-in-flight span them
   debounce_ms: 250                  # quote-engine debounce
   expire_before_kickoff_s: 120      # cancel/expire every quote at kickoff - this
   poly_fee_rate: 0.05               # Polymarket sports taker rate (hedge-fee model)

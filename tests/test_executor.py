@@ -123,18 +123,59 @@ class _FakeSession:
         return self._responses.pop(0)
 
 
-def test_kalshi_place_order_normalizes_and_classifies_partial():
-    sess = _FakeSession([_FakeResp(200, {"order": {"order_id": "abc",
-                                                   "fill_count": 4, "avg_fill_price": 33}})])
+def test_kalshi_v2_side_and_price_pure_functions():
+    """The four-case YES-space mapping — the UNWIND sign-flip lives here (close YES = ask, close NO = bid)."""
+    s, p = kalshi_exec.v2_order_side, kalshi_exec.v2_yes_price
+    assert s("YES", "buy") == "bid" and p("YES", 0.60) == pytest.approx(0.60)   # buy YES  @0.60 -> bid 0.60
+    assert s("NO", "buy") == "ask" and p("NO", 0.40) == pytest.approx(0.60)     # buy NO   @0.40 -> ask 0.60
+    assert s("YES", "sell") == "ask" and p("YES", 0.60) == pytest.approx(0.60)  # sell YES @0.60 -> ask 0.60
+    assert s("NO", "sell") == "bid" and p("NO", 0.40) == pytest.approx(0.60)    # sell NO  @0.40 -> bid 0.60
+    assert s("yes", "BUY") == "bid"                                             # case-insensitive
+    with pytest.raises(kalshi_exec.KalshiExecError):
+        s("MAYBE", "buy")
+    with pytest.raises(kalshi_exec.KalshiExecError):
+        s("YES", "hold")
+
+
+def test_kalshi_place_order_v2_normalizes_and_body():
+    sess = _FakeSession([_FakeResp(200, {"order_id": "abc", "fill_count": "4.00",
+                                         "average_fill_price": "0.3300"})])
     k = kalshi_exec.KalshiExec(api_key_id="kid", signer=lambda m: "sig", session=sess)
     res = k.place_order("TICK", "YES", 10, 0.33, client_order_id="x")
-    assert res["status"] == "partial" and res["fill_count"] == 4
-    assert res["avg_price"] == pytest.approx(0.33)        # cents -> dollars
-    assert res["order_id"] == "abc"
-    # Wire format: count "N.00", side lowercase, action buy.
-    body = sess.calls[0]["json"]["order"]
-    assert body["count"] == "10.00" and body["side"] == "yes" and body["action"] == "buy"
-    assert body["price"] == "0.3300"
+    assert res["status"] == "partial" and res["fill_count"] == 4                # v2 fill_count is a string
+    assert res["avg_price"] == pytest.approx(0.33) and res["order_id"] == "abc"
+    assert sess.calls[0]["url"].endswith("/portfolio/events/orders")           # v2 endpoint
+    body = sess.calls[0]["json"]                                                # v2 body is FLAT (not {"order":..})
+    assert body["side"] == "bid" and body["price"] == "0.3300" and body["count"] == "10.00"
+    assert "action" not in body and "type" not in body                         # v1 fields gone
+    assert body["time_in_force"] == "immediate_or_cancel" and body["self_trade_prevention_type"] == "taker_at_cross"
+
+
+def test_kalshi_place_order_v2_buy_no_is_ask_at_complement():
+    sess = _FakeSession([_FakeResp(200, {"order_id": "n1", "fill_count": "0.00"})])
+    k = kalshi_exec.KalshiExec(api_key_id="kid", signer=lambda m: "sig", session=sess)
+    k.place_order("TICK", "NO", 5, 0.40, action="buy")
+    body = sess.calls[0]["json"]
+    assert body["side"] == "ask" and body["price"] == "0.6000"                  # buy NO @0.40 == ask YES @0.60
+
+
+def test_kalshi_place_market_sell_v2_unwind_sides():
+    # Close a YES position -> ask (sell YES).  Close a NO position -> bid (buy YES). The sign-flip.
+    sess = _FakeSession([_FakeResp(200, {"order_id": "u1", "fill_count": "3.00", "average_fill_price": "0.20"}),
+                         _FakeResp(200, {"order_id": "u2", "fill_count": "3.00", "average_fill_price": "0.80"})])
+    k = kalshi_exec.KalshiExec(api_key_id="kid", signer=lambda m: "sig", session=sess)
+    k.place_market_sell("TICK", "YES", 3)
+    assert sess.calls[0]["json"]["side"] == "ask" and sess.calls[0]["json"]["time_in_force"] == "immediate_or_cancel"
+    k.place_market_sell("TICK", "NO", 3)
+    assert sess.calls[1]["json"]["side"] == "bid"                               # close NO = BUY YES (opener trap avoided)
+
+
+def test_kalshi_cancel_v2_endpoint():
+    sess = _FakeSession([_FakeResp(200, {"reduced_by": 1})])
+    k = kalshi_exec.KalshiExec(api_key_id="kid", signer=lambda m: "sig", session=sess)
+    k.cancel_order("oid123")
+    assert sess.calls[0]["method"] == "DELETE"
+    assert sess.calls[0]["url"].endswith("/portfolio/events/orders/oid123")
 
 
 def test_kalshi_retries_on_429_then_succeeds():

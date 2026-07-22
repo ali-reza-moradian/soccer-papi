@@ -88,13 +88,14 @@ class KalshiOrderClient:
     # -- resting maker (rest_kalshi live direction) --------------------------
     def rest(self, ticker: str, side: str, price: float, count: float,
              *, client_order_id: Optional[str] = None) -> dict:
-        """Post a RESTING maker limit BUY of ``side`` (yes/no) at ``price`` dollars. time_in_force=None
-        rests it (NOT IOC); never-crossable is enforced by the caller (like the Poly GTC path). Returns
-        the executor's normalized {status, fill_count, avg_price, order_id, raw}."""
+        """Post a RESTING maker limit BUY of outcome ``side`` (yes/no) at ``price`` dollars. v2 rests via
+        time_in_force='good_till_canceled' + post_only=True (a true maker order); never-crossable is also
+        enforced by the caller. Returns the executor's normalized {status, fill_count, avg_price, order_id}."""
         n = self.clamp_count(count)
         coid = client_order_id or self._coid()
-        res = self.ex.place_order(ticker, side, n, float(price),
-                                  time_in_force=None, client_order_id=coid)
+        res = self.ex.place_order(ticker, side, n, float(price), action="buy",
+                                  time_in_force="good_till_canceled", post_only=True,
+                                  client_order_id=coid)
         oid = res.get("order_id")
         if oid:
             self._open[oid] = {"ticker": ticker, "side": side, "price": price, "count": n, "coid": coid}
