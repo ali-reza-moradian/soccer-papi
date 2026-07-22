@@ -58,6 +58,9 @@ class _Poly:
         self.market_sells.append({"token": token, "shares": shares})
         return {"status": "filled", "avg_price": self.sell_price, "shares": shares}
 
+    def conditional_balance(self, token_id):
+        return getattr(self, "position", 0.0)   # flat by default; set .position>0 to simulate an ORPHAN
+
     def cancel_all(self):
         self.cancel_all_calls += 1
         return {"canceled": []}
@@ -612,3 +615,143 @@ def test_lifetime_and_atbest_metrics(tmp_path):
     now1 = datetime(2026, 7, 22, 12, 0, 45, tzinfo=timezone.utc)
     ex.cancel(_cand(), now1, "expire")                         # the quote rested 45s
     assert ex.snapshot(t0 + 46)["median_quote_age_s"] == pytest.approx(45.0, abs=0.5)
+
+
+# --------------------------------------------------------------------------- #
+# VERIFY-OR-SCREAM unwind + position reconciliation (the -$2.35 orphan fix)      #
+# --------------------------------------------------------------------------- #
+def _hedger_missed():
+    return _Hedger(SimpleNamespace(status="missed", hedged_shares=0, hedge_avg_price=None,
+                                   locked_pnl=None, unwind_cost=None, detail={"kalshi": {}}))
+
+
+def test_unwind_verified_flat_records_unwound(tmp_path):
+    oc = _OrderClient()
+    poly = _Poly(order_status="CANCELED", sell_price=0.44)
+    poly.position = 0.0                                        # REST read confirms flat after the sell
+    ex, _ = _exec(tmp_path, order_client=oc, hedger=_hedger_missed(), poly=poly)
+    store = _Store(poly_best_ask=0.60, kalshi_ask=0.50)        # locked >= floor -> hedge FIRES -> miss -> unwind
+    ex.place_or_reprice(_cand(), _dec(0.46, hedge_ask=0.50), None, store, None, 1.0, "pre")
+    ex.on_order_update({"order_id": oc.rests[0]["oid"], "size_matched": 5, "price": 0.46}, store, None, 2.0)
+    assert poly.market_sells and poly.market_sells[0]["shares"] == 5    # a REAL unwind sell went out
+    assert ex.orphan is None and ex.caps.halted is False               # verified flat -> no orphan
+    rows = [r["event"] for r in ex.state.rows]
+    assert "hedge_unwound" in rows and "unwind_FAILED" not in rows
+
+
+def test_unwind_not_flat_screams_and_halts(tmp_path):
+    oc = _OrderClient()
+    poly = _Poly(order_status="CANCELED", sell_price=0.44)
+    poly.position = 5.0                                        # the sell did NOT clear the position (the bug)
+    ex, _ = _exec(tmp_path, order_client=oc, hedger=_hedger_missed(), poly=poly)
+    store = _Store(poly_best_ask=0.60, kalshi_ask=0.50)
+    ex.place_or_reprice(_cand(), _dec(0.46, hedge_ask=0.50), None, store, None, 1.0, "pre")
+    ex.on_order_update({"order_id": oc.rests[0]["oid"], "size_matched": 5, "price": 0.46}, store, None, 2.0)
+    assert ex.orphan is not None and ex.caps.halted is True            # VERIFY-OR-SCREAM: orphan + halt-all
+    assert "unwind_FAILED" in [r["event"] for r in ex.state.rows]
+    assert ex.eligible(_cand(), "pre", 3.0) is False                   # halted -> no more live quoting
+
+
+def test_reconciliation_catches_seeded_orphan(tmp_path):
+    oc = _OrderClient()
+    poly = _Poly()
+    poly.position = 4.0                                        # a stranded position on a token we traded
+    ex, _ = _exec(tmp_path, order_client=oc, poly=poly)
+    ex._traded_tokens.add("TOK1")                             # (no list_positions on the fake -> per-token read)
+    orph = ex.reconcile_positions(datetime(2026, 7, 22, 12, 0, 0, tzinfo=timezone.utc))
+    assert orph is not None and ex.caps.halted is True and ex.caps.halt_reason == "orphan_position"
+
+
+def test_reconcile_ignores_untraded_account_positions(tmp_path):
+    """Regression guard for the list_positions landmine: the funder wallet holds hundreds of unrelated
+    positions; reconciliation must ONLY flag tokens THIS maker traded, never a blanket account sweep."""
+    poly = _Poly()
+    poly.position = 9.0                                       # a big holding on tokens we never traded
+    ex, _ = _exec(tmp_path, poly=poly)                        # _traded_tokens is empty
+    orph = ex.reconcile_positions(datetime(2026, 7, 22, 12, 0, 0, tzinfo=timezone.utc))
+    assert orph is None and ex.caps.halted is False           # not our orphan -> no halt
+
+
+def test_reconcile_prunes_confirmed_flat_token(tmp_path):
+    """A traded token that reads flat AND isn't currently quoting is dropped from the watch-set (keeps it
+    bounded on this hundreds-of-positions wallet) and the pruned set is persisted."""
+    poly = _Poly()                                            # conditional_balance -> 0.0 (flat)
+    ex, _ = _exec(tmp_path, poly=poly)
+    ex._traded_tokens.add("TOKFLAT")
+    ex._persist_traded_tokens()
+    orph = ex.reconcile_positions(datetime(2026, 7, 22, 12, 0, 0, tzinfo=timezone.utc))
+    assert orph is None and "TOKFLAT" not in ex._traded_tokens
+
+
+def test_traded_tokens_persist_across_restart_catches_orphan(tmp_path):
+    """A position stranded by a CRASHED run must survive the restart: the watch-set is persisted next to
+    the arm file, reloaded by a fresh executor, and the startup reconcile then catches the orphan."""
+    ex1, _ = _exec(tmp_path, poly=_Poly())                    # "run 1"
+    ex1._traded_tokens.add("TOKX")
+    ex1._persist_traded_tokens()
+    assert (tmp_path / "maker_rt_traded_tokens.json").exists()
+    poly2 = _Poly()
+    poly2.position = 3.0                                       # the crash left 3 naked shares on TOKX
+    ex2, _ = _exec(tmp_path, poly=poly2)                       # "run 2" (restart) reloads the watch-set
+    assert "TOKX" in ex2._traded_tokens
+    orph = ex2.reconcile_positions(datetime(2026, 7, 22, 12, 0, 0, tzinfo=timezone.utc))
+    assert orph is not None and ex2.caps.halted is True and ex2.caps.halt_reason == "orphan_position"
+
+
+def test_decline_branch_full_chain_and_circuit(tmp_path):
+    sent = []
+    oc = _OrderClient()
+    poly = _Poly(order_status="CANCELED", sell_price=0.30)
+    poly.position = 0.0
+    ex, _ = _exec(tmp_path, order_client=oc, poly=poly)
+    ex.telegram = sent.append
+    ex.digest_min = 0.0                                        # instant so we can assert the alerts
+    ex.roll_day(_DT)
+    store = _Store(poly_best_ask=0.60, kalshi_ask=0.62)       # locked ~ -9% -> DECLINE + verified unwind
+    ex.place_or_reprice(_cand(), _dec(0.46, hedge_ask=0.62), None, store, _DT, 100.0, "inplay")
+    ex.on_order_update({"order_id": oc.rests[0]["oid"], "size_matched": 5, "price": 0.46}, store, _DT, 101.0)
+    rows = [r["event"] for r in ex.state.rows]
+    assert "hedge_declined" in rows and poly.market_sells      # decline -> verified unwind sold
+    assert any("FILL" in m for m in sent) and any("HEDGE_DECLINED" in m.upper() for m in sent)
+    assert ex.inplay_fills_today == 1 and ex.inplay_pause_until > 0    # first-fill circuit fired on decline
+
+
+def test_driver_now_behind_keeps_live_order():
+    from datetime import datetime, timezone
+    from src.genz.maker_rt import parsing
+    from src.genz.maker_rt.driver import QuoteDriver
+    from src.genz.maker_rt.store import BookStore
+    from src.genz.maker_rt.universe import build_universe
+    future = "2027-01-01T00:00:00Z"
+    n = lambda side, tok, kt, ks: {"market_type": "ml2", "market_key": "ml2", "side": side,  # noqa: E731
+        "line": None, "kind": "2way", "poly_token_id": tok, "poly_side": side.title(),
+        "poly_fee_rate": 0.05, "kalshi_ticker": kt, "kalshi_side": ks}
+    tree = {"games": {"G1": {"away": "A", "home": "B", "kickoff_utc": future, "nodes": [
+        n("away", "TOK_A", "KX-1", "YES"), n("home", "TOK_B", "KX-1", "NO")]}}}
+    uni = build_universe({"mlb": tree}, 0.0, max_games=20)
+    st = _DriverState(); fake = _FakePregame()
+    key = ("mlb", "G1", "ml2", "away", "rest-poly")
+    fake.open_orders[key] = {"phase": "pre"}                  # a live order is resting
+    drv = QuoteDriver(mrt_config.MakerRtConfig(), st, pregame_exec=fake)
+    drv.set_universe(uni)
+    bs = BookStore()
+    # poly bid 0.50 with hedge NO ask 0.50 -> floor ~0.4725 -> quote 0.4725 < best_bid 0.50 = would_be_behind
+    bs.apply_poly(parsing.parse_poly_market({"event_type": "book", "asset_id": "TOK_A",
+        "bids": [{"price": "0.50", "size": "300"}], "asks": [{"price": "0.55", "size": "300"}]}), 100.0)
+    bs.apply_kalshi(parsing.parse_kalshi({"type": "orderbook_snapshot", "sid": 1, "seq": 1,
+        "msg": {"market_ticker": "KX-1", "yes_dollars_fp": [["0.5000", "5000"]],
+                "no_dollars_fp": [["0.5000", "5000"]]}}), 100.0)
+    drv.refresh_quotes(bs, datetime(2026, 7, 16, 18, tzinfo=timezone.utc), now_ts=100.0)
+    assert any(k == key for k, _px in fake.placed)            # routed to place_or_reprice (KEPT), not cancelled
+    assert not any(reason == "now_behind" for _k, reason in fake.cancelled)
+    assert key in fake.open_orders
+
+
+def test_driver_hedge_thin_cooldown():
+    from src.genz.maker_rt.driver import QuoteDriver
+    drv = QuoteDriver(mrt_config.MakerRtConfig(), _DriverState())
+    node3 = ("mlb", "G1", "ml2")
+    for i in range(3):
+        drv._note_thin_refusal(node3, 100.0 + i)              # 3 refusals within the 10-min window
+    assert drv.thin_cooldown_until.get(node3, 0.0) > 100.0    # -> node cooled down (15 min)
+    assert drv.thin_cooldown_until[node3] == pytest.approx(102.0 + 900.0)

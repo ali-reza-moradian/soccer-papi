@@ -32,7 +32,8 @@ CSV_COLUMNS = [
     "ts", "day", "event", "mode", "sport", "phase", "game", "market_key", "side", "direction",
     "rest_venue", "hedge_venue", "quote_price", "size", "floor", "at_best", "hedge_ask",
     "net_at_quote", "achievable_net", "rails_ok", "queue_ahead", "trigger", "quote_age_s",
-    "hedge_avg", "hedge_fee", "locked_net", "fill_ts", "drift_1", "drift_5", "drift_30", "reason",
+    "hedge_avg", "hedge_fee", "locked_net", "realized_pnl_usd", "hedge_order_id", "fill_ts",
+    "drift_1", "drift_5", "drift_30", "reason",
 ]
 
 

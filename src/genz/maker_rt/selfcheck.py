@@ -200,6 +200,24 @@ def run_selfcheck(cfg: Any, *, log: Any = None) -> int:
         if not ok:
             print(f"        ERROR    : {et}: {em}")
 
+    # 5) poly_sell_approval — CTF (conditional-token) approval so an UNWIND can SELL. Buying with USDC
+    #    never needed it; a missing approval rejects every sell -> the -$2.35 orphan. REQUIRED to arm safe.
+    if sample is None:
+        results["poly_sell_approval"] = None
+        print("[SKIP] poly_sell_approval  (no sample token)")
+    else:
+        def _sell_probe() -> None:
+            if not bool(poly.ctf_allowance_ok(sample)):
+                raise RuntimeError("CTF conditional-token allowance is ZERO — the exchange cannot move our "
+                                   "outcome tokens, so every unwind SELL is rejected. FIX: start armed "
+                                   "(auto-sets it via set_ctf_approval), or manually setApprovalForAll for "
+                                   "the Polymarket CTF Exchange from the funder wallet.")
+        ok, et, em = _probe(_sell_probe)
+        results["poly_sell_approval"] = ok
+        print(f"[{_mark(ok)}] poly_sell_approval  (CTF approval so unwinds can SELL — the orphan cause)")
+        if not ok:
+            print(f"        ACTION   : {em}")
+
     # Definitive gate decision WITH the real clients injected. -----------------
     gate = LiveGate(cfg, kalshi_client=kalshi, poly_client=poly, sample_token=sample, log=None)
     pre, ip = gate.evaluate(), gate.evaluate_inplay()
@@ -208,13 +226,15 @@ def run_selfcheck(cfg: Any, *, log: Any = None) -> int:
     print(f"  in-play  : armed={ip.armed} reason={ip.reason!r} checks={ip.checks}")
 
     print("\n-- NOTE --")
-    print("  The RUNNING maker_rt process now injects order clients into LiveGate when")
-    print("  maker_rt.live.enabled is true, so its startup gate ARMS (gates.pre=true) exactly as the")
-    print("  probes above show. But the CONTINUOUS pre-game placement executor is NOT wired yet, so")
-    print("  normal operation still quotes SHADOW. Use `--smoke` to place one real order end-to-end.")
+    print("  BUY + SELL sides are both probed: poly_sell_approval confirms the exchange can move our CTF")
+    print("  tokens (a missing approval is what silently rejected the unwind SELL -> the -$2.35 orphan).")
+    print("  At runtime every unwind is REST-verified flat before 'unwound' is written, and position")
+    print("  reconciliation runs at startup + every 5 min. Use `--smoke-sell` to prove the unwind path.")
 
     required = ("kalshi_balance", "poly_balance", "poly_preflight")
-    all_ok = all(bool(results.get(k)) for k in required) and (results.get("poly_tick") in (True, None))
+    all_ok = (all(bool(results.get(k)) for k in required)
+              and (results.get("poly_tick") in (True, None))
+              and (results.get("poly_sell_approval") in (True, None)))
     print("\n" + "=" * 78)
     verdict = "PASS" if all_ok else "FAIL"
     tail = ("credentials resolve and both venues are readable"

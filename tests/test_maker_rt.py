@@ -366,13 +366,15 @@ def test_live_hedge_locks_on_full_fill():
     assert r.freeze_market is False
 
 
-def test_live_hedge_fail_unwinds_and_freezes():
+def test_live_hedge_miss_reports_shortfall_and_does_not_unwind():
+    """On a Kalshi miss the hedger reports status 'missed' + freeze — it NO LONGER unwinds itself (the
+    executor owns the ONE verified unwind; the in-hedger unwind logged fake success off avg_price)."""
     poly = _PolyUnwind()
     h = hedge.LiveHedger(kalshi_client=_KalshiMiss(), poly_client=poly)
     r = h.hedge({"token_id": "tok", "side": "BUY", "price": 0.46, "size": 50},
                 {"ticker": "KX-T", "side": "no", "best_ask": 0.50})
-    assert r.status == "unwound" and r.freeze_market is True
-    assert poly.sold == [("tok", 50)]                # the naked fill was market-sold to flatten
+    assert r.status == "missed" and r.hedged_shares == 0 and r.freeze_market is True
+    assert poly.sold == []                           # the hedger does NOT sell -- the executor verifies + unwinds
 
 
 # --------------------------------------------------------------------------- #

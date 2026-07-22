@@ -253,23 +253,117 @@ class PolyExec:
         return self._normalize(raw, price=price, requested_shares=size)
 
     def place_market_sell(self, token_id: str, shares: float, *, price: Optional[float] = None,
-                          order_type: str = "FOK") -> dict[str, Any]:
-        """UNWIND: sell ``shares`` of ``token_id``. If no price given, cross down to the best bid so
-        the FOK sell is marketable."""
+                          order_type: str = "FAK") -> dict[str, Any]:
+        """UNWIND: market-sell ``shares`` of ``token_id`` with a MARKETABLE limit that sweeps DOWN to
+        ``best_bid - 2 ticks`` (so a thin/moving book still fills the available size) using FAK
+        (fill-and-kill: partial OK, remainder killed -- NEVER rests). Returns the normalized result keyed
+        off the ACTUAL matched amount. (FOK at exactly best_bid was killed by thin in-play books, and the
+        caller then logged a fake 'unwound' -- the -$2.35 orphan bug.)"""
+        tick_size, neg_risk = self._tick_and_negrisk(token_id)
+        try:
+            tick = float(tick_size)
+        except (TypeError, ValueError):
+            tick = 0.01
         if price is None:
             book = self.get_orderbook(token_id)
             bids = book.get("bids") or []
-            price = float(bids[0][0]) if bids else 0.01
+            best_bid = float(bids[0][0]) if bids else None
+            price = max(tick, round((best_bid - 2 * tick) if best_bid is not None else tick, 6))
         from py_clob_client_v2.clob_types import OrderArgs, OrderType, PartialCreateOrderOptions
         from py_clob_client_v2.order_builder.constants import SELL
 
-        tick_size, neg_risk = self._tick_and_negrisk(token_id)
         args = OrderArgs(token_id=token_id, price=float(price), size=float(shares), side=SELL)
         options = PartialCreateOrderOptions(tick_size=tick_size_str(tick_size), neg_risk=bool(neg_risk))
         signed = self.client.create_order(args, options)
-        ot = getattr(OrderType, order_type, order_type)
+        ot = getattr(OrderType, order_type, order_type)                # FAK by default
         raw = self.client.post_order(signed, ot)
         return self._normalize(raw, price=price, requested_shares=shares)
+
+    # -- position + approval (SELL side; the source of truth for verification/reconciliation) ---------
+    def conditional_balance(self, token_id: str) -> float:
+        """ACTUAL outcome-token (CTF) shares held for ``token_id`` -- the source of truth for unwind
+        verification + position reconciliation (get_trades omits our maker-side fills, positions do not).
+        CTF balances are 1e6-scaled (like USDC). Returns whole shares (0.0 if flat / on any read error)."""
+        from py_clob_client_v2.clob_types import AssetType, BalanceAllowanceParams
+        try:
+            ba = self.client.get_balance_allowance(BalanceAllowanceParams(
+                asset_type=AssetType.CONDITIONAL, token_id=token_id,
+                signature_type=self._resolved_signature_type()))
+        except Exception:  # noqa: BLE001 - a read failure must be caught by the caller as "unknown"
+            raise
+        bal = ba.get("balance") if isinstance(ba, dict) else None
+        try:
+            return float(bal) / 1e6 if bal is not None else 0.0
+        except (TypeError, ValueError):
+            return 0.0
+
+    def settle_conditional_balance(self, token_id: str, predicate, *, timeout_s: float = 6.0,
+                                   poll_s: float = 0.75) -> Optional[float]:
+        """Poll conditional_balance until ``predicate(bal)`` holds or ``timeout_s`` elapses, forcing an
+        on-chain re-sync each round via update_balance_allowance. Returns the LAST balance read (or None
+        if every read raised). Fill/settlement is not instantaneous: right after a buy/sell fills, the
+        CLOB balance endpoint can still report the PRE-trade amount for a few seconds — reading it too
+        soon is exactly what made the sell-side smoke read 0 shares after a 5-share buy, and what would
+        make a verify read see a stale (non-flat) balance and falsely scream unwind_FAILED. Callers pass
+        the predicate for the direction they expect (>= for a buy, <= for a sell-to-flat)."""
+        import time as _time
+        from py_clob_client_v2.clob_types import AssetType, BalanceAllowanceParams
+        deadline = _time.monotonic() + max(0.0, timeout_s)
+        last: Optional[float] = None
+        while True:
+            try:
+                self.client.update_balance_allowance(BalanceAllowanceParams(
+                    asset_type=AssetType.CONDITIONAL, token_id=token_id,
+                    signature_type=self._resolved_signature_type()))
+            except Exception:  # noqa: BLE001 — a sync failure just means we rely on the plain read
+                pass
+            try:
+                last = self.conditional_balance(token_id)
+            except Exception:  # noqa: BLE001 — transient read error; keep the prior value and retry
+                pass
+            if last is not None and predicate(last):
+                return last
+            if _time.monotonic() >= deadline:
+                return last
+            _time.sleep(poll_s)
+
+    def list_positions(self) -> list:
+        """All non-zero CTF positions for the FUNDER wallet (Polymarket Data API) -- used by reconciliation
+        to catch orphans on tokens this run never traded (e.g. a stranded position from a prior run).
+        Best-effort: raises on a network/parse error so the caller can degrade to per-token reads."""
+        import requests
+        funder = resolve_wallet().get("funder")
+        if not funder:
+            return []
+        r = requests.get("https://data-api.polymarket.com/positions",
+                         params={"user": funder, "sizeThreshold": 0.1}, timeout=15)
+        r.raise_for_status()
+        data = r.json()
+        return data if isinstance(data, list) else (data.get("positions") or data.get("data") or [])
+
+    def ctf_allowance_ok(self, token_id: str) -> bool:
+        """True iff the exchange is approved to move our CTF (outcome) tokens for ``token_id`` -- required
+        to SELL/unwind (buying with USDC never needed it). Reads the CONDITIONAL allowance."""
+        from py_clob_client_v2.clob_types import AssetType, BalanceAllowanceParams
+        ba = self.client.get_balance_allowance(BalanceAllowanceParams(
+            asset_type=AssetType.CONDITIONAL, token_id=token_id,
+            signature_type=self._resolved_signature_type()))
+        allows = (ba.get("allowances") if isinstance(ba, dict) else None) or {}
+        for v in allows.values():
+            try:
+                if int(str(v)) > 0:
+                    return True
+            except (TypeError, ValueError):
+                continue
+        return False
+
+    def set_ctf_approval(self, token_id: str) -> Any:
+        """Grant the exchange approval to move our CTF tokens (one-time setApprovalForAll) so unwinds can
+        SELL. On-chain tx; call once at armed startup when live-enabled if ctf_allowance_ok is False."""
+        from py_clob_client_v2.clob_types import AssetType, BalanceAllowanceParams
+        return self.client.update_balance_allowance(BalanceAllowanceParams(
+            asset_type=AssetType.CONDITIONAL, token_id=token_id,
+            signature_type=self._resolved_signature_type()))
 
     def _normalize(self, raw: Any, *, price: float, requested_shares: float) -> dict[str, Any]:
         """Map a post_order response to {status, shares, usd, avg_price, order_id, raw}.

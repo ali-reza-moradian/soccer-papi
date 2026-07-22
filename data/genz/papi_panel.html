@@ -671,7 +671,8 @@ function makerStripHtml(m){   // PURE: the MAKER RT v3 strip (top line + per-spo
     var userUp=!!(m.sockets&&m.sockets.poly_user);
     var rb=function(t,tip){return ' <span class="mbadge" style="background:#e5484d;color:#fff" title="'+tip+'">'+t+'</span>';};
     var ab=function(t,tip){return ' <span class="mbadge" style="background:#f5a623;color:#111" title="'+tip+'">'+t+'</span>';};
-    var badges=(L.halted?rb('HALTED','shared caps auto-halt (pre+inplay)'):'')
+    var badges=(L.orphan?rb('ORPHAN POSITION','unwind not confirmed flat / reconciliation mismatch — ALL live halted, MANUAL CHECK required'):'')
+      +(L.halted?rb('HALTED','shared caps auto-halt (pre+inplay)'):'')
       +(L.inplay_halted?rb('INPLAY HALTED','in-play day-halt (locked_net <= -2%); pre-game continues'):'')
       +((L.inplay_paused&&!L.inplay_halted)?ab('INPLAY PAUSED','first-fill circuit: in-play paused; pre-game unaffected'):'')
       +(userUp?'':rb('USER SOCKET DOWN','Poly user socket DOWN: open quotes auto-cancel + placement halted'));
@@ -707,7 +708,8 @@ function makerStrip(){   // MAKER RT v2 strip + a red banner when the heartbeat 
   var hbts=Date.parse((MRTHB&&MRTHB.ts)||MRT.updated_utc),stale=!hbts||(Date.now()-hbts)/1000>90;
   // Armed live (pre or in-play) but the user socket is down -> RED: fills we can't see can't be hedged.
   var userDown=!!(MRT.gates&&(MRT.gates.pre||MRT.gates.inplay))&&!(MRT.sockets&&MRT.sockets.poly_user);
-  el.className='mrtstrip'+((stale||userDown)?' alarm':'');
+  var orphan=!!(MRT.live&&MRT.live.orphan);
+  el.className='mrtstrip'+((stale||userDown||orphan)?' alarm':'');
   el.innerHTML=makerStripHtml(MRT)+(stale?' &middot; <span class="v">stale</span>':'');
   if(banner)banner.classList.toggle('show',stale);
 }

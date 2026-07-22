@@ -97,6 +97,19 @@ class PregameLiveExecutor:
         self._lifetimes: list = []
         self._atbest_hits = 0
         self._atbest_samples = 0
+        # POSITION INTEGRITY: an ORPHAN (unwind not confirmed flat / reconciliation mismatch) latches a
+        # full halt until manual clearance. auto_flatten (config) decides whether reconciliation re-sells.
+        self.orphan: Optional[dict] = None
+        self._traded_tokens: set = set()             # tokens we've placed on -> reconcile these for flatness
+        self.auto_flatten = bool(getattr(getattr(cfg, "live", None), "auto_flatten", False))
+        # Persist the watch-set NEXT TO the arm file (data/ops in prod; the test tmp dir in tests) so a
+        # token left non-flat by a CRASHED prior run is re-checked by the startup reconcile. The in-memory
+        # set alone dies with the process, and a blanket list_positions() sweep is unusable on this funder
+        # wallet (hundreds of unrelated positions -> every one a false orphan; see reconcile_positions).
+        _arm = getattr(getattr(cfg, "live", None), "arm_file", "") or ""
+        self._traded_path = (os.path.join(os.path.dirname(_arm), "maker_rt_traded_tokens.json")
+                             if _arm else "")
+        self._load_traded_tokens()
 
     # -- daily roll ----------------------------------------------------------
     def roll_day(self, now: Any) -> None:
@@ -221,6 +234,9 @@ class PregameLiveExecutor:
                         market_key=c.market_key, hedge_lookup=dict(c.hedge_lookup), poly_rate=c.poly_rate,
                         placed_ts=now_ts, phase=phase, best_bid=getattr(rest, "best_bid", None))
         self.open_orders[c.key] = lo
+        if token not in self._traded_tokens:          # reconcile this token for flatness (persist for restarts)
+            self._traded_tokens.add(token)
+            self._persist_traded_tokens()
         self.caps.on_open()
         kind = "reprice" if existing is not None else "quote"
         self._record(c, kind, now, phase, price=price, size=size, hedge_ask=hedge_ask, order_id=oid)
@@ -378,8 +394,9 @@ class PregameLiveExecutor:
 
     def _hedge_fill(self, lo: _LiveOrder, matched: float, fill_price: float, store: Any,
                     now: Any, now_ts: float) -> dict:
-        """Hedge one fill (re-verify -> decline+unwind or IOC lift). Returns a result dict for the CSV +
-        the in-play circuit (outcome, locked_net, pnl, hedge order id, chain string)."""
+        """Hedge one fill: re-verify -> DECLINE+unwind, or lift the Kalshi IOC (a miss/partial unwinds the
+        UNHEDGED remainder). EVERY unwind goes through _verified_unwind (REST-confirm flat or SCREAM+HALT).
+        Returns the result dict (outcome, locked_net, pnl, hedge order id, chain)."""
         self.caps.commit_stake(matched * fill_price)              # rest leg committed
         hl = lo.hedge_lookup
         hedge_venue = hl.get("venue", "kalshi")
@@ -387,46 +404,70 @@ class PregameLiveExecutor:
             else store.poly_view(hl.get("token"))
         re_mark = hedge_mod.mark_hedge(hv.ask_ladder, matched, hedge_venue, lo.poly_rate) if hv else None
         locked = hedge_mod.locked_net(fill_price, re_mark["cost_per_share"]) if re_mark else None
-        self._alert(f"[MAKER_RT][LIVE] FILL {lo.game} {lo.direction} [{lo.phase}] {matched:.0f}@{fill_price:.4f} "
-                    f"(id {lo.order_id}) -- verifying hedge (locked~{'n/a' if locked is None else f'{locked*100:.2f}%'}).")
+        self._record_fill(lo, matched, fill_price, now)          # ledger chain head: fill -> hedge_* -> unwind
+        self._instant(f"[MAKER_RT][LIVE] FILL {lo.game} {lo.direction} [{lo.phase}] {matched:.0f}@"
+                      f"{fill_price:.4f} (id {lo.order_id}) -- verifying hedge "
+                      f"(locked~{'n/a' if locked is None else f'{locked*100:.2f}%'}).")
+        # DECLINE: the walked hedge is too dear -> do NOT leg in; unwind the WHOLE fill (verified).
         if locked is None or locked < HEDGE_DECLINE_FLOOR:
-            cost = self._unwind(lo, matched, fill_price)
-            self.caps.on_fill(-(cost or 0.0))
-            self._record_lo(lo, "hedge_declined", now, price=fill_price, size=matched,
-                            locked_net=locked, unwind_cost=cost)
-            self._alert(f"[MAKER_RT][LIVE] HEDGE DECLINED {lo.game} [{lo.phase}] (locked "
-                        f"{'n/a' if locked is None else f'{locked*100:.2f}%'} < floor) -> unwound; cost ${cost or 0:.2f}")
-            return {"outcome": "hedge_declined", "locked_net": locked, "pnl": -(cost or 0.0),
-                    "hedge_order_id": None,
-                    "chain": self._chain(lo, matched, fill_price, "declined+unwound", locked, -(cost or 0.0), None)}
+            return self._unwind_and_record(lo, matched, fill_price, locked, "hedge_declined", now)
+        # FIRE the Kalshi hedge.
         res = self.hedger.hedge({"token_id": lo.token, "side": "BUY", "price": fill_price, "size": matched},
                                 {"ticker": hl.get("ticker"), "side": hl.get("side", "yes"),
                                  "best_ask": getattr(hv, "best_ask", None)})
         status = getattr(res, "status", "error")
+        hedged = float(getattr(res, "hedged_shares", 0.0) or 0.0)
+        hedge_avg = getattr(res, "hedge_avg_price", None)
         hedge_oid = ((getattr(res, "detail", None) or {}).get("kalshi") or {}).get("order_id") \
             if isinstance(getattr(res, "detail", None), dict) else None
         if status == "locked":
-            self.caps.commit_stake(float(getattr(res, "hedged_shares", 0.0))
-                                   * float(getattr(res, "hedge_avg_price", 0.0) or 0.0))
+            self.caps.commit_stake(hedged * float(hedge_avg or 0.0))
             pnl = float(getattr(res, "locked_pnl", 0.0) or 0.0)
             self.caps.on_fill(pnl)
             self._record_lo(lo, "hedge_locked", now, price=fill_price, size=matched, locked_net=locked,
-                            locked_pnl=pnl, hedge_avg=getattr(res, "hedge_avg_price", None))
-            self._alert(f"[MAKER_RT][LIVE] HEDGE LOCKED {lo.game} [{lo.phase}] {matched:.0f} -> pnl ${pnl:.2f} "
-                        f"(hedge id {hedge_oid})")
+                            locked_pnl=pnl, hedge_avg=hedge_avg, hedge_order_id=hedge_oid)
+            self._instant(f"[MAKER_RT][LIVE] HEDGE LOCKED {lo.game} [{lo.phase}] {matched:.0f} -> "
+                          f"pnl ${pnl:.2f} (hedge id {hedge_oid})")
             return {"outcome": "hedge_locked", "locked_net": locked, "pnl": pnl, "hedge_order_id": hedge_oid,
                     "chain": self._chain(lo, matched, fill_price, "locked", locked, pnl, hedge_oid)}
-        uc = getattr(res, "unwind_cost", None)              # unwound / partial_unwound / error
-        if uc is not None:
-            self.caps.commit_stake(abs(float(uc)))
-        self.caps.on_fill(-(float(uc) if uc is not None else 0.0))
-        self._record_lo(lo, "hedge_" + status, now, price=fill_price, size=matched,
-                        locked_net=locked, unwind_cost=uc)
-        self._alert(f"[MAKER_RT][LIVE] HEDGE {status.upper()} {lo.game} [{lo.phase}] (unwind cost "
-                    f"${uc if uc is not None else 0:.2f})")
-        return {"outcome": "hedge_" + status, "locked_net": locked, "pnl": -(float(uc) if uc is not None else 0.0),
+        # MISS / PARTIAL / ERROR -> unwind the UNHEDGED remainder (verified). A partial hedge locks its part.
+        if hedged > 0:
+            self.caps.commit_stake(hedged * float(hedge_avg or 0.0))
+        remainder = max(0.0, matched - hedged)
+        return self._unwind_and_record(lo, remainder, fill_price, locked, "hedge_unwound", now,
+                                       hedge_oid=hedge_oid)
+
+    def _unwind_and_record(self, lo: _LiveOrder, shares: float, fill_price: float, locked: Optional[float],
+                           ok_outcome: str, now: Any, hedge_oid: Any = None) -> dict:
+        """Unwind ``shares`` of the naked fill and VERIFY the position is flat. On success record
+        ``ok_outcome`` (hedge_declined | hedge_unwound). On failure record 'unwind_FAILED' + SCREAM + HALT
+        all live quoting -- NO 'unwound' row is ever written without a venue-confirmed flat position."""
+        if shares <= 1e-9:                                    # nothing naked (fully hedged) -> flat by construction
+            self._record_lo(lo, ok_outcome, now, price=fill_price, size=0, locked_net=locked, unwind_cost=0.0)
+            return {"outcome": ok_outcome, "locked_net": locked, "pnl": 0.0, "hedge_order_id": hedge_oid,
+                    "chain": self._chain(lo, 0, fill_price, ok_outcome, locked, 0.0, hedge_oid)}
+        u = self._verified_unwind(lo, shares, fill_price)
+        if u["ok"]:
+            cost = u["cost"] or 0.0
+            self.caps.on_fill(-cost)
+            if u["sold"] > 0 and u["sell_px"] is not None:
+                self.caps.commit_stake(float(u["sell_px"]) * float(u["sold"]))
+            self._record_lo(lo, ok_outcome, now, price=fill_price, size=shares, locked_net=locked,
+                            unwind_cost=cost)
+            self._instant(f"[MAKER_RT][LIVE] {ok_outcome.upper()} {lo.game} [{lo.phase}] -- VERIFIED FLAT; "
+                          f"sold {u['sold']:.0f}@{u['sell_px']} cost ${cost:.2f} (hedge id {hedge_oid})")
+            return {"outcome": ok_outcome, "locked_net": locked, "pnl": -cost, "hedge_order_id": hedge_oid,
+                    "chain": self._chain(lo, shares, fill_price, ok_outcome, locked, -cost, hedge_oid)}
+        # VERIFY-OR-SCREAM: the position is NOT confirmed flat -> ORPHAN. Book the worst-case loss.
+        rem = u["remaining"]
+        est_loss = round(float(fill_price) * float(rem if rem is not None else shares), 4)
+        self.caps.on_fill(-est_loss)
+        self._record_lo(lo, "unwind_FAILED", now, price=fill_price, size=shares, locked_net=locked,
+                        unwind_cost=est_loss)
+        self._orphan(lo, rem, u.get("sell_res"), now)
+        return {"outcome": "unwind_FAILED", "locked_net": locked, "pnl": -est_loss,
                 "hedge_order_id": hedge_oid,
-                "chain": self._chain(lo, matched, fill_price, status, locked, -(float(uc) if uc else 0.0), hedge_oid)}
+                "chain": self._chain(lo, shares, fill_price, "unwind_FAILED", locked, -est_loss, hedge_oid)}
 
     def _apply_inplay_circuit(self, lo: _LiveOrder, result: dict, now: Any, now_ts: float) -> None:
         """After an IN-PLAY fill: (a) if locked_net <= halt threshold -> HALT in-play for the day + cancel
@@ -451,21 +492,127 @@ class PregameLiveExecutor:
                 f"-> {outcome} hedge_id={hedge_oid} locked_net={'n/a' if locked is None else f'{locked*100:.2f}%'} "
                 f"pnl=${pnl:.2f}")
 
-    def _unwind(self, lo: _LiveOrder, shares: float, fill_price: float) -> Optional[float]:
-        """Market-sell the naked poly fill; return the realized loss ($, positive = lost)."""
+    def _verified_unwind(self, lo: _LiveOrder, shares: float, fill_price: float) -> dict:
+        """Market-sell ``shares`` of the naked fill (FAK marketable) AND REST-verify the position is flat.
+        Returns {ok, sold, sell_px, cost, remaining, sell_res}. ok is True ONLY when the position read
+        confirms flat (<= ~1 share). A position-read failure is treated as NOT flat (fail-closed)."""
         poly = getattr(self.hedger, "poly", None) or self.poly
-        unwind = None
+        sell_res = None
         try:
-            unwind = poly.place_market_sell(lo.token, shares)
+            sell_res = poly.place_market_sell(lo.token, shares)
         except Exception as exc:  # noqa: BLE001
-            self._alert(f"[MAKER_RT][LIVE] unwind sell FAILED {lo.token[:10]}...: {exc}")
+            sell_res = {"status": "error", "error": str(exc)}
+        sold = float((sell_res or {}).get("shares") or 0.0) if isinstance(sell_res, dict) else 0.0
+        sell_px = (sell_res or {}).get("avg_price") if isinstance(sell_res, dict) else None
+        remaining = None
+        try:                                                     # SOURCE OF TRUTH (not the sell response);
+            # settlement is NOT instant -- poll (forcing a re-sync) so a stale PRE-sell balance can't
+            # falsely read non-flat and scream unwind_FAILED. Stops as soon as it reads <= 0.5.
+            if hasattr(poly, "settle_conditional_balance"):
+                remaining = poly.settle_conditional_balance(lo.token, lambda b: b <= 0.5)
+            else:                                                # test doubles: plain read
+                remaining = poly.conditional_balance(lo.token)
+        except Exception as exc:  # noqa: BLE001 - read failed -> UNKNOWN -> fail closed
+            if self.log:
+                self.log.warning("[MAKER_RT][LIVE] position read failed for %s: %s", lo.token[:12], exc)
+            remaining = None
+        flat = remaining is not None and remaining <= 0.5
+        cost = round((float(fill_price) - float(sell_px)) * sold, 4) if (sell_px is not None and sold > 0) else None
+        return {"ok": bool(flat), "sold": sold, "sell_px": sell_px, "cost": cost,
+                "remaining": remaining, "sell_res": sell_res}
+
+    def _orphan(self, lo: _LiveOrder, remaining: Any, sell_res: Any, now: Any) -> None:
+        self._orphan_detected(lo.game, lo.token, lo.phase, remaining, f"unwind_FAILED sell_res={sell_res}", now)
+
+    def _orphan_detected(self, game: str, token: str, phase: str, remaining: Any, detail: str,
+                         now: Any) -> None:
+        """A naked ORPHAN (unwind not confirmed flat, or a reconciliation mismatch). HALT ALL live quoting,
+        cancel opens, SCREAM (CRITICAL Telegram). Latched until manually cleared. The red panel banner +
+        the 5-min reconciliation loop surface it — this is what makes the class self-detecting."""
+        if self.orphan is not None:                          # already latched -> don't re-scream every loop
+            return
+        try:
+            detected = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+        except Exception:  # noqa: BLE001
+            detected = ""
+        self.orphan = {"game": game, "token": token, "remaining": remaining, "phase": phase,
+                       "detected": detected, "detail": detail}
+        self.caps.halted = True
+        self.caps.halt_reason = "orphan_position"
+        self._instant(f"[MAKER_RT][CRITICAL] ORPHAN POSITION {game} [{phase}] token {str(token)[:12]}... "
+                      f"remaining={remaining} ({detail}). HALTING all live quoting + cancelling opens. "
+                      f"MANUAL CHECK REQUIRED.")
+        self.cancel_all("orphan_halt", now)
+
+    def _load_traded_tokens(self) -> None:
+        """Reload the persisted watch-set at startup (best-effort; a corrupt/locked file never blocks
+        startup). This is what lets the startup reconcile catch a position stranded by a crashed run."""
+        import json
+        if not self._traded_path or not os.path.exists(self._traded_path):
+            return
+        try:
+            with open(self._traded_path, "r", encoding="utf-8") as fh:
+                toks = json.load(fh)
+            if isinstance(toks, list):
+                self._traded_tokens.update(str(t) for t in toks if t)
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _persist_traded_tokens(self) -> None:
+        """Atomically write the watch-set. Best-effort: persistence must NEVER crash live trading."""
+        import json
+        if not self._traded_path:
+            return
+        try:
+            tmp = self._traded_path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as fh:
+                json.dump(sorted(self._traded_tokens), fh)
+            os.replace(tmp, self._traded_path)
+        except Exception:  # noqa: BLE001
+            pass
+
+    def reconcile_positions(self, now: Any) -> Optional[dict]:
+        """Read ACTUAL positions and diff against the bot's belief (flat -- a resting order is NOT a
+        position; every fill is hedged or unwound-to-flat). Any non-zero holding on a token WE TRADED
+        this run is an ORPHAN. Runs at startup + every 5 min while armed. If ``auto_flatten`` it also
+        market-sells the orphan to flat (default False -> halt + scream only). Returns the orphan or None.
+
+        Scoped to ``self._traded_tokens`` ON PURPOSE: this funder wallet holds hundreds of unrelated
+        positions (other bots/markets -- Bitcoin up/down, other sports, etc.). A blanket list_positions()
+        sweep would flag EVERY one of those as an orphan and instantly halt live quoting on a false
+        positive. Only the tokens this maker actually placed on can be a maker orphan."""
+        if self.orphan is not None:
+            return self.orphan
+        open_toks = {lo.token for lo in self.open_orders.values()}
+        suspects: dict = {}
+        flat_toks: list = []
+        for tok in list(self._traded_tokens):                # reliable per-token read (CLOB), maker-scoped
+            try:
+                bal = self.poly.conditional_balance(tok)
+            except Exception:  # noqa: BLE001 - unknown -> keep watching (don't prune on a read failure)
+                continue
+            if bal is not None and bal > 0.5:
+                suspects[tok] = bal
+            elif bal is not None and tok not in open_toks:   # confirmed flat + not actively quoting -> drop
+                flat_toks.append(tok)
+        if flat_toks:                                        # bound the watch-set to open + non-flat tokens
+            self._traded_tokens.difference_update(flat_toks)
+            self._persist_traded_tokens()
+        if not suspects:
             return None
-        sell_px = (unwind or {}).get("avg_price") if isinstance(unwind, dict) else None
-        if sell_px is None:
-            return None
-        cost = round((float(fill_price) - float(sell_px)) * float(shares), 4)
-        self.caps.commit_stake(float(sell_px) * float(shares))
-        return cost
+        tok, bal = next(iter(suspects.items()))
+        if self.auto_flatten:                                # optional: try to flatten the biggest orphan
+            try:
+                self.poly.place_market_sell(tok, bal)
+                bal2 = self.poly.conditional_balance(tok)
+                if bal2 is not None and bal2 <= 0.5:
+                    self._instant(f"[MAKER_RT][CRITICAL] reconciliation auto-flattened orphan {str(tok)[:12]}... "
+                                  f"({bal} sh); position now flat. HALTING for manual review anyway.")
+            except Exception as exc:  # noqa: BLE001
+                self._instant(f"[MAKER_RT][CRITICAL] reconciliation auto-flatten FAILED {str(tok)[:12]}...: {exc}")
+        self._orphan_detected("reconciliation", tok, "?", bal,
+                              f"{len(suspects)} orphan token(s); auto_flatten={self.auto_flatten}", now)
+        return self.orphan
 
     # -- helpers -------------------------------------------------------------
     def _neg_for(self, token: str, store: Any) -> Optional[bool]:
@@ -508,7 +655,7 @@ class PregameLiveExecutor:
                 "halted": self.caps.halted, "feed_ok": self.feed_ok,
                 "inplay_fills": self.inplay_fills_today,
                 "inplay_paused": bool(now_ts and now_ts < self.inplay_pause_until),
-                "inplay_halted": self.inplay_halted,
+                "inplay_halted": self.inplay_halted, "orphan": self.orphan,
                 "median_quote_age_s": med, "time_at_best_share": atbest, "quotes": quotes}
 
     # -- CSV + telegram ------------------------------------------------------
@@ -527,7 +674,7 @@ class PregameLiveExecutor:
 
     def _record_lo(self, lo: _LiveOrder, event: str, now: Any, *, price: float = None, size: float = None,
                    locked_net: float = None, locked_pnl: float = None, unwind_cost: float = None,
-                   hedge_avg: float = None, reason: str = "") -> None:
+                   hedge_avg: float = None, hedge_order_id: Any = None, reason: str = "") -> None:
         if self.state is None:
             return
         row = {"event": event, "mode": "live", "sport": lo.sport, "phase": lo.phase, "game": lo.game,
@@ -539,10 +686,26 @@ class PregameLiveExecutor:
             row["locked_net"] = round(float(locked_net) * 100, 4)
         if hedge_avg is not None:
             row["hedge_avg"] = round(float(hedge_avg), 4)
+        if hedge_order_id is not None:
+            row["hedge_order_id"] = hedge_order_id
+        # REALIZED pnl ($): a locked hedge's pnl, else the NEGATIVE of the unwind/orphan cost.
+        realized = locked_pnl if locked_pnl is not None else (
+            -float(unwind_cost) if unwind_cost is not None else None)
+        if realized is not None:
+            row["realized_pnl_usd"] = round(float(realized), 4)
         for k, v in (("locked_pnl", locked_pnl), ("unwind_cost", unwind_cost)):
             if v is not None:
                 row[k] = v
         self.state.record(row, now)
+
+    def _record_fill(self, lo: _LiveOrder, matched: float, fill_price: float, now: Any) -> None:
+        """The head of the ledger chain: a live 'fill' row (fill -> hedge_* -> unwind|unwind_FAILED)."""
+        if self.state is None:
+            return
+        self.state.record({"event": "fill", "mode": "live", "sport": lo.sport, "phase": lo.phase,
+                           "game": lo.game, "market_key": lo.market_key, "side": lo.side,
+                           "direction": lo.direction, "quote_price": round(float(fill_price), 4),
+                           "size": round(float(matched), 2), "reason": lo.order_id}, now)
 
     # -- alerting: INSTANT (fill/hedge/unwind/pause/halt/feed/error) vs ROUTINE (quote/reprice/cancel) --
     def _send_telegram(self, text: str) -> None:

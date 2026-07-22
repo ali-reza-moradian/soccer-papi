@@ -75,6 +75,8 @@ class QuoteDriver:
         self.freeze_until: dict = {}         # node3 -> ts a shock-freeze expires
         self.viable_since: dict = {}         # candidate key -> ts a direction first became viable (in-play)
         self.stale_since: dict = {}          # candidate key -> ts a node first went stale (anti-flap grace)
+        self.thin_refusals: dict = {}        # node3 -> [ts] of recent hedge_too_thin refusals (10-min window)
+        self.thin_cooldown_until: dict = {}  # node3 -> ts a hedge-thin cooldown expires (after 3 in 10 min)
         self._achv_sample_ts: dict = {}      # node3 -> last achievable_sample CSV ts (1/min throttle)
 
     # -- universe ----------------------------------------------------------
@@ -172,6 +174,15 @@ class QuoteDriver:
             return False
         return self._node_fresh(store, c, now_ts)
 
+    def _note_thin_refusal(self, node3: tuple, now_ts: float) -> None:
+        """Record a hedge_too_thin refusal; after >= 3 within a 10-min window, COOLDOWN the node 15 min
+        (stop arming a node whose hedge book can't reliably cover us -> arm-then-cancel churn)."""
+        r = [t for t in self.thin_refusals.get(node3, []) if t >= now_ts - 600.0]
+        r.append(now_ts)
+        self.thin_refusals[node3] = r
+        if len(r) >= 3:
+            self.thin_cooldown_until[node3] = now_ts + 900.0
+
     def _node_fresh(self, store: Any, c: Candidate, now_ts: float) -> bool:
         """CONNECTION-based freshness for BOTH legs: each venue connection alive (recent activity, no
         pending resync) AND the node's book ticked within node_quiet_max_s. A QUIET book on a HEALTHY
@@ -237,6 +248,13 @@ class QuoteDriver:
                     continue
                 self.stale_since.pop(c.key, None)             # fresh again -> reset the grace timer
 
+            # HEDGE-THIN COOLDOWN: skip a node that recently refused hedge_too_thin repeatedly (stop the
+            # arm-then-cancel churn on chronically-thin-hedge nodes for the cooldown window).
+            if now_ts < self.thin_cooldown_until.get(c.node3, 0.0):
+                self._expire_if_open(c, now, "hedge_thin_cooldown", phase)
+                self.last_event[c.key] = None
+                self.viable_since.pop(c.key, None)
+                continue
             tick = store.poly_tick(c.rest_ref[1]) if c.rest_venue == "polymarket" else c.tick
             hedge_tick = store.poly_tick(c.hedge_lookup.get("token"), 0.01) if c.hedge_venue == "polymarket" else 0.01
             dec = compute_quote(rest, hedge, hedge_venue=c.hedge_venue, tick=tick,
@@ -251,7 +269,14 @@ class QuoteDriver:
                 self.viable_since.pop(c.key, None)
                 continue
             if dec.would_be_behind:
-                self._expire_if_open(c, now, "now_behind", phase)
+                # A LIVE resting order momentarily behind best is KEPT (queue preservation) — route through
+                # the executor's reprice HYSTERESIS (mandatory reprice only if economics break); the shadow
+                # path expires as before. A brief best-bid flicker no longer shreds queue position.
+                if (self.pregame_exec is not None and c.key in self.pregame_exec.open_orders
+                        and self.pregame_exec.eligible(c, phase, now_ts)):
+                    self.pregame_exec.place_or_reprice(c, dec, rest, store, now, now_ts, phase)
+                else:
+                    self._expire_if_open(c, now, "now_behind", phase)
                 self.viable_since.pop(c.key, None)
                 # DEDUPE: record 'behind' only on the TRANSITION (or a >=1-tick move) — not per tick.
                 if self.last_event.get(c.key) != "behind" or needs_reprice(prev, dec, tick):
@@ -259,6 +284,8 @@ class QuoteDriver:
                     self.last_event[c.key] = "behind"
                 continue
             if not dec.viable:
+                if dec.reason == "hedge_too_thin":       # HEDGE-THIN pre-filter: cooldown a chronically-thin node
+                    self._note_thin_refusal(c.node3, now_ts)
                 self._expire_if_open(c, now, dec.reason, phase)
                 self.last_event[c.key] = None
                 self.viable_since.pop(c.key, None)

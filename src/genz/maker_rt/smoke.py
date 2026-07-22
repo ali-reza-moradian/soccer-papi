@@ -362,6 +362,92 @@ async def run_smoke(cfg: Any, *, log: Any = None, hold_s: float = 30.0,
     return 0
 
 
+async def run_smoke_sell(cfg: Any, *, log: Any = None) -> int:
+    """SELL-SIDE proof: BUY ~5 shares of a liquid pre-game market at market, then exercise the REAL unwind
+    path (place_market_sell) to flat and REST-VERIFY flat. Prints both venue transactions + the realized
+    round-trip cost. Runs when live.enabled (clients present) -- does NOT need the arm file (this is the
+    gate for RE-arming after the -$2.35 orphan). Any non-flat result -> non-zero exit."""
+    _p("=" * 78)
+    _p("maker_rt --smoke-sell  (buy 5 @ market -> REAL unwind to flat -> REST-verify flat)")
+    _p("=" * 78)
+    kalshi, poly = build_pregame_order_clients(cfg, log=log)
+    if poly is None:
+        _p("SMOKE-SELL REFUSED: maker_rt.live.enabled is false (no order clients).")
+        return 2
+    try:
+        _p(f"poly balance readable: {bool(poly.get_balance())}")
+    except Exception as exc:  # noqa: BLE001
+        _p(f"SMOKE-SELL REFUSED: poly balance read failed: {exc}")
+        return 2
+    sel = _select_mlb_token(cfg, poly, log)
+    if sel is None:
+        _p("SMOKE-SELL REFUSED: no liquid pre-game MLB (ml2) token available right now.")
+        return 3
+    token, tick, neg = sel["token"], sel["tick"], sel["neg"]
+    try:
+        ob = poly.get_orderbook(token)
+        asks = ob.get("asks") or []
+        best_ask = float(asks[0][0]) if asks else None
+    except Exception as exc:  # noqa: BLE001
+        _p(f"SMOKE-SELL REFUSED: orderbook read failed: {exc}")
+        return 3
+    if best_ask is None:
+        _p("SMOKE-SELL REFUSED: no ask liquidity to buy into.")
+        return 3
+    # CTF approval (a missing approval is exactly what silently rejected the unwind sell).
+    try:
+        appr = poly.ctf_allowance_ok(token)
+        _p(f"CTF sell approval present: {appr}")
+        if not appr:
+            _p("setting one-time CTF approval ...")
+            poly.set_ctf_approval(token)
+    except Exception as exc:  # noqa: BLE001
+        _p(f"CTF approval check/set failed (continuing): {exc}")
+
+    shares = 5
+    buy_px = round(best_ask + 2 * tick, 6)                        # marketable buy (cross up 2 ticks)
+    _p(f"selected {sel['game']} token {token[:12]}... best_ask={best_ask} buy@{buy_px} x{shares}")
+    _install_shutdown_handlers(poly, [], log, _telegram_sender(log))   # a signal cancels+cleans
+    buy = poly.place_order(token, buy_px, shares, "BUY", order_type="FAK", tick_size=tick, neg_risk=neg)
+    _p(f"BUY : status={buy.get('status')} shares={buy.get('shares')} avg={buy.get('avg_price')} "
+       f"id={buy.get('order_id')}")
+    # Settlement is NOT instant: the CLOB balance endpoint reports the PRE-buy amount for a few seconds
+    # after a fill (this exact race made the first smoke read 0 shares after a 5-share buy). Poll (forcing
+    # a re-sync) until the held balance reflects the fill, then trust it as the amount to unwind.
+    pos = await asyncio.to_thread(poly.settle_conditional_balance, token, (lambda b: b >= 1.0),
+                                  timeout_s=12.0)
+    _p(f"position after BUY (REST, settled): {pos} shares")
+    if pos is None or pos < 1.0:
+        _p("SMOKE-SELL: buy filled < 1 share (thin book) — nothing to unwind; treating as INCONCLUSIVE.")
+        return 4
+    _p("--- exercising the REAL unwind path (place_market_sell, FAK marketable) ---")
+    sell = poly.place_market_sell(token, pos)
+    _p(f"SELL: status={sell.get('status')} shares={sell.get('shares')} avg={sell.get('avg_price')} "
+       f"id={sell.get('order_id')}")
+    # Same settlement race on the way back to flat — poll for the balance to DROP instead of a fixed sleep.
+    pos2 = await asyncio.to_thread(poly.settle_conditional_balance, token, (lambda b: b <= 0.5),
+                                   timeout_s=8.0)
+    flat = pos2 is not None and pos2 <= 0.5
+    _p(f"position after UNWIND (REST, settled): {pos2} shares -> {'FLAT' if flat else 'NOT FLAT'}")
+    buy_avg = float(buy.get("avg_price") or buy_px)
+    sell_avg = float(sell.get("avg_price") or 0.0)
+    realized = round((buy_avg - sell_avg) * float(pos), 4)
+    _p("-" * 78)
+    _p("VENUE-CONFIRMED ROUND TRIP:")
+    _p(f"  BUY  order {buy.get('order_id')}  {buy.get('shares')} @ {buy_avg}")
+    _p(f"  SELL order {sell.get('order_id')}  {sell.get('shares')} @ {sell_avg}")
+    _p(f"  realized cost (spread+fees): ${realized}")
+    _p(f"  final position (REST-verified): {pos2} shares")
+    _p("-" * 78)
+    if not flat:
+        _p("SMOKE-SELL FAIL: position NOT flat after unwind — the SELL path is still broken. Do NOT re-arm.")
+        _cancel_all(poly, log)
+        return 5
+    _p("SMOKE-SELL PASS: the REAL unwind flattened the position and it is REST-verified flat.")
+    _p("=" * 78)
+    return 0
+
+
 def _stop_feed(feed: Any, feed_task: Any) -> None:
     if feed:
         feed.stop()

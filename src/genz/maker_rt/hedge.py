@@ -76,9 +76,13 @@ class LiveHedger:
         self.log = log
 
     def hedge(self, fill: dict, hedge: dict) -> HedgeResult:
-        """fill = {token_id, side, price, size} (our Polymarket maker fill). hedge describes the Kalshi
-        complement leg to LIFT: {ticker, side, best_ask}. IOC-emulated marketable limit at ask+buffer;
-        on miss/partial, market-unwind the poly fill (SELL) and freeze the market."""
+        """Lift the Kalshi complement with a marketable IOC (limit at ask+buffer). Returns a HedgeResult
+        with the ACTUAL Kalshi fill count: "locked" (full), "partial" (some), "missed" (0), or "error".
+
+        It does NOT unwind on a miss -- the CALLER (the executor) owns the ONE verified unwind, because a
+        naked fill must be sold AND the position REST-confirmed flat before we can claim 'unwound'. The
+        old in-hedger unwind logged success off avg_price presence (a killed FOK still has a limit price),
+        which is exactly how the -$2.35 orphan slipped through."""
         size = int(round(float(fill.get("size") or 0)))
         if size <= 0 or self.kalshi is None:
             return HedgeResult("error", detail={"reason": "no_size_or_client"})
@@ -87,7 +91,7 @@ class LiveHedger:
         try:
             res = self.kalshi.place_order(ticker, k_side, size, limit,
                                           time_in_force="immediate_or_cancel")
-        except Exception as exc:  # noqa: BLE001 - a placement error -> treat as a miss and unwind
+        except Exception as exc:  # noqa: BLE001 - a placement error -> treat as a miss
             res = {"status": "error", "fill_count": 0, "error": str(exc)}
         filled = int(res.get("fill_count", 0) or 0)
         avg = res.get("avg_price")
@@ -99,20 +103,10 @@ class LiveHedger:
                               ticker, filled, avg or limit, pnl)
             return HedgeResult("locked", hedged_shares=filled, hedge_avg_price=avg or limit,
                                locked_pnl=round(pnl, 4), detail={"kalshi": res})
-        # MISS / PARTIAL -> unwind the naked poly fill (SELL) and freeze this market 10 min.
-        remainder = size - filled
-        unwind = None
-        if self.poly is not None:
-            try:
-                unwind = self.poly.place_market_sell(fill.get("token_id"), remainder)
-            except Exception as exc:  # noqa: BLE001
-                unwind = {"status": "error", "error": str(exc)}
-        cost = None
-        if isinstance(unwind, dict) and unwind.get("avg_price") is not None:
-            cost = round((float(fill.get("price") or 0) - float(unwind["avg_price"])) * remainder, 4)
+        # MISS / PARTIAL -> report the shortfall; the executor does the VERIFIED unwind + freezes.
+        status = "partial" if filled > 0 else "missed"
         if self.log:
-            self.log.warning("[MAKER_RT][LIVE] hedge MISS %s (got %d/%d) -> unwound %s; freeze market.",
-                             ticker, filled, size, remainder)
-        status = "partial_unwound" if filled > 0 else "unwound"
-        return HedgeResult(status, hedged_shares=filled, hedge_avg_price=avg, unwind_cost=cost,
-                           freeze_market=True, detail={"kalshi": res, "unwind": unwind})
+            self.log.warning("[MAKER_RT][LIVE] hedge %s %s (got %d/%d) -> caller must unwind %d.",
+                             status.upper(), ticker, filled, size, size - filled)
+        return HedgeResult(status, hedged_shares=filled, hedge_avg_price=avg, freeze_market=True,
+                           detail={"kalshi": res})

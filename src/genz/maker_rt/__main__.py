@@ -29,6 +29,7 @@ from .universe import build_universe, kalshi_tickers, load_trees, poly_tokens, t
 
 HEARTBEAT_EVERY_S = 2.5
 LIVE_FILL_POLL_S = 1.5                        # REST backup fill-poll cadence (socket is the primary signal)
+RECONCILE_EVERY_S = 300.0                     # position reconciliation cadence while armed (5 min)
 STOP_ALL_PATH = os.path.join(mrt_config.OPS_DIR, "STOP_ALL")
 _STOP = {"flag": False}                       # set by a SIGTERM/SIGBREAK handler -> graceful cancel-all + exit
 
@@ -133,6 +134,26 @@ def _armed_startup_alert(cfg: Any, pre_armed: bool, inplay_armed: bool, telegram
             pass
 
 
+def _ensure_ctf_approval(poly_oc: Any, log: Any) -> None:
+    """SELL/unwind needs the exchange approved to move our CTF tokens (buying with USDC never did). Probe
+    a sample token's CONDITIONAL allowance; if missing, set the one-time approval. Best-effort: a failure
+    logs loudly (the sell path + reconciliation still catch a real orphan)."""
+    if poly_oc is None:
+        return
+    try:
+        from .universe import build_universe, load_trees, poly_tokens
+        toks = poly_tokens(build_universe(load_trees(), 0.0, max_games=5, expire_before_kickoff_s=120))
+        if not toks:
+            return
+        if poly_oc.ctf_allowance_ok(toks[0]):
+            log.info("[MAKER_RT][LIVE] CTF sell approval present.")
+            return
+        log.warning("[MAKER_RT][LIVE] CTF sell approval MISSING — setting it (one-time setApprovalForAll).")
+        poly_oc.set_ctf_approval(toks[0])
+    except Exception as exc:  # noqa: BLE001
+        log.warning("[MAKER_RT][LIVE] CTF approval check/set failed: %s", exc)
+
+
 def _spawn_user_feed(store: BookStore, pregame_exec: Any, poly_oc: Any, log: Any) -> tuple:
     """Start the Poly USER socket when armed, routing order updates to the executor. (None, None) if not
     armed or L2 creds can't be derived — in that case the REST poll is the only fill signal, so the
@@ -186,6 +207,13 @@ async def _run(cfg: Any, log: Any) -> int:
     if pregame_exec is not None:
         swept = _startup_stray_cancel_armed(poly_oc, kalshi_oc, log)
         _armed_startup_alert(cfg, gate.armed, inplay_gate.armed, telegram, swept, log)
+        _ensure_ctf_approval(poly_oc, log)                # SELL side needs CTF approval; set once if missing
+        try:
+            orph = pregame_exec.reconcile_positions(now0)  # STARTUP reconciliation: catch a prior-run orphan
+            if orph:
+                log.error("[MAKER_RT][LIVE] STARTUP reconciliation found an ORPHAN: %s — live halted.", orph)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("[MAKER_RT][LIVE] startup reconciliation failed: %s", exc)
     driver = QuoteDriver(cfg, state, log=log, inplay_exec=None, pregame_exec=pregame_exec)
     horizon = cfg.inplay.horizon_hours
     universe = build_universe(load_trees(), time.time(), max_games=cfg.max_games,
@@ -211,6 +239,7 @@ async def _run(cfg: Any, log: Any) -> int:
     last_hb = 0.0
     last_achv_log = 0.0
     last_fill_poll = 0.0
+    last_reconcile = 0.0
     try:
         while True:
             now, now_ts = utcnow(), time.time()
@@ -232,6 +261,12 @@ async def _run(cfg: Any, log: Any) -> int:
                 if now_ts - last_fill_poll >= LIVE_FILL_POLL_S:      # REST backup fill detector
                     last_fill_poll = now_ts
                     pregame_exec.poll_open_orders(store, now, now_ts)
+                if now_ts - last_reconcile >= RECONCILE_EVERY_S:     # POSITION RECONCILIATION (orphan guard)
+                    last_reconcile = now_ts
+                    try:
+                        pregame_exec.reconcile_positions(now)
+                    except Exception as exc:  # noqa: BLE001
+                        log.warning("[MAKER_RT][LIVE] reconciliation failed: %s", exc)
                 state.live = pregame_exec.snapshot(now_ts)
             poly_user_up = bool(pm_user is not None and pm_user.connected)
             sockets = {"poly_market": pm.connected, "poly_user": poly_user_up, "kalshi": ks.connected}
@@ -340,6 +375,11 @@ def main(argv: Optional[list] = None) -> int:
         hold = _arg_value(args, "--hold", default=30.0, cast=float)
         return asyncio.run(run_smoke(cfg, log=log, hold_s=hold,
                                      shutdown_proof=("--shutdown-proof" in args)))
+    if "--smoke-sell" in args:
+        # SELL-SIDE proof: buy 5 @ market -> REAL unwind to flat -> REST-verify flat. The gate for
+        # re-arming after the orphan bug. Runs when live.enabled; does NOT need the arm file.
+        from .smoke import run_smoke_sell
+        return asyncio.run(run_smoke_sell(cfg, log=log))
     _install_signal_handlers(log)             # SIGTERM/SIGBREAK -> graceful cancel-all + exit
     try:
         return asyncio.run(_run(cfg, log))

@@ -52,6 +52,9 @@ class LiveConfig:
     max_daily_stake_usd: float = 100.0
     hedge_timeout_ms: int = 3000
     unwind_on_hedge_fail: bool = True
+    # When position reconciliation finds an ORPHAN, market-sell it to flat before halting (default False =
+    # halt + scream only; a human flattens). Even when true, live stays HALTED for manual review.
+    auto_flatten: bool = False
 
 
 @dataclass
@@ -196,10 +199,12 @@ def load_maker_rt_config(config_path: Optional[str] = None,
     live_blk = dict(live_blk) if isinstance(live_blk, dict) else {}
     lc = LiveConfig()
     for name in ("enabled", "arm_file", "quote_usd_max", "max_open_quotes", "max_fills_per_day",
-                 "max_daily_loss_usd", "max_daily_stake_usd", "hedge_timeout_ms", "unwind_on_hedge_fail"):
+                 "max_daily_loss_usd", "max_daily_stake_usd", "hedge_timeout_ms", "unwind_on_hedge_fail",
+                 "auto_flatten"):
         if live_blk.get(name) is not None:
             setattr(lc, name, live_blk[name])
     lc.enabled = bool(lc.enabled)
+    lc.auto_flatten = bool(lc.auto_flatten)
     lc.quote_usd_max = float(lc.quote_usd_max)
     lc.max_open_quotes = int(lc.max_open_quotes)
     lc.max_fills_per_day = int(lc.max_fills_per_day)
