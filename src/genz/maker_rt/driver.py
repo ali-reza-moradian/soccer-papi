@@ -77,6 +77,7 @@ class QuoteDriver:
         self.stale_since: dict = {}          # candidate key -> ts a node first went stale (anti-flap grace)
         self.thin_refusals: dict = {}        # node3 -> [ts] of recent hedge_too_thin refusals (10-min window)
         self.thin_cooldown_until: dict = {}  # node3 -> ts a hedge-thin cooldown expires (after 3 in 10 min)
+        self.hedge_persist_s = float(getattr(cfg, "hedge_persist_s", 10.0))  # continuous-depth pre-filter window
         self._achv_sample_ts: dict = {}      # node3 -> last achievable_sample CSV ts (1/min throttle)
 
     # -- universe ----------------------------------------------------------
@@ -291,14 +292,22 @@ class QuoteDriver:
                 self.viable_since.pop(c.key, None)
                 continue
 
-            # (c) PERSISTENCE (in-play only): a direction must be continuously viable >= persist_ms
-            # before a shadow quote arms — a phantom that flickers viable for one tick never quotes.
-            if phase == "inplay" and ip is not None:
+            # (c) PERSISTENCE: a direction must be continuously VIABLE (which includes hedge depth — a
+            # hedge_too_thin refusal above is non-viable and pops viable_since) for >= the phase window
+            # before it arms. In-play: ip.persist_ms (anti-phantom — a flicker that's viable one tick never
+            # quotes). Pre-game HEDGE-THIN pre-filter: ONLY a node that recently refused hedge_too_thin must
+            # prove the hedge held for hedge_persist_s (10s) before it RE-arms — a flickering-thin hedge
+            # otherwise arms-then-cancels and shreds quote lifetime. Healthy nodes (no recent thinness) arm
+            # immediately (persist_ms=0). Pairs with the 15-min cooldown after 3 refusals / 10 min.
+            inplay_persist = phase == "inplay" and ip is not None
+            recent_thin = any(t >= now_ts - 600.0 for t in self.thin_refusals.get(c.node3, []))
+            if inplay_persist or recent_thin:
+                persist_ms = float(ip.persist_ms) if inplay_persist else self.hedge_persist_s * 1000.0
                 since = self.viable_since.get(c.key)
                 if since is None:
                     self.viable_since[c.key] = now_ts
                     continue                             # first viable tick — start the timer, don't arm yet
-                if (now_ts - since) * 1000.0 < ip.persist_ms - 1e-9:
+                if (now_ts - since) * 1000.0 < persist_ms - 1e-9:
                     continue                             # still building persistence
             else:
                 self.viable_since.pop(c.key, None)

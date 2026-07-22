@@ -755,3 +755,69 @@ def test_driver_hedge_thin_cooldown():
         drv._note_thin_refusal(node3, 100.0 + i)              # 3 refusals within the 10-min window
     assert drv.thin_cooldown_until.get(node3, 0.0) > 100.0    # -> node cooled down (15 min)
     assert drv.thin_cooldown_until[node3] == pytest.approx(102.0 + 900.0)
+
+
+def test_driver_hedge_thin_persistence_prefilter():
+    """A VIABLE pre-game rest-poly quote on a node that JUST refused hedge_too_thin must show >= 10s of
+    CONTINUOUS hedge depth before it re-arms (anti arm-then-cancel churn = longer median quote lifetime).
+    A healthy node (no recent thinness) still arms immediately -> no regression."""
+    from datetime import datetime, timezone
+    from src.genz.maker_rt import parsing
+    from src.genz.maker_rt.driver import QuoteDriver
+    from src.genz.maker_rt.store import BookStore
+    from src.genz.maker_rt.universe import build_universe
+    future = "2027-01-01T00:00:00Z"
+    n = lambda side, tok, kt, ks: {"market_type": "ml2", "market_key": "ml2", "side": side,  # noqa: E731
+        "line": None, "kind": "2way", "poly_token_id": tok, "poly_side": side.title(),
+        "poly_fee_rate": 0.05, "kalshi_ticker": kt, "kalshi_side": ks}
+    tree = {"games": {"G1": {"away": "A", "home": "B", "kickoff_utc": future, "nodes": [
+        n("away", "TOK_A", "KX-1", "YES"), n("home", "TOK_B", "KX-1", "NO")]}}}
+    uni = build_universe({"mlb": tree}, 0.0, max_games=20)
+    key = ("mlb", "G1", "ml2", "away", "rest-poly")
+    node3 = ("mlb", "G1", "ml2")
+    now = datetime(2026, 7, 16, 18, tzinfo=timezone.utc)
+
+    # Deep on BOTH sides (bid 0.40 / ask 0.60, hedge NO 0.50) -> away rest-poly quote 0.41 viable & not-behind,
+    # and no sibling direction refuses hedge_too_thin (which would trip the node's cooldown and mask this test).
+    def viable_book(bs, ts, seq):
+        bs.apply_poly(parsing.parse_poly_market({"event_type": "book", "asset_id": "TOK_A",
+            "bids": [{"price": "0.40", "size": "5000"}], "asks": [{"price": "0.60", "size": "5000"}]}), ts)
+        bs.apply_kalshi(parsing.parse_kalshi({"type": "orderbook_snapshot", "sid": 1, "seq": seq,
+            "msg": {"market_ticker": "KX-1", "yes_dollars_fp": [["0.5000", "5000"]],
+                    "no_dollars_fp": [["0.5000", "5000"]]}}), ts)
+
+    # HEALTHY node (no recent thin refusal) -> arms on the first viable tick (no delay, no regression).
+    fake = _FakePregame()
+    drv = QuoteDriver(mrt_config.MakerRtConfig(), _DriverState(), pregame_exec=fake)
+    drv.set_universe(uni)
+    bs = BookStore(); viable_book(bs, 100.0, 1)
+    drv.refresh_quotes(bs, now, now_ts=100.0)
+    assert any(k == key for k, _px in fake.placed)            # healthy -> immediate arm
+
+    # RECENTLY-THIN node -> must prove 10s of continuous hedge depth before it re-arms.
+    fake = _FakePregame()
+    drv = QuoteDriver(mrt_config.MakerRtConfig(), _DriverState(), pregame_exec=fake)
+    drv.set_universe(uni)
+    drv.thin_refusals[node3] = [99.0]                         # refused hedge_too_thin ~1s ago -> pre-filter on
+    bs = BookStore(); viable_book(bs, 100.0, 1)
+    drv.refresh_quotes(bs, now, now_ts=100.0)
+    assert not fake.placed and key in drv.viable_since        # first deep tick -> start timer, DON'T arm
+    viable_book(bs, 105.0, 2); drv.refresh_quotes(bs, now, now_ts=105.0)
+    assert not fake.placed                                    # 5s continuous (< 10s) -> still building
+    viable_book(bs, 111.0, 3); drv.refresh_quotes(bs, now, now_ts=111.0)
+    assert any(k == key for k, _px in fake.placed)            # >= 10s continuous depth -> arms
+
+    # A thin flicker RESETS the timer (viable_since popped on hedge_too_thin) — churn stays suppressed.
+    fake = _FakePregame()
+    drv = QuoteDriver(mrt_config.MakerRtConfig(), _DriverState(), pregame_exec=fake)
+    drv.set_universe(uni)
+    drv.thin_refusals[node3] = [99.0]
+    bs = BookStore(); viable_book(bs, 100.0, 1)
+    drv.refresh_quotes(bs, now, now_ts=100.0)                 # timer starts at 100
+    bs.apply_kalshi(parsing.parse_kalshi({"type": "orderbook_snapshot", "sid": 1, "seq": 2,  # hedge goes THIN
+        "msg": {"market_ticker": "KX-1", "yes_dollars_fp": [["0.5000", "1"]],
+                "no_dollars_fp": [["0.5000", "1"]]}}), 108.0)
+    drv.refresh_quotes(bs, now, now_ts=108.0)
+    assert key not in drv.viable_since                        # thin -> timer reset
+    viable_book(bs, 112.0, 3); drv.refresh_quotes(bs, now, now_ts=112.0)
+    assert not fake.placed                                    # only 4s since depth returned (< 10s) -> not armed yet

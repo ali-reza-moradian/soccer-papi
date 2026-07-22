@@ -113,6 +113,11 @@ class MakerRtConfig:
     # reprice (floor/never-crossable violation) is always immediate.
     reprice_min_ticks: int = 2
     min_rest_s: float = 20.0
+    # HEDGE-THIN pre-filter: a node that recently refused hedge_too_thin must show CONTINUOUS hedge depth
+    # for >= this many seconds before it RE-arms (a flickering-thin hedge otherwise arms-then-cancels,
+    # shredding quote lifetime). Healthy nodes (no recent thinness) arm immediately. Pairs with the 15-min
+    # cooldown after 3 refusals / 10 min.
+    hedge_persist_s: float = 10.0
     # TELEGRAM digest: routine quote/reprice/cancel events collapse into one line every this many minutes
     # (0 = old behavior, instant per-event). FILL/HEDGE/UNWIND/PAUSE/HALT/feed-down/errors stay INSTANT.
     telegram_digest_min: float = 15.0
@@ -153,7 +158,7 @@ def load_maker_rt_config(config_path: Optional[str] = None,
     cfg = MakerRtConfig()
     for name in ("max_games", "quote_usd", "target_net", "debounce_ms", "expire_before_kickoff_s",
                  "poly_fee_rate", "head_poll_s", "ping_s", "reprice_min_ticks", "min_rest_s",
-                 "telegram_digest_min"):
+                 "hedge_persist_s", "telegram_digest_min"):
         if blk.get(name) is not None:
             setattr(cfg, name, blk[name])
     cfg.max_games = int(cfg.max_games)
@@ -166,6 +171,7 @@ def load_maker_rt_config(config_path: Optional[str] = None,
     cfg.ping_s = int(cfg.ping_s)
     cfg.reprice_min_ticks = int(cfg.reprice_min_ticks)
     cfg.min_rest_s = float(cfg.min_rest_s)
+    cfg.hedge_persist_s = float(cfg.hedge_persist_s)
     cfg.telegram_digest_min = float(cfg.telegram_digest_min)
     # PER-SPORT poly-leg cap map, with the DEPRECATED tennis_max_poly_leg scalar as a back-compat alias.
     cap = dict(cfg.poly_leg_cap)
