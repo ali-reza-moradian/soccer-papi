@@ -482,6 +482,10 @@ maker_rt:
   poly_fee_rate: 0.05               # Polymarket sports taker rate (hedge-fee model)
   head_poll_s: 60                   # stale-code guard: exit 0 on git HEAD change (wrapper restarts fresh)
   ping_s: 10                        # Poly market-socket keepalive PING cadence
+  # REPRICE HYSTERESIS (stop shredding queue position) + TELEGRAM digest (collapse routine spam).
+  reprice_min_ticks: 2              # a VOLUNTARY upward reprice needs >= this many ticks of improvement
+  min_rest_s: 20                    #   ...AND the live order to have rested this long (mandatory reprices ignore it)
+  telegram_digest_min: 15           # routine quote/reprice/cancel collapse into one line every N min (0 = instant)
   drift_marks_s: [1, 5, 30]         # adverse-selection hedge-drift reads after each shadow fill
   kalshi_maker_fee_series: []       # Kalshi series that charge a MAKER fee -> never rest on that side
   poly_leg_cap:                     # PER-SPORT: skip a direction whose Polymarket leg price exceeds the cap
@@ -493,11 +497,15 @@ maker_rt:
   # 120s gap, then IN-PLAY under the rails below. All the pre-game guards still apply.
   inplay:
     horizon_hours: {soccer: 3.0, mlb: 4.5, tennis: 4.5, ufc: 1.5}   # admit a node until kickoff + this
-    fresh_s: 10                     # (a) both venues' books must have updated within this to quote/fill
+    fresh_s: 10                     # (legacy book-change freshness; superseded by conn_fresh_s/node_quiet_max_s)
     shock_move: 0.05                # (b) a mid move >= this within shock_window_s freezes the node
     shock_window_s: 10
     freeze_s: 30                    #     freeze duration after a shock (disarm + no quotes)
     persist_ms: 1500                # (c) a direction must be continuously viable this long before arming
+    # CONNECTION-based freshness (fixes quote-churn: a QUIET book on a HEALTHY socket is FRESH, not stale).
+    conn_fresh_s: 30                # a venue connection is fresh if it had ANY protocol activity within this
+    node_quiet_max_s: 180           # a node goes suspect only if its book hasn't ticked this long (live game)
+    stale_grace_s: 5                # cancel a live order for staleness only after it holds continuously this long
   # LIVE — BUILT, LOCKED. Refuses unless enabled AND the arm file exists AND the startup self-check
   # (balances on both venues, poly allowance/approvals, tick sizes) passes. DO NOT flip enabled here.
   live:

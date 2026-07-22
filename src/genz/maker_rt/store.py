@@ -24,13 +24,18 @@ class BookStore:
         self.kalshi_seq: dict = {}    # sid -> last applied orderbook seq (Kalshi seq is per-connection)
         self.tick: dict = {}          # token -> current tick size
         self._need_resync: bool = False   # a seq gap dropped ALL kalshi books -> full resubscribe
-        # IN-PLAY rails support: per-book freshness + a short mid history (identifier = token | ticker).
-        self.updated: dict = {}       # identifier -> last-update wall-clock ts
+        # IN-PLAY rails support: per-book last-CHANGE + a short mid history (identifier = token | ticker).
+        self.updated: dict = {}       # identifier -> last book-CHANGE wall-clock ts
         self.mid_hist: dict = {}      # identifier -> [(ts, mid), ...] within _MID_WINDOW_S
+        # CONNECTION freshness (separate from book-change): a QUIET book on a HEALTHY socket is FRESH.
+        self.conn_activity: dict = {}  # connection ("poly"|"kalshi") -> last ANY-protocol-activity ts
+        self.conn_of: dict = {}       # identifier -> its connection
 
-    def _touch(self, identifier: str, now_ts: float, mid: Optional[float]) -> None:
-        """Record a book update: freshness ts + (if known) the mid, pruned to the mid window."""
+    def _touch(self, identifier: str, now_ts: float, mid: Optional[float], conn: str) -> None:
+        """Record a book CHANGE: last-change ts + connection activity + (if known) the mid history."""
         self.updated[identifier] = now_ts
+        self.conn_of[identifier] = conn
+        self.conn_activity[conn] = now_ts
         if mid is None:
             return
         h = self.mid_hist.setdefault(identifier, [])
@@ -39,8 +44,33 @@ class BookStore:
         while h and h[0][0] < cutoff:
             h.pop(0)
 
+    def mark_activity(self, conn: str, now_ts: float) -> None:
+        """Record ANY protocol activity on a connection (a message, a heartbeat, a ping/pong). This is
+        what keeps a QUIET-but-alive socket fresh — no book CHANGE is required."""
+        self.conn_activity[conn] = now_ts
+
+    def conn_fresh(self, conn: str, now_ts: float, conn_fresh_s: float) -> bool:
+        """A connection is fresh iff it had protocol activity within ``conn_fresh_s`` AND has no pending
+        seq-gap resync (Kalshi). No activity for that long == the socket is down/hung == unreliable."""
+        if conn == "kalshi" and self._need_resync:
+            return False
+        t = self.conn_activity.get(conn)
+        return t is not None and (now_ts - t) <= conn_fresh_s
+
+    def node_fresh(self, identifier: str, now_ts: float, conn_fresh_s: float,
+                   node_quiet_max_s: float) -> bool:
+        """RAIL freshness: the node's CONNECTION is fresh AND its book has ticked within
+        ``node_quiet_max_s`` (a node quiet longer than that during a live game is suspect/dead). A quiet
+        book on a healthy connection (change within node_quiet_max_s) is FRESH — that is the fix."""
+        conn = self.conn_of.get(identifier)
+        if conn is None or not self.conn_fresh(conn, now_ts, conn_fresh_s):
+            return False
+        t = self.updated.get(identifier)
+        return t is not None and (now_ts - t) <= node_quiet_max_s
+
     def is_fresh(self, identifier: str, now_ts: float, fresh_s: float) -> bool:
-        """True if ``identifier``'s book updated within ``fresh_s`` seconds of ``now_ts``."""
+        """LEGACY book-change freshness (kept for callers/tests). Superseded by ``node_fresh`` for the
+        in-play rails — a quiet book was wrongly flagged stale by this, destroying queue position."""
         t = self.updated.get(identifier)
         return t is not None and (now_ts - t) <= fresh_s
 
@@ -74,12 +104,12 @@ class BookStore:
             if k == "poly_book":
                 bk = self.poly.setdefault(token, PolyBook())
                 bk.replace(e.get("bids") or {}, e.get("asks") or {})
-                self._touch(token, now_ts, self._mid(bk.view()))
+                self._touch(token, now_ts, self._mid(bk.view()), "poly")
             elif k == "poly_price":
                 bk = self.poly.setdefault(token, PolyBook())
                 for price, side, size in e.get("changes") or []:
                     bk.apply_change(price, "BID" if side in ("BUY", "BID", "YES") else "ASK", size)
-                self._touch(token, now_ts, self._mid(bk.view()))
+                self._touch(token, now_ts, self._mid(bk.view()), "poly")
             elif k == "poly_tick":
                 if e.get("tick"):
                     self.tick[token] = e["tick"]
@@ -112,7 +142,7 @@ class BookStore:
                 bk = self.kalshi.setdefault(ticker, KalshiBook())
                 bk.replace(e.get("yes") or [], e.get("no") or [], seq=e.get("seq"))
                 self.kalshi_seq[e.get("sid")] = e.get("seq")
-                self._touch(ticker, now_ts, self._mid(bk.view("yes")))
+                self._touch(ticker, now_ts, self._mid(bk.view("yes")), "kalshi")
             elif k == "kalshi_delta" and ticker:
                 sid = e.get("sid")
                 prev = self.kalshi_seq.get(sid)
@@ -124,7 +154,7 @@ class BookStore:
                 bk = self.kalshi.get(ticker)
                 if bk is not None and e.get("price") is not None and e.get("delta") is not None:
                     bk.apply_delta(e.get("side"), e.get("price"), e.get("delta"), seq=e.get("seq"))
-                    self._touch(ticker, now_ts, self._mid(bk.view("yes")))
+                    self._touch(ticker, now_ts, self._mid(bk.view("yes")), "kalshi")
                 self.kalshi_seq[sid] = e.get("seq")
             elif k == "kalshi_trade" and ticker:
                 cnt = e.get("count")

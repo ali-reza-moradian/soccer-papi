@@ -83,6 +83,20 @@ class PregameLiveExecutor:
         self.inplay_pause_until = 0.0
         self.inplay_halted = False
         self._day = ""
+        # REPRICE HYSTERESIS + connection-freshness knobs.
+        self.reprice_min_ticks = int(getattr(cfg, "reprice_min_ticks", 2))
+        self.min_rest_s = float(getattr(cfg, "min_rest_s", 20.0))
+        ip = getattr(cfg, "inplay", None)
+        self.conn_fresh_s = float(getattr(ip, "conn_fresh_s", 30.0))
+        self.node_quiet_max_s = float(getattr(ip, "node_quiet_max_s", 180.0))
+        # TELEGRAM digest (routine quote/reprice/cancel collapse; fills/hedges/pause/halt/errors instant).
+        self.digest_min = float(getattr(cfg, "telegram_digest_min", 15.0))
+        self._digest = {"quotes": 0, "cancels": {}, "fills": 0}
+        self._digest_since = 0.0
+        # LIFETIME metrics (live quotes only): closed-quote lifetimes + an at-best time sampler.
+        self._lifetimes: list = []
+        self._atbest_hits = 0
+        self._atbest_samples = 0
 
     # -- daily roll ----------------------------------------------------------
     def roll_day(self, now: Any) -> None:
@@ -94,6 +108,9 @@ class PregameLiveExecutor:
         self.inplay_fills_today = 0
         self.inplay_pause_until = 0.0
         self.inplay_halted = False
+        self._lifetimes = []
+        self._atbest_hits = 0
+        self._atbest_samples = 0
         if hasattr(self.caps, "roll"):
             self.caps.roll(day)
 
@@ -126,15 +143,14 @@ class PregameLiveExecutor:
         return False
 
     def cooloff_ok(self, store: Any, c: Any, freeze_until_ts: float, now_ts: float) -> bool:
-        """IN-PLAY cool-off: node NOT frozen now, thawed >= ``freeze_cooloff_s`` ago, AND both books fresh.
-        Stricter than the shadow rail — a live in-play quote waits out the cool-off after any shock."""
-        fresh_s = float(getattr(getattr(self.cfg, "inplay", None), "fresh_s", 10.0))
+        """IN-PLAY cool-off: node NOT frozen now, thawed >= ``freeze_cooloff_s`` ago, AND both books
+        CONNECTION-fresh (a quiet book on a healthy socket is fresh). Stricter than the shadow rail."""
         if now_ts < float(freeze_until_ts or 0.0):
             return False
         if freeze_until_ts and (now_ts - float(freeze_until_ts)) < self.inplay_cooloff_s:
             return False
-        return bool(store.is_fresh(c.rest_id, now_ts, fresh_s)
-                    and store.is_fresh(c.hedge_id, now_ts, fresh_s))
+        return bool(store.node_fresh(c.rest_id, now_ts, self.conn_fresh_s, self.node_quiet_max_s)
+                    and store.node_fresh(c.hedge_id, now_ts, self.conn_fresh_s, self.node_quiet_max_s))
 
     # -- placement -----------------------------------------------------------
     def place_or_reprice(self, c: Any, dec: Any, rest: Any, store: Any, now: Any, now_ts: float,
@@ -156,19 +172,38 @@ class PregameLiveExecutor:
             if c.key in self.open_orders:
                 self._cancel(c.key, now, "below_tick")
             return
-        size = self.caps.size_shares(price)
         existing = self.open_orders.get(c.key)
         if existing is not None:
-            if abs(existing.price - price) < tick - 1e-9:
-                return                                                 # unchanged within a tick -> keep resting
-            if not self._cancel(c.key, now, "reprice"):                # cancel not confirmed -> do NOT dup-place
-                return
+            cur = existing.price
+            floor = getattr(dec, "floor", None)
+            crosses = best_ask is not None and cur > best_ask - tick + 1e-9
+            below_floor = floor is not None and cur > floor + 1e-9      # resting ABOVE floor -> nets < target
+            if crosses or below_floor:
+                # MANDATORY reprice: the resting price is now UNECONOMIC (crosses the live book / under
+                # target). Cancel + replace immediately.
+                if not self._cancel(c.key, now, "reprice_cross" if crosses else "reprice_floor"):
+                    return
+            else:
+                if abs(cur - price) < tick - 1e-9:
+                    return                                             # same price -> keep resting
+                # VOLUNTARY upward reprice ONLY: >= reprice_min_ticks better (or no-longer-at-best) AND the
+                # order has rested >= min_rest_s. Otherwise KEEP RESTING to preserve queue position.
+                rested = (now_ts - existing.placed_ts) >= self.min_rest_s
+                higher = price >= cur + self.reprice_min_ticks * tick - 1e-9
+                rest_bid = getattr(live_rest, "best_bid", None)
+                no_longer_best = rest_bid is not None and rest_bid > cur + 1e-9
+                if not (rested and (higher or no_longer_best)):
+                    return
+                if not self._cancel(c.key, now, "reprice"):            # cancel not confirmed -> do NOT dup-place
+                    return
+        size = self.caps.size_shares(price)
         hedge_ask = dec.hedge_best_ask if dec.hedge_best_ask is not None else price
         projected = self.caps.projected_pair_stake(price, size, hedge_ask, size)
         ok, reason = self.caps.can_place(projected)
         if not ok:
-            self._alert(f"[MAKER_RT][LIVE] REFUSE {c.game} {c.direction} [{phase}] @ {price:.4f}: {reason} "
-                        f"(projected pair ${projected:.2f}, stake_today ${self.caps.stake_today:.2f})")
+            self._routine("refuse", f"[MAKER_RT][LIVE] REFUSE {c.game} {c.direction} [{phase}] @ "
+                          f"{price:.4f}: {reason} (projected pair ${projected:.2f}, "
+                          f"stake_today ${self.caps.stake_today:.2f})")
             self._record(c, "expire", now, phase, price=price, size=size, hedge_ask=hedge_ask, reason=reason)
             return
         neg = self._neg_for(token, store)
@@ -189,8 +224,8 @@ class PregameLiveExecutor:
         self.caps.on_open()
         kind = "reprice" if existing is not None else "quote"
         self._record(c, kind, now, phase, price=price, size=size, hedge_ask=hedge_ask, order_id=oid)
-        self._alert(f"[MAKER_RT][LIVE] {kind.upper()} {c.game} {c.market_key} {c.direction} [{phase}] @ "
-                    f"{price:.4f} x{int(size)} (~${price*size:.2f}) id {oid}")
+        self._routine("quote", f"[MAKER_RT][LIVE] {kind.upper()} {c.game} {c.market_key} {c.direction} "
+                      f"[{phase}] @ {price:.4f} x{int(size)} (~${price*size:.2f}) id {oid}")
         matched = float(res.get("shares") or 0)          # a maker shouldn't fill on POST, but the book can move
         if matched > 0:
             self._on_fill_detected(c.key, matched, float(res.get("avg_price") or price), store, now, now_ts)
@@ -220,8 +255,10 @@ class PregameLiveExecutor:
             return False
         self.open_orders.pop(key, None)
         self.caps.on_close()
+        self._record_lifetime(lo, now)
         self._record_lo(lo, "expire", now, reason=reason)
-        self._alert(f"[MAKER_RT][LIVE] CANCEL {lo.game} {lo.direction} [{lo.phase}] ({reason}) id {lo.order_id}")
+        self._routine("cancel", f"[MAKER_RT][LIVE] CANCEL {lo.game} {lo.direction} [{lo.phase}] "
+                      f"({reason}) id {lo.order_id}", reason=reason)
         return True
 
     def _cancel_confirmed(self, oid: str, resp: Any) -> bool:
@@ -329,9 +366,11 @@ class PregameLiveExecutor:
         finally:
             if self.in_flight is not None:
                 self.in_flight.release(("live", key))
+        self._digest["fills"] += 1                          # count for the digest (the hedge is instant-alerted)
         if lo.phase == "inplay":
             self._apply_inplay_circuit(lo, result, now, now_ts)
         if total_matched >= lo.size - 1e-9:                # fully filled -> no remainder resting
+            self._record_lifetime(lo, now)
             self.open_orders.pop(key, None)
             self.caps.on_close()
         elif self.caps.halted or (lo.phase == "inplay" and self.inplay_halted):
@@ -459,13 +498,18 @@ class PregameLiveExecutor:
                    "age_s": round(now_ts - lo.placed_ts, 1) if now_ts else None,
                    "order_id": (lo.order_id[:10] + "…") if lo.order_id else None}
                   for lo in self.open_orders.values()]
+        lt = sorted(self._lifetimes)
+        n = len(lt)
+        med = None if n == 0 else round(lt[n // 2] if n % 2 else (lt[n // 2 - 1] + lt[n // 2]) / 2.0, 1)
+        atbest = round(self._atbest_hits / self._atbest_samples, 4) if self._atbest_samples else None
         return {"open_quotes": len(self.open_orders), "pre_open": pre_open, "inplay_open": ip_open,
                 "stake_today": round(self.caps.stake_today, 2), "stake_cap": self.caps.max_daily_stake_usd,
                 "fills_today": self.caps.fills_today, "pnl_today": round(self.caps.pnl_today, 4),
                 "halted": self.caps.halted, "feed_ok": self.feed_ok,
                 "inplay_fills": self.inplay_fills_today,
                 "inplay_paused": bool(now_ts and now_ts < self.inplay_pause_until),
-                "inplay_halted": self.inplay_halted, "quotes": quotes}
+                "inplay_halted": self.inplay_halted,
+                "median_quote_age_s": med, "time_at_best_share": atbest, "quotes": quotes}
 
     # -- CSV + telegram ------------------------------------------------------
     def _record(self, c: Any, event: str, now: Any, phase: str, *, price: float = None, size: float = None,
@@ -500,12 +544,86 @@ class PregameLiveExecutor:
                 row[k] = v
         self.state.record(row, now)
 
-    def _alert(self, text: str) -> None:
+    # -- alerting: INSTANT (fill/hedge/unwind/pause/halt/feed/error) vs ROUTINE (quote/reprice/cancel) --
+    def _send_telegram(self, text: str) -> None:
+        if not self.telegram:
+            return
+        try:
+            self.telegram(text)
+        except Exception as exc:  # noqa: BLE001 — a telegram failure never blocks execution
+            if self.log:
+                self.log.warning("[MAKER_RT][LIVE] telegram send failed: %s", exc)
+
+    def _instant(self, text: str) -> None:
+        """A material event -> WARNING log + Telegram immediately."""
         if self.log:
             self.log.warning(text)
-        if self.telegram:
-            try:
-                self.telegram(text)
-            except Exception as exc:  # noqa: BLE001 — a telegram failure never blocks execution
-                if self.log:
-                    self.log.warning("[MAKER_RT][LIVE] telegram send failed: %s", exc)
+        self._send_telegram(text)
+
+    _alert = _instant                                # back-compat: existing instant call sites
+
+    @staticmethod
+    def _digest_bucket(reason: Any) -> str:
+        r = str(reason or "")
+        if "reprice" in r or r in ("would_cross_at_post", "below_tick"):
+            return "reprice"
+        if "stale" in r:
+            return "stale"
+        if "thin" in r:
+            return "thin"
+        return "expire"
+
+    def _routine(self, kind: str, text: str, reason: Any = None) -> None:
+        """A routine event (quote/reprice/cancel/refuse): INFO log, then either count into the digest or
+        (when telegram_digest_min == 0) Telegram immediately, like the old per-event behavior."""
+        if self.log:
+            self.log.info(text)
+        if self.digest_min <= 0:
+            self._send_telegram(text)
+            return
+        if kind == "quote":
+            self._digest["quotes"] += 1
+        elif kind == "cancel":
+            b = self._digest_bucket(reason)
+            self._digest["cancels"][b] = self._digest["cancels"].get(b, 0) + 1
+
+    def maybe_flush_digest(self, now_ts: float) -> None:
+        """Every ``telegram_digest_min`` minutes send ONE digest line for the routine activity."""
+        if self.digest_min <= 0:
+            return
+        if self._digest_since == 0.0:
+            self._digest_since = now_ts
+            return
+        if now_ts - self._digest_since < self.digest_min * 60.0:
+            return
+        d = self._digest
+        total = sum(d["cancels"].values())
+        if d["quotes"] or total or d["fills"]:
+            reasons = ", ".join(f"{v} {k}" for k, v in sorted(d["cancels"].items(), key=lambda x: -x[1]))
+            line = (f"[MAKER_RT][DIGEST {int(self.digest_min)}m] {d['quotes']} quotes, {total} cancels"
+                    f"{' [' + reasons + ']' if reasons else ''}, {d['fills']} fills, open {len(self.open_orders)}")
+            self._send_telegram(line)
+            if self.log:
+                self.log.warning(line)
+        self._digest = {"quotes": 0, "cancels": {}, "fills": 0}
+        self._digest_since = now_ts
+
+    def sample_metrics(self, store: Any, now_ts: float) -> None:
+        """Each loop: sample whether each LIVE quote is currently AT BEST (our price >= live best bid)."""
+        for lo in self.open_orders.values():
+            v = store.poly_view(lo.token)
+            bb = getattr(v, "best_bid", None) if v is not None else None
+            self._atbest_samples += 1
+            if bb is None or lo.price >= bb - 1e-9:
+                self._atbest_hits += 1
+
+    def _record_lifetime(self, lo: _LiveOrder, now: Any) -> None:
+        """A live quote closed (cancel or full fill): record how long it rested (the churn metric)."""
+        try:
+            age = now.timestamp() - float(lo.placed_ts)
+        except Exception:  # noqa: BLE001
+            return
+        if age >= 0:
+            self._lifetimes.append(age)
+            if len(self._lifetimes) > 5000:
+                self._lifetimes = self._lifetimes[-5000:]

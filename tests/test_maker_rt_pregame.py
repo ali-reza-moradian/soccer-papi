@@ -76,12 +76,13 @@ class _Hedger:
 
 class _Store:
     """poly_view/kalshi_view/poly_tick stand-in."""
-    def __init__(self, *, poly_best_ask=0.55, kalshi_ask=0.50):
+    def __init__(self, *, poly_best_ask=0.55, kalshi_ask=0.50, poly_best_bid=None):
         self.poly_best_ask = poly_best_ask
         self.kalshi_ask = kalshi_ask
+        self.poly_best_bid = poly_best_bid if poly_best_bid is not None else poly_best_ask - 0.02
 
     def poly_view(self, token):
-        return SimpleNamespace(best_ask=self.poly_best_ask, best_bid=self.poly_best_ask - 0.02,
+        return SimpleNamespace(best_ask=self.poly_best_ask, best_bid=self.poly_best_bid,
                                ask_ladder=[(self.poly_best_ask, 500)])
 
     def kalshi_view(self, ticker, side):
@@ -93,6 +94,9 @@ class _Store:
 
     def is_fresh(self, ident, now_ts, s):
         return True                       # books always "fresh" in the executor unit tests
+
+    def node_fresh(self, ident, now_ts, conn_fresh_s, node_quiet_max_s):
+        return getattr(self, "fresh", True)   # override .fresh=False to simulate a stale node
 
 
 class _State:
@@ -184,35 +188,52 @@ def test_never_crossable_recheck_refuses(tmp_path):
 # --------------------------------------------------------------------------- #
 # reprice atomicity                                                             #
 # --------------------------------------------------------------------------- #
-def test_reprice_cancels_confirms_then_places(tmp_path):
+def test_reprice_hysteresis_matrix(tmp_path):
+    """VOLUNTARY reprice only on >= reprice_min_ticks (2) improvement AND rested >= min_rest_s (20)."""
     oc = _OrderClient()
-    poly = _Poly(order_status="CANCELED")
-    ex, _ = _exec(tmp_path, order_client=oc, poly=poly)
+    ex, _ = _exec(tmp_path, order_client=oc, poly=_Poly(order_status="CANCELED"))
+    store = _Store(poly_best_ask=0.60, poly_best_bid=0.45)     # our 0.46 sits AT best (>= best_bid)
+    key = _cand().key
+    ex.place_or_reprice(_cand(), _dec(price=0.46), None, store, None, 1.0, "pre")   # placed at t=1
+    # +2 ticks but rested only 1s (< min_rest) -> NO reprice (preserve queue position)
+    ex.place_or_reprice(_cand(), _dec(price=0.48), None, store, None, 2.0, "pre")
+    assert oc.cancels == [] and len(oc.rests) == 1 and ex.open_orders[key].price == 0.46
+    # +1 tick after min_rest -> still NO reprice (< reprice_min_ticks)
+    ex.place_or_reprice(_cand(), _dec(price=0.47), None, store, None, 30.0, "pre")
+    assert oc.cancels == [] and len(oc.rests) == 1
+    # +2 ticks AND rested >= min_rest -> VOLUNTARY reprice fires (cancel->confirm->place)
+    ex.place_or_reprice(_cand(), _dec(price=0.48), None, store, None, 40.0, "pre")
+    assert oc.cancels == ["oid1"] and len(oc.rests) == 2 and oc.rests[1]["price"] == 0.48
+    assert ex.open_count() == 1 and ex.caps.open_quotes == 1     # never exceeded max_open mid-transition
+
+
+def test_reprice_mandatory_on_floor_break_is_immediate(tmp_path):
+    """A floor/never-crossable violation is an IMMEDIATE mandatory reprice, ignoring min_rest_s."""
+    oc = _OrderClient()
+    ex, _ = _exec(tmp_path, order_client=oc, poly=_Poly(order_status="CANCELED"))
     store = _Store(poly_best_ask=0.60)
-    ex.place_or_reprice(_cand(), _dec(price=0.46), None, store, now=None, now_ts=1.0)
-    ex.place_or_reprice(_cand(), _dec(price=0.48), None, store, now=None, now_ts=2.0)   # reprice
-    assert oc.cancels == ["oid1"]                     # cancelled the first
-    assert len(oc.rests) == 2 and oc.rests[1]["price"] == 0.48
-    assert ex.open_count() == 1 and ex.caps.open_quotes == 1   # never exceeded max_open mid-transition
+    d = _dec(price=0.46); d.floor = 0.50
+    ex.place_or_reprice(_cand(), d, None, store, None, 1.0, "pre")   # rests at 0.46 (floor 0.50)
+    d2 = _dec(price=0.44); d2.floor = 0.44          # floor dropped below our resting price -> uneconomic
+    ex.place_or_reprice(_cand(), d2, None, store, None, 2.0, "pre")  # rested only 1s, but MANDATORY
+    assert oc.cancels == ["oid1"] and len(oc.rests) == 2 and oc.rests[1]["price"] == 0.44
 
 
 def test_reprice_not_confirmed_does_not_double_place(tmp_path):
-    oc = _OrderClient()
-    poly = _Poly(order_status="LIVE")                 # cancel NOT confirmed (still live) + response empty
-    poly_resp = None
-
     class _OCNoConfirm(_OrderClient):
         def cancel(self, oid):
             self.cancels.append(oid)
-            return {"not_canceled": {oid: "x"}}       # explicitly not canceled
+            return {"not_canceled": {oid: "x"}}       # explicitly NOT canceled
 
     oc = _OCNoConfirm()
-    ex, _ = _exec(tmp_path, order_client=oc, poly=poly)
+    ex, _ = _exec(tmp_path, order_client=oc, poly=_Poly(order_status="LIVE"))
     store = _Store(poly_best_ask=0.60)
-    ex.place_or_reprice(_cand(), _dec(price=0.46), None, store, now=None, now_ts=1.0)
-    ex.place_or_reprice(_cand(), _dec(price=0.48), None, store, now=None, now_ts=2.0)
+    d = _dec(price=0.46); d.floor = 0.50
+    ex.place_or_reprice(_cand(), d, None, store, None, 1.0, "pre")
+    d2 = _dec(price=0.44); d2.floor = 0.44          # MANDATORY reprice, but the cancel won't confirm
+    ex.place_or_reprice(_cand(), d2, None, store, None, 2.0, "pre")
     assert oc.cancels == ["oid1"]
-    assert len(oc.rests) == 1                          # did NOT place the reprice (cancel unconfirmed)
+    assert len(oc.rests) == 1                          # did NOT re-place (cancel unconfirmed)
     assert ex.open_count() == 1
 
 
@@ -546,3 +567,48 @@ def test_driver_freeze_cancels_live_inplay_order():
     drv.refresh_quotes(store, now, t0 + 1)                     # shock -> freeze -> cancel live order
     assert any(reason == "shock_freeze" for _k, reason in fake.cancelled)
     assert key not in fake.open_orders
+
+
+# --------------------------------------------------------------------------- #
+# Telegram digest + lifetime metrics                                            #
+# --------------------------------------------------------------------------- #
+def test_telegram_digest_batches_routine_and_passes_instant(tmp_path):
+    sent = []
+    oc = _OrderClient()
+    ex, _ = _exec(tmp_path, order_client=oc)                   # default hedger LOCKS the fill
+    ex.telegram = sent.append
+    assert ex.digest_min == 15.0                               # digest ON (default)
+    store = _Store(poly_best_ask=0.60, poly_best_bid=0.45)
+    ex.place_or_reprice(_cand(), _dec(0.46), None, store, None, 1.0, "pre")
+    assert sent == []                                          # routine QUOTE batched, NOT sent instantly
+    ex.on_order_update({"order_id": oc.rests[0]["oid"], "size_matched": 5, "price": 0.46}, store, None, 2.0)
+    assert any("HEDGE" in m or "FILL" in m for m in sent)      # instant fill/hedge passes through
+    ex.maybe_flush_digest(1000.0)                              # init the digest window
+    ex.maybe_flush_digest(1000.0 + 15 * 60 + 1)                # window elapsed -> ONE digest line
+    assert any("DIGEST" in m and "quotes" in m and "fills" in m for m in sent)
+
+
+def test_digest_off_sends_routine_instantly(tmp_path):
+    sent = []
+    oc = _OrderClient()
+    ex, _ = _exec(tmp_path, order_client=oc)
+    ex.telegram = sent.append
+    ex.digest_min = 0.0                                        # telegram_digest_min 0 -> old behavior
+    ex.place_or_reprice(_cand(), _dec(0.46), None, _Store(poly_best_ask=0.60, poly_best_bid=0.45),
+                        None, 1.0, "pre")
+    assert any("QUOTE" in m for m in sent)                     # routine sent instantly when digest off
+
+
+def test_lifetime_and_atbest_metrics(tmp_path):
+    oc = _OrderClient()
+    ex, _ = _exec(tmp_path, order_client=oc, poly=_Poly(order_status="CANCELED"))
+    store = _Store(poly_best_ask=0.60, poly_best_bid=0.45)     # our 0.46 sits AT best (>= best_bid)
+    now0 = datetime(2026, 7, 22, 12, 0, 0, tzinfo=timezone.utc)
+    t0 = now0.timestamp()
+    ex.place_or_reprice(_cand(), _dec(0.46), None, store, now0, t0, "pre")
+    ex.sample_metrics(store, t0 + 1)
+    ex.sample_metrics(store, t0 + 2)
+    assert ex.snapshot(t0 + 3)["time_at_best_share"] == 1.0    # both samples were at best
+    now1 = datetime(2026, 7, 22, 12, 0, 45, tzinfo=timezone.utc)
+    ex.cancel(_cand(), now1, "expire")                         # the quote rested 45s
+    assert ex.snapshot(t0 + 46)["median_quote_age_s"] == pytest.approx(45.0, abs=0.5)

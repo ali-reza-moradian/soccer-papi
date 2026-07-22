@@ -80,11 +80,15 @@ class InplayConfig:
     """The ``maker_rt.inplay:`` sub-block — admission horizon + the anti-phantom rails for in-play
     shadow quoting. Live is HARD-refused in-play regardless (see LiveGate)."""
     horizon_hours: dict = field(default_factory=lambda: {"soccer": 3.0, "mlb": 4.5, "tennis": 4.5, "ufc": 1.5})
-    fresh_s: float = 10.0          # (a) both venues' books must have updated within this to quote/fill
+    fresh_s: float = 10.0          # (legacy) book-change freshness — superseded by conn_fresh_s/node_quiet_max_s
     shock_move: float = 0.05       # (b) a mid move >= this within shock_window_s freezes the node
     shock_window_s: float = 10.0
     freeze_s: float = 30.0         #     freeze duration after a shock (disarm + no quotes)
     persist_ms: int = 1500         # (c) a direction must be continuously viable this long before arming
+    # CONNECTION-BASED freshness (fixes quote-churn: a QUIET book on a HEALTHY socket is FRESH).
+    conn_fresh_s: float = 30.0     # a venue connection is fresh if it had ANY protocol activity within this
+    node_quiet_max_s: float = 180.0  # a node goes suspect only if its book hasn't ticked this long (live game)
+    stale_grace_s: float = 5.0     # a live order is cancelled for staleness only after it holds this long
 
     def horizon_for(self, sport: str) -> float:
         return float(self.horizon_hours.get(sport, 3.0))
@@ -101,6 +105,14 @@ class MakerRtConfig:
     poly_fee_rate: float = 0.05            # Polymarket sports taker rate (hedge-fee model)
     head_poll_s: int = 60                  # stale-code guard: exit 0 on git HEAD change
     ping_s: int = 10                       # ws keepalive PING cadence (poly)
+    # REPRICE HYSTERESIS (stop shredding queue position): a VOLUNTARY upward reprice needs >= this many
+    # ticks of improvement (or no-longer-at-best) AND the order to have rested >= min_rest_s. A MANDATORY
+    # reprice (floor/never-crossable violation) is always immediate.
+    reprice_min_ticks: int = 2
+    min_rest_s: float = 20.0
+    # TELEGRAM digest: routine quote/reprice/cancel events collapse into one line every this many minutes
+    # (0 = old behavior, instant per-event). FILL/HEDGE/UNWIND/PAUSE/HALT/feed-down/errors stay INSTANT.
+    telegram_digest_min: float = 15.0
     drift_marks_s: tuple = (1, 5, 30)      # adverse-selection hedge-drift marks after a shadow fill
     # Kalshi series that charge a MAKER fee — never rest on the Kalshi side of these (verified list).
     kalshi_maker_fee_series: tuple = ()
@@ -137,7 +149,8 @@ def load_maker_rt_config(config_path: Optional[str] = None,
         blk.update({k: v for k, v in overrides.items() if v is not None})
     cfg = MakerRtConfig()
     for name in ("max_games", "quote_usd", "target_net", "debounce_ms", "expire_before_kickoff_s",
-                 "poly_fee_rate", "head_poll_s", "ping_s"):
+                 "poly_fee_rate", "head_poll_s", "ping_s", "reprice_min_ticks", "min_rest_s",
+                 "telegram_digest_min"):
         if blk.get(name) is not None:
             setattr(cfg, name, blk[name])
     cfg.max_games = int(cfg.max_games)
@@ -148,6 +161,9 @@ def load_maker_rt_config(config_path: Optional[str] = None,
     cfg.poly_fee_rate = float(cfg.poly_fee_rate)
     cfg.head_poll_s = int(cfg.head_poll_s)
     cfg.ping_s = int(cfg.ping_s)
+    cfg.reprice_min_ticks = int(cfg.reprice_min_ticks)
+    cfg.min_rest_s = float(cfg.min_rest_s)
+    cfg.telegram_digest_min = float(cfg.telegram_digest_min)
     # PER-SPORT poly-leg cap map, with the DEPRECATED tennis_max_poly_leg scalar as a back-compat alias.
     cap = dict(cfg.poly_leg_cap)
     if isinstance(blk.get("poly_leg_cap"), dict):
@@ -169,7 +185,8 @@ def load_maker_rt_config(config_path: Optional[str] = None,
     ic = InplayConfig()
     if isinstance(ip_blk.get("horizon_hours"), dict):
         ic.horizon_hours = {str(k): float(v) for k, v in ip_blk["horizon_hours"].items()}
-    for name in ("fresh_s", "shock_move", "shock_window_s", "freeze_s"):
+    for name in ("fresh_s", "shock_move", "shock_window_s", "freeze_s", "conn_fresh_s",
+                 "node_quiet_max_s", "stale_grace_s"):
         if ip_blk.get(name) is not None:
             setattr(ic, name, float(ip_blk[name]))
     if ip_blk.get("persist_ms") is not None:

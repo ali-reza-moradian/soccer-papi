@@ -74,6 +74,7 @@ class QuoteDriver:
         # In-play state.
         self.freeze_until: dict = {}         # node3 -> ts a shock-freeze expires
         self.viable_since: dict = {}         # candidate key -> ts a direction first became viable (in-play)
+        self.stale_since: dict = {}          # candidate key -> ts a node first went stale (anti-flap grace)
         self._achv_sample_ts: dict = {}      # node3 -> last achievable_sample CSV ts (1/min throttle)
 
     # -- universe ----------------------------------------------------------
@@ -96,6 +97,7 @@ class QuoteDriver:
                 self.prev.pop(key, None)
                 self.last_event.pop(key, None)
                 self.viable_since.pop(key, None)
+                self.stale_since.pop(key, None)
         self.drift_pending = [d for d in self.drift_pending if d["key"] in live]
         # LIVE CHURN SAFETY: cancel any REAL order whose candidate vanished from the rebuilt universe
         # (a game/market that dropped can never fill on a stale book).
@@ -166,12 +168,19 @@ class QuoteDriver:
         """Data-quality rail for the achievable ladder (ALL phases): both books fresh AND the node not
         shock-frozen right now. A rails-failed evaluation is kept OUT of the summary ladder (ghost
         inflation from stale/frozen phantom edges)."""
-        ip = self._ip()
-        fresh_s = ip.fresh_s if ip is not None else 10.0
         if now_ts < self.freeze_until.get(c.node3, 0.0):
             return False
-        return bool(store.is_fresh(c.rest_id, now_ts, fresh_s)
-                    and store.is_fresh(c.hedge_id, now_ts, fresh_s))
+        return self._node_fresh(store, c, now_ts)
+
+    def _node_fresh(self, store: Any, c: Candidate, now_ts: float) -> bool:
+        """CONNECTION-based freshness for BOTH legs: each venue connection alive (recent activity, no
+        pending resync) AND the node's book ticked within node_quiet_max_s. A QUIET book on a HEALTHY
+        socket is FRESH — this is what stops the stale-cancel quote-churn."""
+        ip = self._ip()
+        cf = float(getattr(ip, "conn_fresh_s", 30.0)) if ip is not None else 30.0
+        nq = float(getattr(ip, "node_quiet_max_s", 180.0)) if ip is not None else 180.0
+        return bool(store.node_fresh(c.rest_id, now_ts, cf, nq)
+                    and store.node_fresh(c.hedge_id, now_ts, cf, nq))
 
     # -- quote refresh -----------------------------------------------------
     def refresh_quotes(self, store: Any, now: Any, now_ts: float) -> None:
@@ -216,12 +225,17 @@ class QuoteDriver:
                     self._freeze_node(c, now_ts, now_ts + ip.freeze_s, now, move)
                     self.viable_since.pop(c.key, None)
                     continue
-                if not (store.is_fresh(c.rest_id, now_ts, ip.fresh_s)
-                        and store.is_fresh(c.hedge_id, now_ts, ip.fresh_s)):
-                    self._expire_if_open(c, now, "inplay_stale", phase)
+                if not self._node_fresh(store, c, now_ts):
+                    # ANTI-FLAP GRACE: cancel a live resting order for staleness ONLY after the stale
+                    # condition holds CONTINUOUSLY for stale_grace_s (a brief blip must not shred queue
+                    # position). Freeze/shock cancels above stay IMMEDIATE (those are real events).
+                    since = self.stale_since.setdefault(c.key, now_ts)
+                    if (now_ts - since) >= float(getattr(ip, "stale_grace_s", 5.0)):
+                        self._expire_if_open(c, now, "inplay_stale", phase)
                     self.last_event[c.key] = None
                     self.viable_since.pop(c.key, None)
                     continue
+                self.stale_since.pop(c.key, None)             # fresh again -> reset the grace timer
 
             tick = store.poly_tick(c.rest_ref[1]) if c.rest_venue == "polymarket" else c.tick
             hedge_tick = store.poly_tick(c.hedge_lookup.get("token"), 0.01) if c.hedge_venue == "polymarket" else 0.01
@@ -269,12 +283,11 @@ class QuoteDriver:
                 self._expire_if_open(c, now, "inplay_cooloff", phase)
                 continue
 
-            # LIVE (rest-poly only, gate armed for this phase): drive a REAL resting order instead of the
-            # shadow model. The executor re-checks never-crossable on the live book + caps before POST.
+            # LIVE (rest-poly only, gate armed for this phase): drive a REAL resting order. The executor
+            # owns the REPRICE HYSTERESIS (mandatory on floor/never-crossable break; voluntary only on
+            # >= reprice_min_ticks improvement after min_rest_s) so it is called every tick and decides
+            # place / reprice / keep-resting itself — no 1-tick churn gate here.
             if self.pregame_exec is not None and self.pregame_exec.eligible(c, phase, now_ts):
-                live_open = c.key in self.pregame_exec.open_orders
-                if live_open and not needs_reprice(prev, dec, tick):
-                    continue                              # unchanged within a tick -> keep resting
                 self.pregame_exec.place_or_reprice(c, dec, rest, store, now, now_ts, phase)
                 self.last_event[c.key] = "quote"
                 continue
@@ -361,7 +374,8 @@ class QuoteDriver:
             frozen = node3 is not None and now_ts < self.freeze_until.get(node3, 0.0)
             rest_id = fe.rest_ref[1] if len(getattr(fe, "rest_ref", ()) or ()) > 1 else None
             hedge_id = (ctx.get("lookup") or {}).get("token") or (ctx.get("lookup") or {}).get("ticker")
-            fresh = store.is_fresh(rest_id, now_ts, ip.fresh_s) and store.is_fresh(hedge_id, now_ts, ip.fresh_s)
+            cf, nq = float(getattr(ip, "conn_fresh_s", 30.0)), float(getattr(ip, "node_quiet_max_s", 180.0))
+            fresh = store.node_fresh(rest_id, now_ts, cf, nq) and store.node_fresh(hedge_id, now_ts, cf, nq)
             if frozen or not fresh:
                 if self.log:
                     self.log.info("[MAKER_RT] in-play fill VETOED %s %s (frozen=%s fresh=%s) - not counted.",

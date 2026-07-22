@@ -283,10 +283,10 @@ def test_cooloff_timer(tmp_path):
                   rest_venue="polymarket", hedge_venue="kalshi", tick=0.01, hedge_tick=0.01, poly_rate=0.05,
                   hedge_lookup={"venue": "kalshi", "ticker": "KX-1", "side": "no"}, kickoff_ts=0.0)
     store = BookStore()
-    store._touch("TOK_A", 100.0, 0.5); store._touch("KX-1", 100.0, 0.5)   # both fresh at t=100
+    store._touch("TOK_A", 100.0, 0.5, "poly"); store._touch("KX-1", 100.0, 0.5, "kalshi")   # both fresh at t=100
     assert ex.cooloff_ok(store, c, 0.0, 100.0) is True          # never frozen + fresh
     assert ex.cooloff_ok(store, c, 110.0, 100.0) is False       # currently frozen (freeze until 110)
     assert ex.cooloff_ok(store, c, 95.0, 100.0) is False        # thawed at 95, only 5s ago (< 10 cool-off)
-    store._touch("TOK_A", 106.0, 0.5); store._touch("KX-1", 106.0, 0.5)   # refresh both to t=106
+    store._touch("TOK_A", 106.0, 0.5, "poly"); store._touch("KX-1", 106.0, 0.5, "kalshi")   # refresh both to t=106
     assert ex.cooloff_ok(store, c, 95.0, 106.0) is True         # thawed 11s ago + fresh -> ok
     assert ex.cooloff_ok(store, c, 0.0, 200.0) is False         # books last touched 106 -> stale at 200

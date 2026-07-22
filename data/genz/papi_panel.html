@@ -678,7 +678,10 @@ function makerStripHtml(m){   // PURE: the MAKER RT v3 strip (top line + per-spo
     liveLine='<div class="mrtsub"><span class="lv">LIVE</span> open pre <b>'+(+L.pre_open||0)+'</b> / inplay <b>'+(+L.inplay_open||0)+'</b>'
       +' &middot; stake <b>$'+st.toFixed(2)+'</b>/$'+cap+' <span class="v">('+pct+'%)</span>'
       +' &middot; fills <b>'+(+L.fills_today||0)+'</b> <span class="v">(inplay '+(+L.inplay_fills||0)+')</span>'
-      +' &middot; pnl <b>$'+((+L.pnl_today||0).toFixed(2))+'</b>'+badges+'</div>';
+      +' &middot; pnl <b>$'+((+L.pnl_today||0).toFixed(2))+'</b>'
+      +' &middot; qlife <b>'+(L.median_quote_age_s!=null?L.median_quote_age_s+'s':'&mdash;')+'</b>'
+      +' &middot; at-best <b>'+(L.time_at_best_share!=null?Math.round(100*L.time_at_best_share)+'%':'&mdash;')+'</b>'
+      +badges+'</div>';
     var Q=L.quotes||[], fpx=function(x){return (x!=null&&x!=='')?(+x).toFixed(3):'&mdash;';};
     if(Q.length){
       var qr=Q.map(function(o){return '<tr><td>'+esc((o.game||'')+' '+(o.market_key||''))+'</td><td>'+esc(o.phase||'')

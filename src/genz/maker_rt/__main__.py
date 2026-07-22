@@ -227,6 +227,8 @@ async def _run(cfg: Any, log: Any) -> int:
                 pregame_exec.roll_day(now)                        # reset in-play circuit + caps at UTC midnight
                 pregame_exec.enforce_arm_state(now)               # a phase disarmed mid-run -> cancel its opens
                 pregame_exec.set_feed_ok(bool(pm_user is not None and pm_user.connected), now)
+                pregame_exec.sample_metrics(store, now_ts)        # at-best sampler for the lifetime metrics
+                pregame_exec.maybe_flush_digest(now_ts)           # routine-event Telegram digest (15 min)
                 if now_ts - last_fill_poll >= LIVE_FILL_POLL_S:      # REST backup fill detector
                     last_fill_poll = now_ts
                     pregame_exec.poll_open_orders(store, now, now_ts)

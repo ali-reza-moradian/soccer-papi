@@ -103,6 +103,7 @@ class PolyMarketFeed(_BaseFeed):
                     raw = await asyncio.wait_for(ws.recv(), timeout=self.ping_s)
                 except asyncio.TimeoutError:
                     continue
+                self.store.mark_activity("poly", time.time())     # ANY frame (incl. PONG) = socket alive
                 if raw in ("PONG", "PING"):
                     continue
                 self._handle(raw)
@@ -151,9 +152,14 @@ class KalshiFeed(_BaseFeed):
                 try:
                     raw = await asyncio.wait_for(ws.recv(), timeout=10)
                 except asyncio.TimeoutError:
+                    # QUIET market (Kalshi has no app-ping): actively PROBE the socket so a quiet-but-alive
+                    # connection stays FRESH; if the pong doesn't come, the exception -> reconnect.
+                    await asyncio.wait_for(await ws.ping(), timeout=5)
+                    self.store.mark_activity("kalshi", time.time())
                     if self.store.need_resync():
                         await self._subscribe(ws)
                     continue
+                self.store.mark_activity("kalshi", time.time())   # ANY frame = socket alive
                 self._handle(raw)
                 if self.store.need_resync():                # a seq gap dropped the books -> full resub
                     await self._subscribe(ws)
