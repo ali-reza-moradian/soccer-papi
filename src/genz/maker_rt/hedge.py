@@ -110,3 +110,35 @@ class LiveHedger:
                              status.upper(), ticker, filled, size, size - filled)
         return HedgeResult(status, hedged_shares=filled, hedge_avg_price=avg, freeze_market=True,
                            detail={"kalshi": res})
+
+    def hedge_poly(self, fill: dict, hedge: dict) -> HedgeResult:
+        """Lift the POLYMARKET complement with a marketable FAK taker BUY sized to the fill — the rest_kalshi
+        direction's hedge (mirror of ``hedge`` for the reverse venue). Returns a HedgeResult with the ACTUAL
+        poly fill: "locked" (full), "partial" (some), "missed" (0), or "error". Does NOT unwind on a miss —
+        the executor owns the ONE verified unwind (the naked Kalshi position, IOC-sold then REST-confirmed
+        flat via the portfolio positions endpoint)."""
+        size = float(fill.get("size") or 0)
+        if size <= 0 or self.poly is None:
+            return HedgeResult("error", detail={"reason": "no_size_or_client"})
+        token, best_ask = hedge.get("token"), hedge.get("best_ask")
+        try:
+            res = self.poly.place_market_buy(token, size)
+        except Exception as exc:  # noqa: BLE001 - a placement error -> treat as a miss
+            res = {"status": "error", "shares": 0, "error": str(exc)}
+        filled = float((res or {}).get("shares") or 0.0) if isinstance(res, dict) else 0.0
+        avg = res.get("avg_price") if isinstance(res, dict) else None
+        if filled >= size - 1e-9:
+            px = avg if avg is not None else (best_ask or 0.0)
+            fee = hedge_taker_fee("polymarket", px, self.poly_rate) * filled
+            pnl = (1.0 - float(fill.get("price") or 0) - px) * filled - fee
+            if self.log:
+                self.log.info("[MAKER_RT][LIVE] poly hedge LOCKED %s x%.0f @ %.4f -> pnl $%.2f",
+                              str(token)[:12], filled, px, pnl)
+            return HedgeResult("locked", hedged_shares=filled, hedge_avg_price=avg,
+                               locked_pnl=round(pnl, 4), detail={"poly": res})
+        status = "partial" if filled > 0 else "missed"
+        if self.log:
+            self.log.warning("[MAKER_RT][LIVE] poly hedge %s %s (got %.0f/%.0f) -> caller must unwind.",
+                             status.upper(), str(token)[:12], filled, size)
+        return HedgeResult(status, hedged_shares=filled, hedge_avg_price=avg, freeze_market=True,
+                           detail={"poly": res})

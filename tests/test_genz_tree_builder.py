@@ -519,24 +519,61 @@ def test_settle_period_parsed_and_attached_end_to_end():
 # --------------------------------------------------------------------------- #
 # SYSTEMIC PAIRING ALARM — the 39/39 silent-zeros guard                          #
 # --------------------------------------------------------------------------- #
-def _tree(paired, total, sport="tennis"):
+def _tree(paired, total, sport="tennis", competition=None, poly_absent=False):
     games = {}
     for i in range(total):
         nodes = [{"twin_key": "match_winner|x"}] if i < paired else []
-        games[f"G{i}"] = {"away": f"Player {i}", "home": "Torres: Round Of", "nodes": nodes, "sport": sport}
+        g = {"away": f"Player {i}", "home": "Torres: Round Of", "nodes": nodes, "sport": sport}
+        if competition:
+            g["competition"] = competition
+        if poly_absent and not nodes:
+            g["coverage"] = {"poly_absent": True}
+        games[f"G{i}"] = g
     return {"games": games}
 
 
 def test_systemic_alert_fires_below_20pct_and_meta_carries_it():
-    tree = _tree(paired=0, total=35, sport="tennis")           # the real 0/35 case
+    tree = _tree(paired=0, total=35, sport="tennis")           # the real 0/35 case (no competition -> 'all')
     alert = pairing_alert(tree, "tennis")
-    assert alert and alert["paired"] == 0 and alert["total"] == 35 and alert["rate"] == 0.0
-    assert alert["sample_unmatched_tokens"] and "round" in alert["sample_unmatched_tokens"][0]["tokens"]
+    assert alert and not alert["one_sided"] and len(alert["broken"]) == 1
+    b = alert["broken"][0]
+    assert b["competition"] == "all" and b["paired"] == 0 and b["total"] == 35 and b["share"] == 0.0
+    assert b["sample_unmatched_tokens"] and "round" in b["sample_unmatched_tokens"][0]["tokens"]
     meta = tb.build_meta(tree, now=NOW, sport="tennis")
-    assert meta["systemic_alert"]["total"] == 35
+    assert meta["systemic_alert"]["broken"][0]["total"] == 35
 
 
 def test_systemic_alert_silent_when_healthy_or_too_few_games():
     assert pairing_alert(_tree(paired=10, total=35), "tennis") is None      # 28% paired -> healthy
     assert pairing_alert(_tree(paired=0, total=4), "tennis") is None        # < 5 games -> no alarm (small slate)
     assert "systemic_alert" not in tb.build_meta(_tree(paired=30, total=35), now=NOW, sport="tennis")
+
+
+def test_pairing_broken_requires_both_share_and_paired_count():
+    # 18/92 = 19.6% share (< 20%) BUT 18 paired (>= 5) -> NOT broken (the AND gate; the 92/18 false alarm).
+    assert pairing_alert(_tree(paired=18, total=92), "soccer") is None
+    # 3/40 = 7.5% share AND only 3 paired -> genuinely broken (both gates fail).
+    a = pairing_alert(_tree(paired=3, total=40), "soccer")
+    assert a and len(a["broken"]) == 1 and a["broken"][0]["paired"] == 3 and not a["one_sided"]
+
+
+def test_soccer_one_sided_competition_is_grey_note_not_broken():
+    # Friendlies: 0/55 paired but ALL unpaired are poly_absent (Kalshi-only) -> grey one-sided, NOT red.
+    tree = _tree(paired=0, total=55, sport="soccer", competition="club_friendlies", poly_absent=True)
+    a = pairing_alert(tree, "soccer")
+    assert a and not a["broken"] and len(a["one_sided"]) == 1
+    assert a["one_sided"][0] == {"competition": "club_friendlies", "count": 55, "venue": "Kalshi"}
+
+
+def test_soccer_per_competition_isolates_broken_from_healthy():
+    # A mixed soccer tree: MLS healthy (13/15), friendlies one-sided (0/55 poly_absent), a real break (2/20).
+    games = {}
+    games.update(_tree(13, 15, "soccer", competition="mls")["games"])
+    fr = _tree(0, 55, "soccer", competition="club_friendlies", poly_absent=True)["games"]
+    games.update({f"F{k}": v for k, v in fr.items()})
+    br = _tree(2, 20, "soccer", competition="ucl")["games"]            # genuine failure (not poly_absent)
+    games.update({f"U{k}": v for k, v in br.items()})
+    a = pairing_alert({"games": games}, "soccer")
+    comps_broken = {b["competition"] for b in a["broken"]}
+    comps_one = {o["competition"] for o in a["one_sided"]}
+    assert comps_broken == {"ucl"} and comps_one == {"club_friendlies"}    # mls healthy -> neither

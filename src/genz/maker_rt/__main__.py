@@ -91,17 +91,20 @@ def _spawn_feeds(store: BookStore, universe: list, cfg: Any, log: Any) -> tuple:
 
 def _build_pregame_exec(cfg: Any, live_gate: Any, armed: bool, kalshi_oc: Any, poly_oc: Any,
                         in_flight: Any, telegram: Any, state: Any, log: Any) -> Any:
-    """The PRE-GAME continuous live executor, or None when not armed / no clients. rest-poly only."""
+    """The continuous live executor, or None when not armed / no clients. Owns BOTH rest directions
+    (rest_poly on Poly, rest_kalshi on Kalshi) under one shared LiveCaps + one in-flight guard."""
     if not (armed and poly_oc is not None):
         return None
     from .caps import LiveCaps
-    from .orders import PolyOrderClient
+    from .orders import KalshiOrderClient, PolyOrderClient
     from .pregame_exec import PregameLiveExecutor
     caps = LiveCaps(cfg.live, telegram=telegram, log=log)
     order_client = PolyOrderClient(poly_oc, log=log)
+    kalshi_order_client = KalshiOrderClient(kalshi_oc, log=log) if kalshi_oc is not None else None
     hedger = LiveHedger(kalshi_client=kalshi_oc, poly_client=poly_oc, poly_rate=cfg.poly_fee_rate, log=log)
     return PregameLiveExecutor(cfg, live_gate, order_client, hedger, caps, poly_oc,
-                               in_flight=in_flight, telegram=telegram, state=state, log=log)
+                               in_flight=in_flight, telegram=telegram, state=state, log=log,
+                               kalshi_order_client=kalshi_order_client, kalshi=kalshi_oc)
 
 
 def _startup_stray_cancel_armed(poly_oc: Any, kalshi_oc: Any, log: Any) -> int:
@@ -229,6 +232,10 @@ async def _run(cfg: Any, log: Any) -> int:
     pm, ks = _spawn_feeds(store, universe, cfg, log)
     pm.on_prints = on_prints
     ks.on_prints = on_prints
+    # rest-kalshi live: route OUR Kalshi fills (private 'fill' channel) to the executor when that direction
+    # is enabled + armed. rest-poly-only configs leave this a no-op (the fills are never our resting orders).
+    if pregame_exec is not None and "rest-kalshi" in getattr(pregame_exec, "directions", set()):
+        ks.on_fill = lambda e: pregame_exec.on_kalshi_fill(e, store, utcnow(), time.time())
     tasks = [asyncio.create_task(pm.run()), asyncio.create_task(ks.run())]
     # Poly USER socket (our real fills/order updates) — started ONLY when armed. Route order updates to
     # the executor's fill detector; the REST poll below is the reliable backup.
@@ -256,6 +263,7 @@ async def _run(cfg: Any, log: Any) -> int:
                 pregame_exec.roll_day(now)                        # reset in-play circuit + caps at UTC midnight
                 pregame_exec.enforce_arm_state(now)               # a phase disarmed mid-run -> cancel its opens
                 pregame_exec.set_feed_ok(bool(pm_user is not None and pm_user.connected), now)
+                pregame_exec.set_kalshi_feed_ok(bool(ks.connected), now)   # rest-kalshi FILL-signal health
                 pregame_exec.sample_metrics(store, now_ts)        # at-best sampler for the lifetime metrics
                 pregame_exec.maybe_flush_digest(now_ts)           # routine-event Telegram digest (15 min)
                 if now_ts - last_fill_poll >= LIVE_FILL_POLL_S:      # REST backup fill detector
@@ -380,6 +388,11 @@ def main(argv: Optional[list] = None) -> int:
         # re-arming after the orphan bug. Runs when live.enabled; does NOT need the arm file.
         from .smoke import run_smoke_sell
         return asyncio.run(run_smoke_sell(cfg, log=log))
+    if "--smoke-kalshi" in args:
+        # KALSHI-SIDE proof (gate for enabling rest_kalshi): rest an unfillable bid -> confirm -> cancel;
+        # buy ~$3 at market -> IOC-unwind -> REST-verify flat via positions. Runs when live.enabled.
+        from .smoke import run_smoke_kalshi
+        return asyncio.run(run_smoke_kalshi(cfg, log=log))
     _install_signal_handlers(log)             # SIGTERM/SIGBREAK -> graceful cancel-all + exit
     try:
         return asyncio.run(_run(cfg, log))

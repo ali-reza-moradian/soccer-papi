@@ -61,15 +61,76 @@ class PolyOrderClient:
         return list(self._open)
 
 
+KALSHI_COID_PREFIX = "mrt-"                    # client_order_id tag so our resting orders are recognizable
+
+
 class KalshiOrderClient:
-    """IOC-emulated marketable hedge on Kalshi. ``exec_client`` is a src.executor.kalshi_exec.KalshiExec
-    (or a fake) — place_order already supports time_in_force='immediate_or_cancel'."""
+    """Kalshi order client: RESTING maker limits (rest_kalshi live direction) AND the IOC-emulated
+    marketable hedge/unwind. ``exec_client`` is a src.executor.kalshi_exec.KalshiExec (or a fake) —
+    place_order supports both a resting limit (time_in_force=None) and immediate_or_cancel."""
 
     def __init__(self, exec_client: Any, *, buffer: float = 0.01, log: Any = None) -> None:
         self.ex = exec_client
         self.buffer = buffer
         self.log = log
+        self._open: dict[str, dict] = {}          # order_id -> {ticker, side, price, count, coid}
+        self._n = 0
 
+    def _coid(self) -> str:
+        self._n += 1
+        return f"{KALSHI_COID_PREFIX}{self._n}-{int(__import__('time').time()*1000)}"
+
+    @staticmethod
+    def clamp_count(count: float) -> int:
+        """Whole contracts, at least the Kalshi minimum of 1."""
+        return int(max(1, round(float(count))))
+
+    # -- resting maker (rest_kalshi live direction) --------------------------
+    def rest(self, ticker: str, side: str, price: float, count: float,
+             *, client_order_id: Optional[str] = None) -> dict:
+        """Post a RESTING maker limit BUY of ``side`` (yes/no) at ``price`` dollars. time_in_force=None
+        rests it (NOT IOC); never-crossable is enforced by the caller (like the Poly GTC path). Returns
+        the executor's normalized {status, fill_count, avg_price, order_id, raw}."""
+        n = self.clamp_count(count)
+        coid = client_order_id or self._coid()
+        res = self.ex.place_order(ticker, side, n, float(price),
+                                  time_in_force=None, client_order_id=coid)
+        oid = res.get("order_id")
+        if oid:
+            self._open[oid] = {"ticker": ticker, "side": side, "price": price, "count": n, "coid": coid}
+        return res
+
+    def cancel(self, order_id: str) -> Any:
+        self._open.pop(order_id, None)
+        return self.ex.cancel_order(order_id) if hasattr(self.ex, "cancel_order") else None
+
+    def cancel_all(self) -> int:
+        ids = list(self._open)
+        for oid in ids:
+            try:
+                self.cancel(oid)
+            except Exception as exc:  # noqa: BLE001 - cancel-all must never raise on shutdown
+                if self.log:
+                    self.log.warning("[MAKER_RT] kalshi cancel %s failed: %s", oid, exc)
+        return len(ids)
+
+    def open_order_ids(self) -> list:
+        return list(self._open)
+
+    def order_status(self, order_id: str) -> dict:
+        """Best-effort single-order read via get_orders (KalshiExec has no get_order): returns the order
+        dict (or {} if not found). Used for cancel confirmation + the REST backup fill poll."""
+        try:
+            resp = self.ex.get_orders() if hasattr(self.ex, "get_orders") else None
+        except Exception:  # noqa: BLE001
+            return {}
+        orders = resp.get("orders") if isinstance(resp, dict) else (resp or [])
+        for o in orders or []:
+            if isinstance(o, dict) and (o.get("order_id") == order_id or o.get("id") == order_id):
+                return o
+        return {}
+
+    # -- marketable hedge / unwind (both directions) -------------------------
     def marketable_limit(self, best_ask: float) -> float:
         """Cross by one buffer tick so the IOC lifts immediately; clamp inside (0,1)."""
         return min(0.99, max(0.01, float(best_ask) + self.buffer))
@@ -78,4 +139,5 @@ class KalshiOrderClient:
                 client_order_id: Optional[str] = None) -> dict:
         limit = self.marketable_limit(best_ask)
         return self.ex.place_order(ticker, side, int(count), limit,
-                                   time_in_force="immediate_or_cancel", client_order_id=client_order_id)
+                                   time_in_force="immediate_or_cancel",
+                                   client_order_id=client_order_id or self._coid())

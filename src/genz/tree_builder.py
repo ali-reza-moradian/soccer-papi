@@ -1161,8 +1161,14 @@ def build_tree(kalshi_client: Any, poly_client: Any, cfg: gz_config.GenzConfig, 
     from .sports_base import pairing_alert
     alert = pairing_alert(tree, getattr(spec, "name", "?"))
     if alert and log:
-        log.warning("[%s] SYSTEMIC PAIRING FAILURE: %d/%d games paired — probable venue format drift.",
-                    str(getattr(spec, "name", "?")).upper(), alert["paired"], alert["total"])
+        name = str(getattr(spec, "name", "?")).upper()
+        for b in alert.get("broken", []):
+            log.warning("[%s] SYSTEMIC PAIRING FAILURE: competition '%s' %d/%d games paired (%.0f%%) — "
+                        "probable venue format drift.", name, b.get("competition"), b.get("paired", 0),
+                        b.get("total", 0), (b.get("share", 0) or 0) * 100)
+        for o in alert.get("one_sided", []):
+            log.info("[%s] competition '%s' is %d one-sided on %s (normal — a venue doesn't carry it).",
+                     name, o.get("competition"), o.get("count", 0), o.get("venue", "?"))
     return tree
 
 

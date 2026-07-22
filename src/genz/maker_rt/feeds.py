@@ -125,11 +125,13 @@ class PolyMarketFeed(_BaseFeed):
 class KalshiFeed(_BaseFeed):
     name = "kalshi"
 
-    def __init__(self, store, tickers: list, *, api_key_id: str = None, signer: Callable = None, **kw) -> None:
+    def __init__(self, store, tickers: list, *, api_key_id: str = None, signer: Callable = None,
+                 on_fill: Callable = None, **kw) -> None:
         super().__init__(store, **kw)
         self.tickers = list(tickers)
         self.api_key_id = api_key_id
         self.signer = signer
+        self.on_fill = on_fill or (lambda e: None)   # OUR real rest-kalshi fills (live only; set when armed)
         self._id = 0
 
     def _auth_headers(self) -> dict:
@@ -179,7 +181,11 @@ class KalshiFeed(_BaseFeed):
             data = json.loads(raw)
         except (ValueError, TypeError):
             return
-        prints = self.store.apply_kalshi(parsing.parse_kalshi(data), time.time())
+        events = parsing.parse_kalshi(data)
+        for e in events:                                  # OUR fills (private 'fill' channel) -> executor
+            if isinstance(e, dict) and e.get("kind") == "kalshi_fill":
+                self.on_fill(e)
+        prints = self.store.apply_kalshi(events, time.time())
         if prints:
             self.on_prints(prints)
         self.on_update()

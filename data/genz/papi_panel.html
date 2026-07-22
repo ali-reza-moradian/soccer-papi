@@ -45,7 +45,7 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);-webkit-font
 .gcell:hover{color:var(--accent);text-decoration:underline}
 td.tcell{font-family:var(--mono);font-size:12px;color:var(--dim);white-space:nowrap}
 .livetag{font-family:var(--mono);font-size:9px;color:var(--red);background:var(--redBg);padding:1px 5px;margin-left:5px;text-transform:uppercase;letter-spacing:.4px}
-.livebanner{background:var(--redBg);border:1px solid var(--red);border-left:3px solid var(--red);padding:6px 12px;margin-bottom:8px;font-family:var(--mono);font-size:11px;color:var(--red)}
+.livebanner{background:var(--elev);border:1px solid var(--border);border-left:3px solid var(--faint);padding:6px 12px;margin-bottom:8px;font-family:var(--mono);font-size:11px;color:var(--dim)}
 .ctrl{display:flex;align-items:center;gap:12px;margin-bottom:10px;flex-wrap:wrap}
 .seg{display:flex;border:1px solid var(--border)}
 .seg button{font-family:var(--mono);font-size:11px;padding:6px 14px;background:var(--panel);color:var(--dim);border:none;cursor:pointer}
@@ -392,7 +392,7 @@ function table(){
   mk.sort(function(a,b){var na=num(a.net_roi_pct),nb=num(b.net_roi_pct);na=na==null?-1e9:na;nb=nb==null?-1e9:nb;return nb-na;});  // default: Net % desc
   document.getElementById('count').textContent=mk.length+' shown'+(g.phase==='inplay'?' · LIVE (shadow-only)':'');
   if(!mk.length){body.innerHTML='<div class="empty">'+(view==='arbs'?'No arbs right now - flip to All markets.':'No markets.')+'</div>';return;}
-  var live=(g.phase==='inplay')?'<div class="livebanner">▲ IN-PLAY — shadow data collection only. In-play markets are NEVER traded (would_trade forced off).</div>':'';
+  var live=(g.phase==='inplay')?'<div class="livebanner">ℹ measurement view — live trading runs in the MAKER below.</div>':'';
   var h=live+'<table><thead><tr>'+MHEAD+'</tr></thead><tbody>';
   for(var i=0;i<mk.length;i++){var rc=marketCells(mk[i]);h+='<tr class="'+rc.cls+'"'+rc.title+'>'+rc.cells+'</tr>';}
   body.innerHTML=h+'</tbody></table>';
@@ -655,7 +655,12 @@ function makerStripHtml(m){   // PURE: the MAKER RT v3 strip (top line + per-spo
     +'</b> (fill-rate <b>'+mrtPctInt(m.fill_rate)+'</b>) &middot; at-best <b>'+mrtPctInt(m.at_best_share)
     +'</b> &middot; median net <b>'+mrtPct2(m.median_net_at_fill)+'</b>'
     +' &middot; drift <b>'+mrtPct2(m.drift_median_1)+'</b>/<b>'+mrtPct2(m.drift_median_5)+'</b>/<b>'+mrtPct2(m.drift_median_30)+'</b>'
-    +' <span class="v">(+1/5/30s)</span> &middot; behind <b>'+(m.behind_best||0)+'</b>'+rst;
+    +' <span class="v">(+1/5/30s)</span> &middot; behind <b>'+(m.behind_best||0)+'</b>'
+    +' &middot; unwind <b>'+(m.unwind_count_today||0)+'</b> <span class="v">($'+((+m.unwind_cost_today_usd||0).toFixed(2))+')</span> rate '
+    +((((+m.unwind_rate_recent||0)>0.20)&&((m.unwind_window||0)>=5))
+        ? '<b style="color:#f5a623" title="unwind rate '+mrtPctInt(m.unwind_rate_recent)+' over the last '+(m.unwind_window||0)+' fills exceeds 20% — paying the exit toll too often">'+mrtPctInt(m.unwind_rate)+' &#9888;</b>'
+        : '<b title="lifetime unwinds/fills">'+mrtPctInt(m.unwind_rate)+'</b>')
+    +rst;
   // PRE | LIVE phase split.
   var byp=m.by_phase||{},pre=byp.pre,ip=byp.inplay;
   function phaseSeg(lbl,ph){return '<b>'+lbl+'</b> q '+((ph&&ph.quotes)||0)+' f '+((ph&&ph.fills)||0)
@@ -718,13 +723,17 @@ function sportChips(){   // SOCCER | MLB selector on the GENZ tab; a sport with 
   var h='<span class="lbl">SPORT</span>';
   SPORTS.forEach(function(sp){
     var key=sp[0],lbl=sp[1],snap=SNAPS[key],has=!!(snap&&snap.games&&Object.keys(snap.games).length);
-    // SYSTEMIC PAIRING ALARM: a red banner on the chip when this sport's tree build flagged a
-    // near-total pairing failure (probable venue format drift) — see the tree log.
+    // SYSTEMIC PAIRING ALARM (per-competition): RED "PAIRING BROKEN" only for a competition that is a
+    // GENUINE pairing failure (< 20% paired AND < 5 paired, both venues present). A competition that is
+    // simply one-sided (a venue doesn't carry it, e.g. Kalshi-only friendlies) shows a GREY note, not red.
     var alert=METAS[key]&&METAS[key].systemic_alert;
-    var broken=alert?(' <span class="tag rej" title="'+esc((alert.paired||0)+'/'+(alert.total||0)+' games paired - see the tree log')+'">PAIRING BROKEN</span>'):'';
-    if(key===sport)h+='<span class="schip active" data-sp="'+key+'">'+lbl+broken+'</span>';
-    else if(has)h+='<span class="schip'+(alert?' alarm':'')+'" data-sp="'+key+'">'+lbl+broken+'<span class="n">'+Object.keys(snap.games).length+' games</span></span>';
-    else h+='<span class="schip off" title="no data yet — is the '+key+' loop running?">'+lbl+broken+'<span class="n">no data yet</span></span>';
+    var bk=(alert&&alert.broken)||[], os=(alert&&alert.one_sided)||[];
+    var brokenTag=bk.length?(' <span class="tag rej" title="'+esc(bk.map(function(b){return (b.competition||'?')+' '+(b.paired||0)+'/'+(b.total||0);}).join(', ')+' - genuine pairing failure, see the tree log')+'">PAIRING BROKEN'+(bk.length>1?' ×'+bk.length:'')+'</span>'):'';
+    var oneTag=os.map(function(o){return ' <span class="tag noarb" title="'+esc((o.competition||'?')+': only one venue carries this competition (normal)')+'">'+(o.count||0)+' one-sided on '+esc(o.venue||'?')+'</span>';}).join('');
+    var tags=brokenTag+oneTag, isAlarm=bk.length>0;         // grey one-sided is NOT an alarm
+    if(key===sport)h+='<span class="schip active" data-sp="'+key+'">'+lbl+tags+'</span>';
+    else if(has)h+='<span class="schip'+(isAlarm?' alarm':'')+'" data-sp="'+key+'">'+lbl+tags+'<span class="n">'+Object.keys(snap.games).length+' games</span></span>';
+    else h+='<span class="schip off" title="no data yet — is the '+key+' loop running?">'+lbl+tags+'<span class="n">no data yet</span></span>';
   });
   el.innerHTML=h;
   el.querySelectorAll('.schip[data-sp]').forEach(function(c){c.onclick=function(){setSport(this.getAttribute('data-sp'));};});

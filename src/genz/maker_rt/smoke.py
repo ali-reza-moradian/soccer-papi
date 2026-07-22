@@ -448,6 +448,168 @@ async def run_smoke_sell(cfg: Any, *, log: Any = None) -> int:
     return 0
 
 
+def _kalshi_pos(kalshi: Any, ticker: str) -> Optional[float]:
+    """Net |contracts| on ``ticker`` from the Kalshi portfolio positions endpoint (0 if flat/absent)."""
+    try:
+        resp = kalshi.get_positions()
+    except Exception:  # noqa: BLE001
+        return None
+    rows = resp.get("market_positions") if isinstance(resp, dict) else (resp or [])
+    if not rows and isinstance(resp, dict):
+        rows = resp.get("positions") or resp.get("data") or []
+    for p in rows or []:
+        if isinstance(p, dict) and (p.get("ticker") == ticker or p.get("market_ticker") == ticker):
+            for k in ("position", "net_position", "count"):
+                if p.get(k) is not None:
+                    return abs(float(p[k]))
+            return 0.0
+    return 0.0
+
+
+def _kalshi_ask_from_raw(kalshi: Any, ticker: str, side: str) -> tuple:
+    """Best ask (price to BUY ``side``) + total depth from the RAW Kalshi orderbook (orderbook_fp /
+    yes_dollars / no_dollars). A NO bid at price p IS a YES ask at 1-p (and vice-versa), so the asks for
+    ``side`` are the OPPOSITE side's bids converted. Returns (best_ask, depth) or (None, 0.0). (The exec
+    adapter's own ask-ladder parser predates the orderbook_fp format; the maker itself reads the WS book.)"""
+    try:
+        raw = (kalshi.get_orderbook(ticker, side=side) or {}).get("raw") or {}
+    except Exception:  # noqa: BLE001
+        return None, 0.0
+    ob = raw.get("orderbook_fp") or raw.get("orderbook") or raw
+    opp = "no_dollars" if str(side).upper() == "YES" else "yes_dollars"
+    levels = ob.get(opp) if isinstance(ob, dict) else None
+    best, depth = None, 0.0
+    for lvl in levels or []:
+        try:
+            price, size = float(lvl[0]), float(lvl[1])
+        except (TypeError, ValueError, IndexError):
+            continue
+        ask = round(1.0 - price, 4)                  # opposite-side bid @ price -> our ask @ 1-price
+        depth += size
+        if best is None or ask < best:
+            best = ask
+    return best, depth
+
+
+def _select_kalshi_market(cfg: Any, kalshi: Any, log: Any) -> Optional[dict]:
+    """Most liquid PRE-GAME Kalshi market (any sport) with a readable ask — for the buy+unwind leg.
+    Prefers a mid-priced market (0.15-0.85) so ~$3 buys and unwinds cleanly."""
+    now_ts = time.time()
+    cutoff = float(getattr(cfg, "expire_before_kickoff_s", 120))
+    universe = build_universe(load_trees(), now_ts, max_games=cfg.max_games,
+                              expire_before_kickoff_s=cfg.expire_before_kickoff_s,
+                              horizon_hours=cfg.inplay.horizon_hours)
+    seen: set = set()
+    scored: list = []
+    for qm in universe:
+        if _phase(qm.kickoff_ts, now_ts, cutoff) != "pre":
+            continue
+        for _side, node in qm.sides.items():
+            tk = getattr(node, "kalshi_ticker", None)
+            k_side = getattr(node, "kalshi_side", None)
+            if not tk or not k_side or (tk, k_side) in seen:
+                continue
+            seen.add((tk, k_side))
+            best_ask, depth = _kalshi_ask_from_raw(kalshi, tk, k_side)
+            if best_ask is None or depth <= 0:
+                continue
+            scored.append({"game": qm.game, "ticker": tk, "side": k_side,
+                           "best_ask": best_ask, "depth": depth})
+    if not scored:
+        return None
+    clean = [s for s in scored if 0.15 - 1e-9 <= s["best_ask"] <= 0.85 + 1e-9]
+    pool = clean or scored
+    pool.sort(key=lambda s: s["depth"], reverse=True)
+    return pool[0]
+
+
+async def run_smoke_kalshi(cfg: Any, *, log: Any = None) -> int:
+    """SMOKE-KALSHI (the gate for enabling the rest_kalshi live direction). Real money, tiny:
+    (i) rest ONE deep unfillable bid -> REST-confirm resting -> cancel -> confirm gone;
+    (ii) buy ~$3 at market (IOC) -> IOC-unwind (place_market_sell) -> REST-verify FLAT via positions.
+    Pastes both venue-confirmed receipts. Runs when live.enabled; does NOT need the arm file."""
+    _p("=" * 78)
+    _p("maker_rt --smoke-kalshi  (rest unfillable bid -> cancel; buy $3 -> IOC-unwind -> REST-verify flat)")
+    _p("=" * 78)
+    kalshi, poly = build_pregame_order_clients(cfg, log=log)
+    if kalshi is None:
+        _p("SMOKE-KALSHI REFUSED: maker_rt.live.enabled is false (no order clients).")
+        return 2
+    try:
+        _p(f"kalshi balance readable: {bool(kalshi.get_balance())}")
+    except Exception as exc:  # noqa: BLE001
+        _p(f"SMOKE-KALSHI REFUSED: kalshi balance read failed: {exc}")
+        return 2
+    from .orders import KalshiOrderClient
+    koc = KalshiOrderClient(kalshi, log=log)
+    sel = _select_kalshi_market(cfg, kalshi, log)
+    if sel is None:
+        _p("SMOKE-KALSHI REFUSED: no liquid pre-game Kalshi market available right now.")
+        return 3
+    ticker, side, best_ask = sel["ticker"], sel["side"], sel["best_ask"]
+    _p(f"selected {sel['game']} {ticker} {side} best_ask={best_ask}")
+    _install_shutdown_handlers(poly, [], log, _telegram_sender(log))
+
+    # (i) RESTING proof: a deep unfillable bid (2c) rests, is confirmed, then cancelled + confirmed gone.
+    rest_px = 0.02
+    _p("--- (i) resting proof: rest a deep unfillable bid, confirm resting, cancel, confirm gone ---")
+    r = koc.rest(ticker, side, rest_px, 1)
+    oid = r.get("order_id")
+    _p(f"REST : status={r.get('status')} id={oid} @ {rest_px} x1")
+    if not oid:
+        _p(f"SMOKE-KALSHI FAIL: rest returned no order_id: {r}")
+        return 4
+    await asyncio.sleep(1.5)
+    st = koc.order_status(oid)
+    _p(f"REST-confirm: present={bool(st)} status={st.get('status')}")
+    cx = koc.cancel(oid)
+    await asyncio.sleep(1.5)
+    st2 = koc.order_status(oid)
+    gone = not st2 or str(st2.get("status") or "").lower() in ("canceled", "cancelled")
+    _p(f"CANCEL: resp={cx}; post-cancel present={bool(st2)} -> {'GONE' if gone else 'STILL PRESENT'}")
+    if not gone:
+        _p("SMOKE-KALSHI FAIL: resting order not confirmed cancelled.")
+        return 5
+
+    # (ii) UNWIND proof: buy ~$3 at market (IOC) -> IOC-unwind -> REST-verify flat via positions.
+    import math
+    n = max(1, math.ceil(3.0 / max(best_ask, 0.05)))
+    _p(f"--- (ii) unwind proof: buy ~$3 ({n} contracts) at market, IOC-unwind, REST-verify flat ---")
+    buy = kalshi.place_order(ticker, side, n, 0.99, time_in_force="immediate_or_cancel",
+                             client_order_id="mrt-smoke-buy")
+    filled = int(buy.get("fill_count") or 0)
+    _p(f"BUY : status={buy.get('status')} fill_count={filled} avg={buy.get('avg_price')} id={buy.get('order_id')}")
+    if filled < 1:
+        _p("SMOKE-KALSHI: buy filled 0 (thin book) — nothing to unwind; INCONCLUSIVE.")
+        return 4
+    _p(f"position after BUY (REST): {_kalshi_pos(kalshi, ticker)} contracts")
+    sell = kalshi.place_market_sell(ticker, side, filled, client_order_id="mrt-smoke-unwind")
+    _p(f"SELL: status={sell.get('status')} fill_count={sell.get('fill_count')} avg={sell.get('avg_price')} "
+       f"id={sell.get('order_id')}")
+    flat_pos = None
+    for _ in range(6):                                   # settle poll (mirrors the executor verify)
+        await asyncio.sleep(0.6)
+        flat_pos = _kalshi_pos(kalshi, ticker)
+        if flat_pos is not None and abs(flat_pos) <= 0.5:
+            break
+    flat = flat_pos is not None and abs(flat_pos) <= 0.5
+    _p(f"position after UNWIND (REST-verified): {flat_pos} -> {'FLAT' if flat else 'NOT FLAT'}")
+    _p("-" * 78)
+    _p("VENUE-CONFIRMED RECEIPTS:")
+    _p(f"  REST order {oid}  @ {rest_px}  -> cancelled (confirmed gone)")
+    _p(f"  BUY  order {buy.get('order_id')}  {filled} @ {buy.get('avg_price')}")
+    _p(f"  SELL order {sell.get('order_id')}  {sell.get('fill_count')} @ {sell.get('avg_price')}")
+    _p(f"  final position (REST-verified): {flat_pos} contracts")
+    _p("-" * 78)
+    if not flat:
+        _p("SMOKE-KALSHI FAIL: position NOT flat after unwind — do NOT enable rest_kalshi.")
+        _cancel_all(poly, log)
+        return 5
+    _p("SMOKE-KALSHI PASS: resting confirmed+cancelled AND buy IOC-unwound to REST-verified flat.")
+    _p("=" * 78)
+    return 0
+
+
 def _stop_feed(feed: Any, feed_task: Any) -> None:
     if feed:
         feed.stop()

@@ -54,26 +54,36 @@ class _LiveOrder:
     phase: str = "pre"
     best_bid: Optional[float] = None
     matched_seen: float = 0.0
+    rest_venue: str = "polymarket"     # "polymarket" | "kalshi" — dispatches place/cancel/fill/unwind/verify
+    kalshi_side: str = ""              # YES|NO when rest_venue == "kalshi" (rest_ref[2])
 
 
 class PregameLiveExecutor:
     """Unified live executor for pre-game AND in-play rest-poly (the ``pregame_exec`` on the driver)."""
 
     def __init__(self, cfg: Any, gate: Any, order_client: Any, hedger: Any, caps: Any, poly: Any, *,
-                 in_flight: Any = None, telegram: Any = None, state: Any = None, log: Any = None) -> None:
+                 in_flight: Any = None, telegram: Any = None, state: Any = None, log: Any = None,
+                 kalshi_order_client: Any = None, kalshi: Any = None) -> None:
         self.cfg = cfg
         self.gate = gate
-        self.order_client = order_client        # PolyOrderClient (rest/cancel)
-        self.hedger = hedger                     # LiveHedger (kalshi IOC + poly unwind)
-        self.caps = caps                         # LiveCaps (SHARED across phases)
-        self.poly = poly                         # PolyExec (REST get_order / neg_risk)
-        self.in_flight = in_flight               # ONE global in-flight guard (pre+inplay)
+        self.order_client = order_client        # PolyOrderClient (rest_poly rest/cancel)
+        self.kalshi_order_client = kalshi_order_client   # KalshiOrderClient (rest_kalshi rest/cancel/status)
+        self.hedger = hedger                     # LiveHedger (venue-aware: kalshi IOC | poly FAK)
+        self.caps = caps                         # LiveCaps (SHARED across directions + phases)
+        self.poly = poly                         # PolyExec (REST get_order / neg_risk / conditional_balance)
+        self.kalshi = kalshi                     # KalshiExec (REST order status / positions / unwind sell)
+        self.in_flight = in_flight               # ONE global in-flight guard (all directions + phases)
         self.telegram = telegram
         self.state = state
         self.log = log
         self.open_orders: dict = {}              # candidate key -> _LiveOrder
         self.feed_ok: bool = False               # Poly USER socket health (starts DOWN until it connects)
+        self.kalshi_feed_ok: bool = False        # Kalshi WS health (rest_kalshi fill signal; DOWN until up)
+        # LIVE-eligible rest directions (normalised, e.g. {"rest-poly","rest-kalshi"}). rest_kalshi stays
+        # OFF until its SMOKE-KALSHI passes and config maker_rt.directions adds it.
+        self.directions = {str(d).replace("_", "-") for d in getattr(cfg, "directions", ("rest_poly",))}
         self._neg_cache: dict = {}               # token -> neg_risk (fetched once)
+        self._traded_tickers: set = set()        # kalshi tickers we've rested on -> reconcile for flatness
         # IN-PLAY first-fill circuit (per UTC day; replaces the calendar guard).
         li = getattr(cfg, "live_inplay", None)
         self.inplay_first_fill_pause_s = float(getattr(li, "first_fill_pause_s", 120.0))
@@ -144,10 +154,14 @@ class PregameLiveExecutor:
         return self._armed(getattr(self.cfg, "live_inplay", None))
 
     def eligible(self, c: Any, phase: str, now_ts: float = 0.0) -> bool:
-        """Live-eligible iff rest-poly, user feed UP, caps not halted, AND the phase's own gate is armed.
-        In-play additionally requires: not in-play-halted AND not inside the first-fill pause. (The
-        driver enforces the freeze/stale/persistence/cool-off rails BEFORE this.)"""
-        if c.direction != "rest-poly" or not self.feed_ok or self.caps.halted:
+        """Live-eligible iff the direction is enabled (config maker_rt.directions), its FILL feed is UP,
+        caps not halted, AND the phase's own gate is armed. rest-poly needs the Poly USER socket; rest-kalshi
+        needs the Kalshi WS (its fill channel). In-play additionally requires: not in-play-halted AND not
+        inside the first-fill pause. (The driver enforces the freeze/stale/persistence/cool-off rails first.)"""
+        if c.direction not in self.directions or self.caps.halted:
+            return False
+        feed_ok = self.feed_ok if c.direction == "rest-poly" else self.kalshi_feed_ok
+        if not feed_ok:
             return False
         if phase == "pre":
             return self.pre_armed()
@@ -165,6 +179,63 @@ class PregameLiveExecutor:
         return bool(store.node_fresh(c.rest_id, now_ts, self.conn_fresh_s, self.node_quiet_max_s)
                     and store.node_fresh(c.hedge_id, now_ts, self.conn_fresh_s, self.node_quiet_max_s))
 
+    # -- venue dispatch (rest_poly = Polymarket | rest_kalshi = Kalshi) ------
+    def _rest_tick(self, c: Any, store: Any) -> float:
+        return 0.01 if c.rest_venue == "kalshi" else (store.poly_tick(c.rest_ref[1], 0.01) or 0.01)
+
+    def _rest_view_c(self, c: Any, store: Any):
+        """Live rest-book SideView for a CANDIDATE (venue-dispatched)."""
+        if c.rest_venue == "kalshi":
+            return store.kalshi_view(c.rest_ref[1], c.rest_ref[2])
+        return store.poly_view(c.rest_ref[1])
+
+    def _rest_view_lo(self, lo: _LiveOrder, store: Any):
+        """Live rest-book SideView for an OPEN ORDER (venue-dispatched)."""
+        if lo.rest_venue == "kalshi":
+            return store.kalshi_view(lo.token, lo.kalshi_side)
+        return store.poly_view(lo.token)
+
+    def _do_rest(self, c: Any, price: float, size: float, tick: float, store: Any) -> dict:
+        """Post the resting maker order on the candidate's REST venue. Returns the normalized result."""
+        if c.rest_venue == "kalshi":
+            return self.kalshi_order_client.rest(c.rest_ref[1], c.rest_ref[2], price, size)
+        neg = self._neg_for(c.rest_ref[1], store)
+        return self.order_client.rest(c.rest_ref[1], price, size, tick_size=tick, neg_risk=neg)
+
+    def _venue_get_order(self, lo: _LiveOrder) -> Any:
+        """Venue-dispatched single-order status read (for cancel-confirm + REST fill poll)."""
+        if lo.rest_venue == "kalshi":
+            return self.kalshi_order_client.order_status(lo.order_id)
+        return self.poly.get_order(lo.order_id)
+
+    @staticmethod
+    def _order_matched(lo: _LiveOrder, o: dict) -> Any:
+        """Matched quantity from a venue order dict (Poly: size_matched; Kalshi: fill_count or count-remaining)."""
+        if lo.rest_venue == "kalshi":
+            for k in ("fill_count", "taker_fill_count", "filled_count", "count_filled"):
+                if o.get(k) is not None:
+                    return float(o[k])
+            cnt, rem = o.get("count"), o.get("remaining_count")
+            if cnt is not None and rem is not None:
+                return float(cnt) - float(rem)
+            return None
+        return o.get("size_matched")
+
+    def _venue_cancel(self, lo: _LiveOrder) -> Any:
+        if lo.rest_venue == "kalshi":
+            return self.kalshi_order_client.cancel(lo.order_id)
+        return self.order_client.cancel(lo.order_id)
+
+    def _track_rested(self, lo: _LiveOrder) -> None:
+        """Add the rested instrument to the maker-scoped reconcile watch-set (persisted for restarts)."""
+        if lo.rest_venue == "kalshi":
+            if lo.token not in self._traded_tickers:
+                self._traded_tickers.add(lo.token)
+                self._persist_traded_tokens()
+        elif lo.token not in self._traded_tokens:
+            self._traded_tokens.add(lo.token)
+            self._persist_traded_tokens()
+
     # -- placement -----------------------------------------------------------
     def place_or_reprice(self, c: Any, dec: Any, rest: Any, store: Any, now: Any, now_ts: float,
                          phase: str = "pre") -> None:
@@ -174,8 +245,8 @@ class PregameLiveExecutor:
         assert_live_allowed(phase, armed)             # HARD (cheap) re-lock immediately before any order
         token = c.rest_ref[1]
         price = float(dec.quote_price)
-        tick = store.poly_tick(token, 0.01) or 0.01
-        live_rest = store.poly_view(token) or rest
+        tick = self._rest_tick(c, store)
+        live_rest = self._rest_view_c(c, store) or rest
         best_ask = getattr(live_rest, "best_ask", None)
         if best_ask is not None and price > best_ask - tick + 1e-9:    # would CROSS now -> never place
             if c.key in self.open_orders:
@@ -219,9 +290,8 @@ class PregameLiveExecutor:
                           f"stake_today ${self.caps.stake_today:.2f})")
             self._record(c, "expire", now, phase, price=price, size=size, hedge_ask=hedge_ask, reason=reason)
             return
-        neg = self._neg_for(token, store)
         try:
-            res = self.order_client.rest(token, price, size, tick_size=tick, neg_risk=neg)
+            res = self._do_rest(c, price, size, tick, store)
         except Exception as exc:  # noqa: BLE001
             self._alert(f"[MAKER_RT][LIVE] PLACE FAILED {c.game} {c.direction} [{phase}] @ {price:.4f}: {exc}")
             return
@@ -232,11 +302,11 @@ class PregameLiveExecutor:
         lo = _LiveOrder(key=c.key, order_id=oid, token=token, price=price, size=float(size),
                         side=c.rest_side, direction=c.direction, sport=c.sport, game=c.game,
                         market_key=c.market_key, hedge_lookup=dict(c.hedge_lookup), poly_rate=c.poly_rate,
-                        placed_ts=now_ts, phase=phase, best_bid=getattr(rest, "best_bid", None))
+                        placed_ts=now_ts, phase=phase, best_bid=getattr(rest, "best_bid", None),
+                        rest_venue=c.rest_venue,
+                        kalshi_side=(c.rest_ref[2] if c.rest_venue == "kalshi" else ""))
         self.open_orders[c.key] = lo
-        if token not in self._traded_tokens:          # reconcile this token for flatness (persist for restarts)
-            self._traded_tokens.add(token)
-            self._persist_traded_tokens()
+        self._track_rested(lo)                         # reconcile this instrument for flatness (persisted)
         self.caps.on_open()
         kind = "reprice" if existing is not None else "quote"
         self._record(c, kind, now, phase, price=price, size=size, hedge_ask=hedge_ask, order_id=oid)
@@ -261,10 +331,10 @@ class PregameLiveExecutor:
             return True
         resp = None
         try:
-            resp = self.order_client.cancel(lo.order_id)
+            resp = self._venue_cancel(lo)
         except Exception as exc:  # noqa: BLE001
             self._alert(f"[MAKER_RT][LIVE] cancel raised for {lo.order_id}: {exc}")
-        if not self._cancel_confirmed(lo.order_id, resp):
+        if not self._cancel_confirmed(lo, resp):
             if self.log:
                 self.log.warning("[MAKER_RT][LIVE] cancel NOT confirmed %s (%s) — keeping tracked.",
                                  lo.order_id, reason)
@@ -277,13 +347,13 @@ class PregameLiveExecutor:
                       f"({reason}) id {lo.order_id}", reason=reason)
         return True
 
-    def _cancel_confirmed(self, oid: str, resp: Any) -> bool:
+    def _cancel_confirmed(self, lo: _LiveOrder, resp: Any) -> bool:
         if isinstance(resp, dict):
             canceled = resp.get("canceled") or resp.get("cancelled") or []
-            if oid in canceled:
+            if lo.order_id in canceled:
                 return True
         try:
-            o = self.poly.get_order(oid)
+            o = self._venue_get_order(lo)             # venue-dispatched status read
         except Exception:  # noqa: BLE001 — a gone/404 order is no longer active
             return True
         if not isinstance(o, dict) or not o:
@@ -295,10 +365,16 @@ class PregameLiveExecutor:
         confirm. Returns how many were open."""
         n = len(self.open_orders)
         try:
-            self.poly.cancel_all()
+            self.poly.cancel_all()                    # Poly: every resting order on the account is ours
         except Exception as exc:  # noqa: BLE001
             if self.log:
                 self.log.warning("[MAKER_RT][LIVE] cancel_all() failed: %s", exc)
+        if self.kalshi_order_client is not None:      # Kalshi: cancel our TRACKED resting orders (maker-scoped)
+            try:
+                self.kalshi_order_client.cancel_all()
+            except Exception as exc:  # noqa: BLE001
+                if self.log:
+                    self.log.warning("[MAKER_RT][LIVE] kalshi cancel_all() failed: %s", exc)
         from .state import utcnow
         for key in list(self.open_orders):
             self._cancel(key, now or utcnow(), reason)
@@ -343,20 +419,51 @@ class PregameLiveExecutor:
             return
         self._on_fill_detected(key, float(matched), event.get("price"), store, now, now_ts)
 
+    def on_kalshi_fill(self, event: dict, store: Any, now: Any, now_ts: float) -> None:
+        """Kalshi WS 'fill' message -> detect our rest-kalshi fills by order_id. Kalshi fills arrive as
+        DELTAS (contracts filled in this print), so accumulate onto matched_seen. A maker fill executes at
+        our resting price (lo.price)."""
+        key = self._key_for_oid(event.get("order_id"))
+        if key is None:
+            return
+        lo = self.open_orders.get(key)
+        if lo is None or lo.rest_venue != "kalshi":
+            return
+        count = event.get("count")
+        if count in (None, ""):
+            return
+        total = lo.matched_seen + float(count)               # DELTA -> cumulative high-water mark
+        self._on_fill_detected(key, total, lo.price, store, now, now_ts)
+
+    def set_kalshi_feed_ok(self, ok: bool, now: Any = None) -> None:
+        """Kalshi WS health (rest-kalshi FILL signal). On a DOWN transition: halt rest-kalshi placement +
+        cancel open KALSHI quotes (a fill we cannot observe cannot be hedged). Pre/poly quotes unaffected."""
+        was = self.kalshi_feed_ok
+        self.kalshi_feed_ok = bool(ok)
+        if was and not ok:
+            from .state import utcnow
+            self._alert("[MAKER_RT][LIVE] Kalshi WS DOWN -- cancelling open rest-kalshi quotes (fills unobservable).")
+            for k, lo in list(self.open_orders.items()):
+                if lo.rest_venue == "kalshi":
+                    self._cancel(k, now or utcnow(), "kalshi_feed_down")
+        elif ok and not was and self.log:
+            self.log.info("[MAKER_RT][LIVE] Kalshi WS UP -- rest-kalshi placement enabled.")
+
     def poll_open_orders(self, store: Any, now: Any, now_ts: float) -> None:
         """REST backup fill detector (throttled by the caller): read each open order's size_matched and
         hedge any delta the socket missed. Also drops orders cancelled out from under us."""
         for key, lo in list(self.open_orders.items()):
             try:
-                o = self.poly.get_order(lo.order_id)
+                o = self._venue_get_order(lo)        # venue-dispatched (kalshi = get_orders lookup)
             except Exception:  # noqa: BLE001
                 continue
             if not isinstance(o, dict) or not o:
                 continue
-            matched = o.get("size_matched")
+            matched = self._order_matched(lo, o)
             status = str(o.get("status") or "").upper()
+            price = o.get("price") if lo.rest_venue == "polymarket" else lo.price   # kalshi maker fills at our rest
             if matched is not None and float(matched) > lo.matched_seen + 1e-9:
-                self._on_fill_detected(key, float(matched), o.get("price"), store, now, now_ts)
+                self._on_fill_detected(key, float(matched), price, store, now, now_ts)
             elif status in ("CANCELED", "CANCELLED") and lo.matched_seen <= 1e-9:
                 self.open_orders.pop(key, None)      # cancelled out-of-band -> stop tracking
                 self.caps.on_close()
@@ -411,15 +518,20 @@ class PregameLiveExecutor:
         # DECLINE: the walked hedge is too dear -> do NOT leg in; unwind the WHOLE fill (verified).
         if locked is None or locked < HEDGE_DECLINE_FLOOR:
             return self._unwind_and_record(lo, matched, fill_price, locked, "hedge_declined", now)
-        # FIRE the Kalshi hedge.
-        res = self.hedger.hedge({"token_id": lo.token, "side": "BUY", "price": fill_price, "size": matched},
-                                {"ticker": hl.get("ticker"), "side": hl.get("side", "yes"),
-                                 "best_ask": getattr(hv, "best_ask", None)})
+        # FIRE the hedge on the COMPLEMENT venue (rest_poly -> Kalshi IOC; rest_kalshi -> Poly FAK).
+        if hedge_venue == "polymarket":
+            res = self.hedger.hedge_poly({"price": fill_price, "size": matched},
+                                         {"token": hl.get("token"), "best_ask": getattr(hv, "best_ask", None)})
+        else:
+            res = self.hedger.hedge({"token_id": lo.token, "side": "BUY", "price": fill_price, "size": matched},
+                                    {"ticker": hl.get("ticker"), "side": hl.get("side", "yes"),
+                                     "best_ask": getattr(hv, "best_ask", None)})
         status = getattr(res, "status", "error")
         hedged = float(getattr(res, "hedged_shares", 0.0) or 0.0)
         hedge_avg = getattr(res, "hedge_avg_price", None)
-        hedge_oid = ((getattr(res, "detail", None) or {}).get("kalshi") or {}).get("order_id") \
-            if isinstance(getattr(res, "detail", None), dict) else None
+        _detail = getattr(res, "detail", None) or {}
+        hedge_oid = ((_detail.get("kalshi") or _detail.get("poly") or {}) or {}).get("order_id") \
+            if isinstance(_detail, dict) else None
         if status == "locked":
             self.caps.commit_stake(hedged * float(hedge_avg or 0.0))
             pnl = float(getattr(res, "locked_pnl", 0.0) or 0.0)
@@ -493,9 +605,14 @@ class PregameLiveExecutor:
                 f"pnl=${pnl:.2f}")
 
     def _verified_unwind(self, lo: _LiveOrder, shares: float, fill_price: float) -> dict:
-        """Market-sell ``shares`` of the naked fill (FAK marketable) AND REST-verify the position is flat.
+        """VENUE-DISPATCHED verified unwind: market-sell the naked fill AND REST-verify the position is flat.
         Returns {ok, sold, sell_px, cost, remaining, sell_res}. ok is True ONLY when the position read
-        confirms flat (<= ~1 share). A position-read failure is treated as NOT flat (fail-closed)."""
+        confirms flat. A read failure is treated as NOT flat (fail-closed). Identical doctrine both venues."""
+        if lo.rest_venue == "kalshi":
+            return self._verified_unwind_kalshi(lo, shares, fill_price)
+        return self._verified_unwind_poly(lo, shares, fill_price)
+
+    def _verified_unwind_poly(self, lo: _LiveOrder, shares: float, fill_price: float) -> dict:
         poly = getattr(self.hedger, "poly", None) or self.poly
         sell_res = None
         try:
@@ -520,6 +637,60 @@ class PregameLiveExecutor:
         cost = round((float(fill_price) - float(sell_px)) * sold, 4) if (sell_px is not None and sold > 0) else None
         return {"ok": bool(flat), "sold": sold, "sell_px": sell_px, "cost": cost,
                 "remaining": remaining, "sell_res": sell_res}
+
+    def _verified_unwind_kalshi(self, lo: _LiveOrder, shares: float, fill_price: float) -> dict:
+        """IOC-sell the naked Kalshi position, then REST-verify FLAT via the portfolio positions endpoint."""
+        n = int(round(float(shares)))
+        sell_res = None
+        try:
+            sell_res = self.kalshi.place_market_sell(lo.token, lo.kalshi_side, n)
+        except Exception as exc:  # noqa: BLE001
+            sell_res = {"status": "error", "error": str(exc)}
+        sold = float((sell_res or {}).get("fill_count") or 0.0) if isinstance(sell_res, dict) else 0.0
+        sell_px = (sell_res or {}).get("avg_price") if isinstance(sell_res, dict) else None
+        remaining = None
+        try:
+            remaining = self._settle_kalshi_flat(lo.token)      # SOURCE OF TRUTH — portfolio positions
+        except Exception as exc:  # noqa: BLE001 - read failed -> UNKNOWN -> fail closed
+            if self.log:
+                self.log.warning("[MAKER_RT][LIVE] kalshi position read failed for %s: %s", lo.token, exc)
+            remaining = None
+        flat = remaining is not None and abs(remaining) <= 0.5
+        cost = round((float(fill_price) - float(sell_px)) * sold, 4) if (sell_px is not None and sold > 0) else None
+        return {"ok": bool(flat), "sold": sold, "sell_px": sell_px, "cost": cost,
+                "remaining": remaining, "sell_res": sell_res}
+
+    def _kalshi_position(self, ticker: str) -> float:
+        """Net |contracts| held on ``ticker`` from the Kalshi portfolio positions endpoint (0 if flat/absent)."""
+        resp = self.kalshi.get_positions()
+        rows = resp.get("market_positions") if isinstance(resp, dict) else (resp or [])
+        if not rows and isinstance(resp, dict):
+            rows = resp.get("positions") or resp.get("data") or []
+        for p in rows or []:
+            if not isinstance(p, dict):
+                continue
+            if p.get("ticker") == ticker or p.get("market_ticker") == ticker:
+                for k in ("position", "net_position", "count"):
+                    if p.get(k) is not None:
+                        return abs(float(p[k]))
+                return 0.0
+        return 0.0
+
+    def _settle_kalshi_flat(self, ticker: str, *, tries: int = 4, poll_s: float = 0.5) -> Optional[float]:
+        """Poll the Kalshi position until it reads flat (<= 0.5) or ``tries`` exhausted — mirrors the Poly
+        settle poll so a brief post-sell lag can't falsely scream unwind_FAILED. Returns the last read."""
+        import time as _time
+        last: Optional[float] = None
+        for i in range(max(1, tries)):
+            try:
+                last = self._kalshi_position(ticker)
+            except Exception:  # noqa: BLE001
+                last = None
+            if last is not None and abs(last) <= 0.5:
+                return last
+            if i < tries - 1:
+                _time.sleep(poll_s)
+        return last
 
     def _orphan(self, lo: _LiveOrder, remaining: Any, sell_res: Any, now: Any) -> None:
         self._orphan_detected(lo.game, lo.token, lo.phase, remaining, f"unwind_FAILED sell_res={sell_res}", now)
@@ -552,21 +723,26 @@ class PregameLiveExecutor:
             return
         try:
             with open(self._traded_path, "r", encoding="utf-8") as fh:
-                toks = json.load(fh)
-            if isinstance(toks, list):
-                self._traded_tokens.update(str(t) for t in toks if t)
+                data = json.load(fh)
+            if isinstance(data, list):                       # legacy bare list = poly tokens only
+                self._traded_tokens.update(str(t) for t in data if t)
+            elif isinstance(data, dict):
+                self._traded_tokens.update(str(t) for t in (data.get("tokens") or []) if t)
+                self._traded_tickers.update(str(t) for t in (data.get("tickers") or []) if t)
         except Exception:  # noqa: BLE001
             pass
 
     def _persist_traded_tokens(self) -> None:
-        """Atomically write the watch-set. Best-effort: persistence must NEVER crash live trading."""
+        """Atomically write the watch-set (poly tokens + kalshi tickers). Best-effort: persistence must
+        NEVER crash live trading."""
         import json
         if not self._traded_path:
             return
         try:
             tmp = self._traded_path + ".tmp"
             with open(tmp, "w", encoding="utf-8") as fh:
-                json.dump(sorted(self._traded_tokens), fh)
+                json.dump({"tokens": sorted(self._traded_tokens),
+                           "tickers": sorted(self._traded_tickers)}, fh)
             os.replace(tmp, self._traded_path)
         except Exception:  # noqa: BLE001
             pass
@@ -586,7 +762,7 @@ class PregameLiveExecutor:
         open_toks = {lo.token for lo in self.open_orders.values()}
         suspects: dict = {}
         flat_toks: list = []
-        for tok in list(self._traded_tokens):                # reliable per-token read (CLOB), maker-scoped
+        for tok in list(self._traded_tokens):                # POLY: reliable per-token read (CLOB), maker-scoped
             try:
                 bal = self.poly.conditional_balance(tok)
             except Exception:  # noqa: BLE001 - unknown -> keep watching (don't prune on a read failure)
@@ -598,10 +774,23 @@ class PregameLiveExecutor:
         if flat_toks:                                        # bound the watch-set to open + non-flat tokens
             self._traded_tokens.difference_update(flat_toks)
             self._persist_traded_tokens()
+        flat_tks: list = []
+        for tk in list(self._traded_tickers):                # KALSHI: maker-scoped portfolio position read
+            try:
+                pos = self._kalshi_position(tk)
+            except Exception:  # noqa: BLE001
+                continue
+            if pos is not None and abs(pos) > 0.5:
+                suspects[tk] = pos
+            elif pos is not None and tk not in open_toks:
+                flat_tks.append(tk)
+        if flat_tks:
+            self._traded_tickers.difference_update(flat_tks)
+            self._persist_traded_tokens()
         if not suspects:
             return None
         tok, bal = next(iter(suspects.items()))
-        if self.auto_flatten:                                # optional: try to flatten the biggest orphan
+        if self.auto_flatten and tok in self._traded_tokens:  # optional flatten (POLY only; kalshi needs a side)
             try:
                 self.poly.place_market_sell(tok, bal)
                 bal2 = self.poly.conditional_balance(tok)
@@ -611,7 +800,7 @@ class PregameLiveExecutor:
             except Exception as exc:  # noqa: BLE001
                 self._instant(f"[MAKER_RT][CRITICAL] reconciliation auto-flatten FAILED {str(tok)[:12]}...: {exc}")
         self._orphan_detected("reconciliation", tok, "?", bal,
-                              f"{len(suspects)} orphan token(s); auto_flatten={self.auto_flatten}", now)
+                              f"{len(suspects)} orphan instrument(s); auto_flatten={self.auto_flatten}", now)
         return self.orphan
 
     # -- helpers -------------------------------------------------------------

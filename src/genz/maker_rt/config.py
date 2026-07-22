@@ -106,6 +106,9 @@ class MakerRtConfig:
     debounce_ms: int = 250                 # quote-engine debounce
     expire_before_kickoff_s: int = 120     # cancel/expire all quotes at kickoff - this
     poly_fee_rate: float = 0.05            # Polymarket sports taker rate (hedge-fee model)
+    # LIVE-eligible rest directions. rest_poly is proven+armed; rest_kalshi stays OFF (shadow) until its
+    # own SMOKE-KALSHI passes, then add "rest_kalshi" here. Shared caps/one-in-flight span both.
+    directions: tuple = ("rest_poly",)
     head_poll_s: int = 60                  # stale-code guard: exit 0 on git HEAD change
     ping_s: int = 10                       # ws keepalive PING cadence (poly)
     # REPRICE HYSTERESIS (stop shredding queue position): a VOLUNTARY upward reprice needs >= this many
@@ -173,6 +176,12 @@ def load_maker_rt_config(config_path: Optional[str] = None,
     cfg.min_rest_s = float(cfg.min_rest_s)
     cfg.hedge_persist_s = float(cfg.hedge_persist_s)
     cfg.telegram_digest_min = float(cfg.telegram_digest_min)
+    if blk.get("directions") is not None:                # LIVE-eligible rest directions (list in YAML)
+        d = blk["directions"]
+        cfg.directions = tuple(str(x).strip().lower().replace("-", "_") for x in d) if isinstance(d, (list, tuple)) \
+            else (str(d).strip().lower().replace("-", "_"),)
+    else:
+        cfg.directions = tuple(cfg.directions)
     # PER-SPORT poly-leg cap map, with the DEPRECATED tennis_max_poly_leg scalar as a back-compat alias.
     cap = dict(cfg.poly_leg_cap)
     if isinstance(blk.get("poly_leg_cap"), dict):

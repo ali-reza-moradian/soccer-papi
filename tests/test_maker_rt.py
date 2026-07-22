@@ -457,6 +457,32 @@ def test_state_summary_and_heartbeat(tmp_path):
     assert hb["open_quotes"] == 3 and hb["fills_today"] == 1
 
 
+def test_state_unwind_economics_and_amber_window():
+    from datetime import datetime, timezone
+    from src.genz.maker_rt.state import MakerState
+    st = MakerState()
+    now = datetime(2026, 7, 16, 18, 0, 0, tzinfo=timezone.utc)
+    fill = lambda: st.record({"event": "fill", "sport": "mlb", "game": "G", "market_key": "ml2",  # noqa: E731
+                              "locked_net": 1.0, "locked_pnl": 0.1}, now)
+    # 4 fills: 3 cleanly hedged, 1 unwound ($0.25) + 1 declined ($0.10 exit) -> 2 unwinds / 5 fills.
+    fill(); st.record({"event": "hedge_locked"}, now)
+    fill(); st.record({"event": "hedge_locked"}, now)
+    fill(); st.record({"event": "hedge_locked"}, now)
+    fill(); st.record({"event": "hedge_unwound", "unwind_cost": 0.25}, now)
+    fill(); st.record({"event": "hedge_declined", "unwind_cost": 0.10}, now)
+    summ = st.summary("live", {}, now)
+    assert summ["unwind_count_today"] == 2
+    assert summ["unwind_cost_today_usd"] == 0.35                # 0.25 + 0.10
+    assert summ["unwind_rate"] == round(2 / 5, 4)              # lifetime unwinds/fills
+    assert summ["unwind_window"] == 5 and summ["unwind_rate_recent"] == round(2 / 5, 4)
+    # Push the recent window over 20%: many unwinds in a row -> recent rate climbs above 0.20.
+    for _ in range(6):
+        fill(); st.record({"event": "unwind_FAILED", "unwind_cost": 0.0}, now)
+    summ2 = st.summary("live", {}, now)
+    assert summ2["unwind_rate_recent"] > 0.20                  # amber trigger on the strip
+    assert summ2["unwind_count_today"] == 8                    # 2 + 6
+
+
 def test_build_universe_filters_settlement_and_pregame():
     from src.genz.maker_rt.universe import build_universe, kalshi_tickers, poly_tokens
     node = lambda side, tok, kt, risk=None: {   # noqa: E731

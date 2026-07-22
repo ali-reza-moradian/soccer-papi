@@ -25,31 +25,59 @@ from . import config as gz_config
 # can never pass silently again.
 SYSTEMIC_MIN_GAMES = 5
 SYSTEMIC_MIN_PAIRED_SHARE = 0.20
+SYSTEMIC_MIN_PAIRED_GAMES = 5      # BROKEN also requires paired < this, so a big slate with >= 5 paired
+                                   # games is NEVER "broken" (e.g. 18/92 = 19.6% share but 18 pairs is fine).
 
 
-def pairing_alert(tree: dict, sport: str = "?") -> Optional[dict]:
-    """Return a systemic_alert dict when a build has >= SYSTEMIC_MIN_GAMES games but < 20% of them have
-    ANY paired node (probable venue format drift), else None. Sport-agnostic; samples the unpaired
-    games' name tokens so the alert is self-diagnosing for whoever reads the tree log / panel banner."""
-    games = tree.get("games", {}) or {}
-    total = len(games)
-    if total < SYSTEMIC_MIN_GAMES:
-        return None
-    paired = sum(1 for g in games.values() if g.get("nodes"))
-    rate = paired / total if total else 0.0
-    if rate >= SYSTEMIC_MIN_PAIRED_SHARE:
-        return None
+def _unmatched_samples(group: list, limit: int = 6) -> list:
     samples: list = []
-    for gid, g in games.items():
+    for gid, g in group:
         if g.get("nodes"):
             continue
         label = f"{g.get('away', '?')} vs {g.get('home', '?')}"
         samples.append({"game": gid, "label": label,
                         "tokens": sorted(set(re.findall(r"[a-z0-9]+", label.lower())))})
-        if len(samples) >= 6:
+        if len(samples) >= limit:
             break
-    return {"sport": sport, "rate": round(rate, 4), "paired": paired, "total": total,
-            "sample_unmatched_tokens": samples}
+    return samples
+
+
+def pairing_alert(tree: dict, sport: str = "?") -> Optional[dict]:
+    """PER-COMPETITION systemic pairing alarm. A competition is BROKEN (red) only when BOTH < 20% of its
+    games paired AND fewer than SYSTEMIC_MIN_PAIRED_GAMES (5) paired — i.e. a genuine format-drift failure,
+    not a large slate that just runs many one-sided games. A competition whose unpaired games are simply
+    ABSENT on one venue (coverage.poly_absent -> Kalshi-only, e.g. friendlies) is reported as a grey
+    'N one-sided on <venue>' note, NEVER red. Sports without competitions (mlb/tennis/ufc) evaluate as one
+    'all' group. Returns {sport, broken:[...], one_sided:[...]} or None when every competition is healthy."""
+    games = tree.get("games", {}) or {}
+    if len(games) < SYSTEMIC_MIN_GAMES:
+        return None
+    groups: dict = {}
+    for gid, g in games.items():
+        groups.setdefault(g.get("competition") or "all", []).append((gid, g))
+    broken: list = []
+    one_sided: list = []
+    for comp, group in sorted(groups.items()):
+        total_c = len(group)
+        if total_c < SYSTEMIC_MIN_GAMES:                     # too small a competition to judge
+            continue
+        paired_c = sum(1 for _, g in group if g.get("nodes"))
+        share_c = paired_c / total_c
+        if share_c >= SYSTEMIC_MIN_PAIRED_SHARE or paired_c >= SYSTEMIC_MIN_PAIRED_GAMES:
+            continue                                         # healthy on EITHER gate -> not broken
+        # Below BOTH thresholds. One-sided (a venue simply doesn't carry it) is normal, not a break.
+        poly_absent = sum(1 for _, g in group
+                          if not g.get("nodes") and (g.get("coverage") or {}).get("poly_absent"))
+        genuine = sum(1 for _, g in group
+                      if not g.get("nodes") and not (g.get("coverage") or {}).get("poly_absent"))
+        if genuine == 0 and poly_absent > 0:
+            one_sided.append({"competition": comp, "count": poly_absent, "venue": "Kalshi"})
+        else:
+            broken.append({"competition": comp, "share": round(share_c, 4), "paired": paired_c,
+                           "total": total_c, "sample_unmatched_tokens": _unmatched_samples(group)})
+    if not broken and not one_sided:
+        return None
+    return {"sport": sport, "broken": broken, "one_sided": one_sided}
 
 
 # --------------------------------------------------------------------------- #

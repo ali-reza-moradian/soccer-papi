@@ -279,6 +279,31 @@ class PolyExec:
         raw = self.client.post_order(signed, ot)
         return self._normalize(raw, price=price, requested_shares=shares)
 
+    def place_market_buy(self, token_id: str, shares: float, *, price: Optional[float] = None,
+                         order_type: str = "FAK") -> dict[str, Any]:
+        """HEDGE (rest_kalshi direction): market-BUY ``shares`` of ``token_id`` with a MARKETABLE limit that
+        sweeps UP to ``best_ask + 2 ticks`` (so a thin/moving book still lifts the size) using FAK. Mirrors
+        place_market_sell for the taker complement leg. Returns the normalized result."""
+        tick_size, neg_risk = self._tick_and_negrisk(token_id)
+        try:
+            tick = float(tick_size)
+        except (TypeError, ValueError):
+            tick = 0.01
+        if price is None:
+            book = self.get_orderbook(token_id)
+            asks = book.get("asks") or []
+            best_ask = float(asks[0][0]) if asks else None
+            price = min(1.0 - tick, round((best_ask + 2 * tick) if best_ask is not None else 1.0 - tick, 6))
+        from py_clob_client_v2.clob_types import OrderArgs, OrderType, PartialCreateOrderOptions
+        from py_clob_client_v2.order_builder.constants import BUY
+
+        args = OrderArgs(token_id=token_id, price=float(price), size=float(shares), side=BUY)
+        options = PartialCreateOrderOptions(tick_size=tick_size_str(tick_size), neg_risk=bool(neg_risk))
+        signed = self.client.create_order(args, options)
+        ot = getattr(OrderType, order_type, order_type)                # FAK by default
+        raw = self.client.post_order(signed, ot)
+        return self._normalize(raw, price=price, requested_shares=shares)
+
     # -- position + approval (SELL side; the source of truth for verification/reconciliation) ---------
     def conditional_balance(self, token_id: str) -> float:
         """ACTUAL outcome-token (CTF) shares held for ``token_id`` -- the source of truth for unwind

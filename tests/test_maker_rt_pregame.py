@@ -76,6 +76,56 @@ class _Hedger:
         self.calls.append({"fill": fill, "spec": spec})
         return self.result
 
+    def hedge_poly(self, fill, spec):                 # rest_kalshi hedge (poly FAK); same fake result
+        self.calls.append({"fill": fill, "spec": spec, "venue": "poly"})
+        return self.result
+
+
+class _KalshiOC:
+    """KalshiOrderClient stand-in for rest_kalshi placement/cancel/status."""
+    def __init__(self):
+        self.rests = []
+        self.cancels = []
+        self._n = 0
+        self.status = {}                              # oid -> status dict (default {} = gone)
+
+    def rest(self, ticker, side, price, count, client_order_id=None):
+        self._n += 1
+        oid = f"koid{self._n}"
+        self.rests.append({"ticker": ticker, "side": side, "price": price, "count": count, "oid": oid})
+        return {"status": "resting", "fill_count": 0, "avg_price": price, "order_id": oid}
+
+    def cancel(self, oid):
+        self.cancels.append(oid)
+        return {"canceled": [oid]}
+
+    def cancel_all(self):
+        return 0
+
+    def order_status(self, oid):
+        return self.status.get(oid, {})
+
+
+class _KalshiExec:
+    """KalshiExec stand-in for rest_kalshi unwind + portfolio position reads."""
+    def __init__(self, sell_price=0.45, unwind_flattens=True):
+        self.market_sells = []
+        self.sell_price = sell_price
+        self.unwind_flattens = unwind_flattens
+        self.positions: dict = {}                     # ticker -> net contracts
+
+    def place_market_sell(self, ticker, side, count, client_order_id=None):
+        self.market_sells.append({"ticker": ticker, "side": side, "count": count})
+        if self.unwind_flattens:
+            self.positions[ticker] = 0.0              # the IOC sell flattened us
+        return {"status": "filled", "fill_count": count, "avg_price": self.sell_price}
+
+    def get_positions(self):
+        return {"market_positions": [{"ticker": t, "position": p} for t, p in self.positions.items()]}
+
+    def cancel_all(self):
+        return 0
+
 
 class _Store:
     """poly_view/kalshi_view/poly_tick stand-in."""
@@ -130,6 +180,25 @@ def _cand(direction="rest-poly", token="TOK1"):
         rest_side="Home", direction=direction, rest_ref=("polymarket", token, "BUY"),
         rest_venue="polymarket", hedge_venue="kalshi", poly_rate=0.05, rest_id=token, hedge_id="KX-1",
         hedge_lookup={"venue": "kalshi", "ticker": "KX-1", "side": "yes"})
+
+
+def _cand_kalshi(ticker="KX-1", side="yes", htoken="TOKH"):
+    return SimpleNamespace(
+        key=("mlb", "G1", "ml2", "Home", "rest-kalshi"), sport="mlb", game="G1", market_key="ml2",
+        rest_side="Home", direction="rest-kalshi", rest_ref=("kalshi", ticker, side),
+        rest_venue="kalshi", hedge_venue="polymarket", poly_rate=0.05, rest_id=ticker, hedge_id=htoken,
+        hedge_lookup={"venue": "polymarket", "token": htoken})
+
+
+def _exec_kalshi(tmp_path, *, kalshi_oc=None, kalshi=None, poly=None, hedger=None, state=None):
+    """Build an executor with rest-kalshi ENABLED + the Kalshi clients injected + kalshi feed UP."""
+    poly = poly or _Poly()
+    ex, cfg = _exec(tmp_path, poly=poly, hedger=hedger, state=state)
+    ex.kalshi_order_client = kalshi_oc or _KalshiOC()
+    ex.kalshi = kalshi or _KalshiExec()
+    ex.directions = {"rest-poly", "rest-kalshi"}
+    ex.kalshi_feed_ok = True
+    return ex, cfg
 
 
 def _dec(price=0.46, hedge_ask=0.50):
@@ -714,6 +783,117 @@ def test_decline_branch_full_chain_and_circuit(tmp_path):
     assert "hedge_declined" in rows and poly.market_sells      # decline -> verified unwind sold
     assert any("FILL" in m for m in sent) and any("HEDGE_DECLINED" in m.upper() for m in sent)
     assert ex.inplay_fills_today == 1 and ex.inplay_pause_until > 0    # first-fill circuit fired on decline
+
+
+def test_kalshi_eligible_respects_directions_and_feed(tmp_path):
+    ex, _ = _exec(tmp_path, poly=_Poly())              # default directions = rest-poly only
+    ck = _cand_kalshi()
+    ex.kalshi_feed_ok = True
+    assert ex.eligible(ck, "pre") is False             # rest-kalshi not in directions -> ineligible
+    ex.directions = {"rest-poly", "rest-kalshi"}
+    assert ex.eligible(ck, "pre") is True              # enabled + kalshi feed up -> eligible
+    ex.kalshi_feed_ok = False
+    assert ex.eligible(ck, "pre") is False             # kalshi FILL feed down -> ineligible
+
+
+def test_kalshi_place_and_cancel_venue_dispatch(tmp_path):
+    koc = _KalshiOC()
+    ex, _ = _exec_kalshi(tmp_path, kalshi_oc=koc)
+    ex.roll_day(_DT)
+    store = _Store(kalshi_ask=0.60)
+    c = _cand_kalshi()
+    ex.place_or_reprice(c, _dec(0.46, hedge_ask=0.55), None, store, _DT, 100.0, "pre")
+    assert koc.rests and koc.rests[0]["ticker"] == "KX-1" and koc.rests[0]["side"] == "yes"
+    lo = ex.open_orders[c.key]
+    assert lo.rest_venue == "kalshi" and lo.kalshi_side == "yes" and "KX-1" in ex._traded_tickers
+    assert ex.cancel_key(c.key, _DT, "test") is True and koc.cancels == [lo.order_id]
+
+
+def test_kalshi_fill_decline_unwinds_via_kalshi_and_verifies_flat(tmp_path):
+    koc = _KalshiOC()
+    kex = _KalshiExec()                                # place_market_sell flattens by default
+    ex, _ = _exec_kalshi(tmp_path, kalshi_oc=koc, kalshi=kex)
+    ex.roll_day(_DT)
+    store = _Store(poly_best_ask=0.62, kalshi_ask=0.60)  # hedge on POLY @ 0.62 -> locked bad -> DECLINE
+    c = _cand_kalshi()
+    ex.place_or_reprice(c, _dec(0.46, hedge_ask=0.62), None, store, _DT, 100.0, "inplay")
+    oid = koc.rests[0]["oid"]
+    ex.on_kalshi_fill({"kind": "kalshi_fill", "order_id": oid, "count": 5}, store, _DT, 101.0)
+    rows = [r["event"] for r in ex.state.rows]
+    assert "hedge_declined" in rows and kex.market_sells                 # declined -> kalshi IOC unwind
+    assert kex.market_sells[0]["ticker"] == "KX-1" and ex.orphan is None  # REST-verified flat -> no orphan
+
+
+def test_kalshi_unwind_not_flat_screams_orphan(tmp_path):
+    koc = _KalshiOC()
+    kex = _KalshiExec(unwind_flattens=False)           # the IOC sell does NOT clear the position
+    kex.positions["KX-1"] = 5.0
+    ex, _ = _exec_kalshi(tmp_path, kalshi_oc=koc, kalshi=kex)
+    ex.roll_day(_DT)
+    store = _Store(poly_best_ask=0.62, kalshi_ask=0.60)
+    c = _cand_kalshi()
+    ex.place_or_reprice(c, _dec(0.46, hedge_ask=0.62), None, store, _DT, 100.0, "inplay")
+    oid = koc.rests[0]["oid"]
+    ex.on_kalshi_fill({"kind": "kalshi_fill", "order_id": oid, "count": 5}, store, _DT, 101.0)
+    rows = [r["event"] for r in ex.state.rows]
+    assert "unwind_FAILED" in rows                                       # not flat -> SCREAM
+    assert ex.orphan is not None and ex.caps.halted and ex.caps.halt_reason == "orphan_position"
+
+
+def test_reconcile_catches_kalshi_orphan(tmp_path):
+    kex = _KalshiExec()
+    kex.positions["KX-9"] = 4.0                        # a stranded Kalshi position on a ticker we traded
+    ex, _ = _exec_kalshi(tmp_path, kalshi=kex)
+    ex._traded_tickers.add("KX-9")
+    orph = ex.reconcile_positions(_DT)
+    assert orph is not None and ex.caps.halted and ex.caps.halt_reason == "orphan_position"
+
+
+def test_kalshi_order_client_rest_cancel_status():
+    from src.genz.maker_rt.orders import KalshiOrderClient, KALSHI_COID_PREFIX
+
+    class _Ex:
+        def __init__(self):
+            self.orders = []
+            self.canceled = []
+
+        def place_order(self, ticker, side, count, price, *, time_in_force=None, client_order_id=None):
+            self.orders.append({"ticker": ticker, "side": side, "count": count, "price": price,
+                                "tif": time_in_force, "coid": client_order_id})
+            return {"status": "resting", "fill_count": 0, "avg_price": price, "order_id": f"o{len(self.orders)}"}
+
+        def cancel_order(self, oid):
+            self.canceled.append(oid); return {"canceled": [oid]}
+
+        def get_orders(self, **k):
+            return {"orders": [{"order_id": "o1", "status": "resting"}]}
+
+    ex = _Ex()
+    koc = KalshiOrderClient(ex)
+    res = koc.rest("KX-1", "yes", 0.40, 3)
+    assert ex.orders[0]["tif"] is None                 # RESTING (not IOC)
+    assert ex.orders[0]["coid"].startswith(KALSHI_COID_PREFIX) and ex.orders[0]["count"] == 3
+    assert koc.order_status("o1")["status"] == "resting" and koc.order_status("zz") == {}
+    koc.cancel(res["order_id"])
+    assert ex.canceled == [res["order_id"]]
+
+
+def test_hedge_poly_locks_and_reports_miss():
+    from src.genz.maker_rt.hedge import LiveHedger
+
+    class _PolyBuy:
+        def __init__(self, shares):
+            self.shares = shares
+
+        def place_market_buy(self, token, size, **k):
+            return {"status": "filled", "shares": self.shares, "avg_price": 0.50}
+
+    h = LiveHedger(poly_client=_PolyBuy(5))            # full fill -> LOCKED
+    r = h.hedge_poly({"price": 0.46, "size": 5}, {"token": "T", "best_ask": 0.50})
+    assert r.status == "locked" and r.hedged_shares == 5 and r.locked_pnl is not None
+    h2 = LiveHedger(poly_client=_PolyBuy(0))           # zero fill -> MISS (caller unwinds)
+    r2 = h2.hedge_poly({"price": 0.46, "size": 5}, {"token": "T", "best_ask": 0.50})
+    assert r2.status == "missed" and r2.freeze_market is True
 
 
 def test_driver_now_behind_keeps_live_order():

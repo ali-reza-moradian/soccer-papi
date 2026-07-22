@@ -18,6 +18,7 @@ import logging
 import os
 import random
 import time
+from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Optional
@@ -155,7 +156,15 @@ class MakerState:
     drift5: list = field(default_factory=list)
     drift30: list = field(default_factory=list)
     pnl_today: float = 0.0
+    n_unwinds: int = 0                                  # unwind rows today (hedge_declined|hedge_unwound|unwind_FAILED)
+    unwind_cost_today: float = 0.0                      # $ paid to EXIT (unwind cost) today
     restarts_today: int = 0                             # process starts today (crash-loop signal; set at startup)
+    # UNWIND-ECONOMICS lifetime counters + a 20-fill rolling window (1=fill unwound, 0=cleanly hedged).
+    # These SURVIVE the daily roll so unwind_rate + the amber "paying the exit toll too often" signal
+    # reflect recent behaviour across midnight, not a counter that resets to 0/0 every day.
+    lifetime_fills: int = 0
+    lifetime_unwinds: int = 0
+    recent_outcomes: Any = field(default_factory=lambda: deque(maxlen=20))
     gates: dict = field(default_factory=dict)          # {"pre": bool, "inplay": bool} — armed states, set at startup
     live: dict = field(default_factory=dict)           # PRE-GAME live snapshot (open_quotes/stake/fills/pnl/halt/feed_ok)
     buckets: dict = field(default_factory=dict)        # (sport, phase) -> _Bucket
@@ -164,9 +173,11 @@ class MakerState:
 
     def _roll(self, day: str) -> None:
         if day != self.day:
-            keep = (self.log, self.restarts_today, self.gates, self.live)   # survive the daily reset
+            keep = (self.log, self.restarts_today, self.gates, self.live,   # survive the daily reset
+                    self.lifetime_fills, self.lifetime_unwinds, self.recent_outcomes)
             self.__init__(day=day)  # type: ignore[misc]
-            self.log, self.restarts_today, self.gates, self.live = keep
+            (self.log, self.restarts_today, self.gates, self.live,
+             self.lifetime_fills, self.lifetime_unwinds, self.recent_outcomes) = keep
 
     def _bucket(self, sport: str, phase: str) -> _Bucket:
         return self.buckets.setdefault((str(sport or "?"), str(phase or "pre")), _Bucket())
@@ -198,11 +209,19 @@ class MakerState:
         elif ev == "expire":
             self.n_expired += 1; b.expired += 1
         elif ev == "fill":
-            self.n_fills += 1; b.fills += 1
+            self.n_fills += 1; b.fills += 1; self.lifetime_fills += 1
             if row.get("locked_net") is not None:
                 self.fill_nets.append(float(row["locked_net"]))
                 b.fill_nets.append(float(row["locked_net"]))
                 self.pnl_today += float(row.get("locked_pnl") or 0.0)
+        elif ev == "hedge_locked":
+            self.recent_outcomes.append(0)                  # a CLEAN hedge — the fill did NOT need an exit
+        elif ev in ("hedge_declined", "hedge_unwound", "unwind_FAILED"):
+            # the fill required an EXIT (we paid the unwind toll). unwind_cost is on the row here, BEFORE
+            # _append_csv drops it (it's not a CSV column — realized_pnl_usd carries -cost to the CSV).
+            self.n_unwinds += 1; self.lifetime_unwinds += 1
+            self.unwind_cost_today += float(row.get("unwind_cost") or 0.0)
+            self.recent_outcomes.append(1)
         elif ev == "fill_drift":
             for src, dst_flat, dst_b in ((row.get("drift_1"), self.drift1, b.drift1),
                                          (row.get("drift_5"), self.drift5, b.drift5),
@@ -266,6 +285,12 @@ class MakerState:
             "drift_median_1": _median(self.drift1), "drift_median_5": _median(self.drift5),
             "drift_median_30": _median(self.drift30),
             "pnl_today": round(self.pnl_today, 4), "restarts_today": self.restarts_today,
+            "unwind_count_today": self.n_unwinds,
+            "unwind_cost_today_usd": round(self.unwind_cost_today, 4),
+            "unwind_rate": round(self.lifetime_unwinds / self.lifetime_fills, 4) if self.lifetime_fills else 0.0,
+            "unwind_rate_recent": (round(sum(self.recent_outcomes) / len(self.recent_outcomes), 4)
+                                   if self.recent_outcomes else 0.0),   # over the last <=20 fills
+            "unwind_window": len(self.recent_outcomes),
             "gates": dict(self.gates), "live": dict(self.live),
             "by_sport": self._by_sport(), "by_phase": self._by_phase(),
         }
