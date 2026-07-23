@@ -540,6 +540,55 @@ def test_target_net_tuning_metrics_survive_the_daily_roll():
     assert hb["locked_net_p50"] == 0.7 and hb["fills_per_100_quotes"] > 0
 
 
+def test_target_net_tuning_metrics_survive_a_process_restart(tmp_path, monkeypatch):
+    """THE point of the file: the maker restarts ~10x/day on deploys. An in-memory 'last 20 fills'
+    window would reset long before it held 20 fills, so target_net could never be judged."""
+    from datetime import datetime, timezone
+    from src.genz.maker_rt import config as mrt_config
+    from src.genz.maker_rt.state import MakerState
+    monkeypatch.setattr(mrt_config, "OPS_DIR", str(tmp_path))
+    now = datetime(2026, 7, 23, 18, 0, 0, tzinfo=timezone.utc)
+
+    st = MakerState()
+    for _ in range(150):
+        st.record({"event": "quote", "sport": "mlb", "phase": "pre"}, now)
+    for ln in (0.5, 0.8):
+        st.record({"event": "fill", "sport": "mlb", "game": "G", "market_key": "ml2"}, now)
+        st.record({"event": "hedge_locked", "locked_net": ln}, now)     # persists immediately
+    st.record({"event": "fill", "sport": "mlb", "game": "G", "market_key": "ml2"}, now)
+    st.record({"event": "hedge_unwound", "unwind_cost": 0.3}, now)
+    st.persist_tuning()
+
+    st2 = MakerState()                       # a fresh interpreter, i.e. the next deploy
+    assert st2.lifetime_quotes == 0          # nothing carried in memory...
+    st2.load_tuning()                        # ...until the persisted file is read
+    assert st2.lifetime_quotes == 150
+    assert st2.lifetime_fills == 3 and st2.lifetime_unwinds == 1
+    assert list(st2.recent_locked_nets) == [0.5, 0.8]
+    assert list(st2.recent_outcomes) == [0, 0, 1]
+    summ = st2.summary("live", {}, now)
+    assert summ["fills_per_100_quotes"] == 2.0 and summ["fills_per_100_quotes_n"] == 150
+    assert summ["locked_net_p50"] == 0.5 and summ["locked_net_window"] == 2   # nearest-rank on n=2
+    assert summ["unwind_rate_recent"] == round(1 / 3, 4)
+    # And the window stays bounded at 20 across restarts.
+    for i in range(30):
+        st2.record({"event": "fill", "sport": "mlb", "game": "G", "market_key": "ml2"}, now)
+        st2.record({"event": "hedge_locked", "locked_net": 1.0 + i}, now)
+    st3 = MakerState(); st3.load_tuning()
+    assert len(st3.recent_locked_nets) == 20 and len(st3.recent_outcomes) == 20
+
+
+def test_load_tuning_survives_a_missing_or_corrupt_file(tmp_path, monkeypatch):
+    from src.genz.maker_rt import config as mrt_config
+    from src.genz.maker_rt.state import MakerState
+    monkeypatch.setattr(mrt_config, "OPS_DIR", str(tmp_path))
+    st = MakerState(); st.load_tuning()                       # absent -> no-op, no raise
+    assert st.lifetime_quotes == 0
+    (tmp_path / "maker_rt_tuning.json").write_text("{not json", encoding="utf-8")
+    st2 = MakerState(); st2.load_tuning()                     # corrupt -> no-op, no raise
+    assert st2.lifetime_quotes == 0
+
+
 def test_build_universe_filters_settlement_and_pregame():
     from src.genz.maker_rt.universe import build_universe, kalshi_tickers, poly_tokens
     node = lambda side, tok, kt, risk=None: {   # noqa: E731

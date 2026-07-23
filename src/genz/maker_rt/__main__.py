@@ -219,6 +219,7 @@ async def _run(cfg: Any, log: Any) -> int:
     store = BookStore()
     state = MakerState(log=log)
     state.restarts_today = restarts
+    state.load_tuning()          # cross-restart fill-rate + realized-locked-net windows (target_net tuning)
     state.gates = {"pre": bool(gate.armed), "inplay": bool(inplay_gate.armed)}
     telegram = _telegram_sender(log)
     # UNIFIED LIVE executor (rest-poly, BOTH phases) — built when EITHER gate is armed AND the order
@@ -318,6 +319,7 @@ async def _run(cfg: Any, log: Any) -> int:
             sockets = {"poly_market": pm.connected, "poly_user": poly_user_up, "kalshi": ks.connected}
             if now_ts - last_hb >= HEARTBEAT_EVERY_S:
                 state.write_heartbeat(mode, sockets, driver.open_quote_count(), now)
+                state.maybe_persist_tuning(now_ts)         # throttled; fills persist immediately
                 summ = state.summary(mode, sockets, now)
                 state.write_summary(mode, sockets, now)
                 if now_ts - last_achv_log >= 60.0:            # a compact per-sport achievable heartbeat
@@ -390,6 +392,7 @@ async def _run(cfg: Any, log: Any) -> int:
                              return_exceptions=True)
         state.write_heartbeat(mode, {"poly_market": False, "poly_user": False, "kalshi": False},
                               0, utcnow())
+        state.persist_tuning()        # flush the tuning windows on the way out (deploys are frequent)
 
 
 def _load_env() -> None:

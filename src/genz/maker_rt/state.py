@@ -28,6 +28,14 @@ from . import config as mrt_config
 SCHEMA = 3                       # 3: rails-gated achievable ladder + paired fill_drift + restarts_today
 _RESERVOIR_CAP = 5000            # bounded achievable-net sample reservoir per (sport, phase)
 RUNSTATE_NAME = "maker_rt_runstate.json"   # persistent process-start counter (crash-loop signal)
+# Cross-restart tuning counters. These deliberately do NOT roll at midnight AND must outlive the
+# process: fills are rare (single digits per day) and the maker restarts on every deploy — ~10x on a
+# working day — so an in-memory "last 20 fills" window would reset long before it ever held 20 fills
+# and the target_net question could never be answered. Kept in their own file because runstate.json
+# rolls daily by design.
+TUNING_NAME = "maker_rt_tuning.json"
+_TUNING_WINDOW = 20                        # fills in the rolling unwind / realized-locked-net windows
+_TUNING_SAVE_EVERY_S = 30.0                # quote counters are hot; persist on a timer + on every fill
 
 CSV_COLUMNS = [
     "ts", "day", "event", "mode", "sport", "phase", "game", "market_key", "side", "direction",
@@ -164,7 +172,7 @@ class MakerState:
     # reflect recent behaviour across midnight, not a counter that resets to 0/0 every day.
     lifetime_fills: int = 0
     lifetime_unwinds: int = 0
-    recent_outcomes: Any = field(default_factory=lambda: deque(maxlen=20))
+    recent_outcomes: Any = field(default_factory=lambda: deque(maxlen=_TUNING_WINDOW))
     # TARGET-NET TUNING SIGNALS (both survive the daily roll — see below). These are the two numbers that
     # say whether lowering target_net to 0.6% was right or too thin:
     #   fills_per_100_quotes — did the thinner floor actually buy us more SHOTS TAKEN? A day-scoped
@@ -175,7 +183,8 @@ class MakerState:
     #     Read it WITH unwind_rate_recent over the same window: this deque only holds fills that LOCKED,
     #     so on its own it cannot show fills that paid the exit toll instead.
     lifetime_quotes: int = 0
-    recent_locked_nets: Any = field(default_factory=lambda: deque(maxlen=20))
+    recent_locked_nets: Any = field(default_factory=lambda: deque(maxlen=_TUNING_WINDOW))
+    _tuning_saved_ts: float = 0.0                      # last persist (see maybe_persist_tuning)
     gates: dict = field(default_factory=dict)          # {"pre": bool, "inplay": bool} — armed states, set at startup
     live: dict = field(default_factory=dict)           # PRE-GAME live snapshot (open_quotes/stake/fills/pnl/halt/feed_ok)
     buckets: dict = field(default_factory=dict)        # (sport, phase) -> _Bucket
@@ -194,6 +203,38 @@ class MakerState:
 
     def _bucket(self, sport: str, phase: str) -> _Bucket:
         return self.buckets.setdefault((str(sport or "?"), str(phase or "pre")), _Bucket())
+
+    # -- cross-restart tuning counters ---------------------------------------
+    def load_tuning(self) -> None:
+        """Restore the cross-restart counters at startup. Without this the 'last 20 fills' windows
+        would reset on every deploy (~10x/day) and never accumulate enough fills to judge target_net."""
+        obj = load_tuning()
+        if not obj:
+            return
+        self.lifetime_quotes = int(obj.get("lifetime_quotes", 0) or 0)
+        self.lifetime_fills = int(obj.get("lifetime_fills", 0) or 0)
+        self.lifetime_unwinds = int(obj.get("lifetime_unwinds", 0) or 0)
+        self.recent_outcomes = deque((int(v) for v in (obj.get("recent_outcomes") or [])),
+                                     maxlen=_TUNING_WINDOW)
+        self.recent_locked_nets = deque((float(v) for v in (obj.get("recent_locked_nets") or [])),
+                                        maxlen=_TUNING_WINDOW)
+
+    def persist_tuning(self) -> None:
+        """Write the cross-restart counters (atomic, best-effort — never blocks trading)."""
+        _atomic_json(_tuning_path(), {
+            "lifetime_quotes": self.lifetime_quotes,
+            "lifetime_fills": self.lifetime_fills,
+            "lifetime_unwinds": self.lifetime_unwinds,
+            "recent_outcomes": list(self.recent_outcomes),
+            "recent_locked_nets": list(self.recent_locked_nets),
+        })
+
+    def maybe_persist_tuning(self, now_ts: float) -> None:
+        """Throttled persist for the hot quote counter (fills persist immediately — see record())."""
+        if now_ts - self._tuning_saved_ts < _TUNING_SAVE_EVERY_S:
+            return
+        self._tuning_saved_ts = now_ts
+        self.persist_tuning()
 
     # -- events -------------------------------------------------------------
     def record(self, row: dict, now: datetime) -> None:
@@ -231,12 +272,14 @@ class MakerState:
             self.recent_outcomes.append(0)                  # a CLEAN hedge — the fill did NOT need an exit
             if row.get("locked_net") is not None:           # REALIZED locked net (%) — the target_net check
                 self.recent_locked_nets.append(float(row["locked_net"]))
+            self.persist_tuning()                           # fills are rare + precious: persist NOW
         elif ev in ("hedge_declined", "hedge_unwound", "unwind_FAILED"):
             # the fill required an EXIT (we paid the unwind toll). unwind_cost is on the row here, BEFORE
             # _append_csv drops it (it's not a CSV column — realized_pnl_usd carries -cost to the CSV).
             self.n_unwinds += 1; self.lifetime_unwinds += 1
             self.unwind_cost_today += float(row.get("unwind_cost") or 0.0)
             self.recent_outcomes.append(1)
+            self.persist_tuning()                           # ditto — a paid exit toll must survive a deploy
         elif ev == "fill_drift":
             for src, dst_flat, dst_b in ((row.get("drift_1"), self.drift1, b.drift1),
                                          (row.get("drift_5"), self.drift5, b.drift5),
@@ -398,6 +441,20 @@ def bump_restart(now: datetime) -> int:
     obj["restarts"] = int(obj.get("restarts", 0)) + 1
     _atomic_json(_runstate_path(), obj)
     return int(obj["restarts"])
+
+
+def _tuning_path() -> str:
+    return os.path.join(mrt_config.OPS_DIR, TUNING_NAME)
+
+
+def load_tuning() -> dict:
+    """Read the persisted cross-restart tuning counters. Never raises; missing/corrupt -> empty."""
+    try:
+        with open(_tuning_path(), "r", encoding="utf-8") as fh:
+            obj = json.load(fh)
+        return obj if isinstance(obj, dict) else {}
+    except (FileNotFoundError, ValueError, OSError, TypeError):
+        return {}
 
 
 def read_restarts(now: datetime) -> int:
