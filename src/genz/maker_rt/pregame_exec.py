@@ -140,6 +140,11 @@ class PregameLiveExecutor:
         self._force_fill_poll = False        # set by a cancel that failed because the order FILLED
         self._last_fills_sweep_ts = 0.0      # unix-seconds low-water mark for the /portfolio/fills sweep
         self._seen_fill_ids: set = set()     # fill_id dedupe across sweeps + the socket
+        # PLACE-FAILURE BACKOFF: a venue refusal (esp. "market closed") must not retry ~1x/s forever.
+        self._place_fail_until: dict = {}    # candidate key -> ts before which we won't retry placement
+        self._place_fail_n: dict = {}        # candidate key -> consecutive refusals (alert once, then log)
+        self.place_backoff_s = 60.0
+        self.place_backoff_terminal_s = 86400.0             # closed/settled market -> done for the day
         self.flaps = {"kalshi": 0, "poly_user": 0}          # reconnect counters (panel)
         self.flap_down_since: dict = {}                     # venue -> ts of the current DOWN edge
         self.flap_secs = {"kalshi": 0.0, "poly_user": 0.0}  # cumulative seconds spent DOWN
@@ -159,6 +164,8 @@ class PregameLiveExecutor:
         self._lifetimes = []
         self._atbest_hits = 0
         self._atbest_samples = 0
+        self._place_fail_until = {}          # a new day reopens markets -> clear placement backoffs
+        self._place_fail_n = {}
         if hasattr(self.caps, "roll"):
             self.caps.roll(day)
 
@@ -276,6 +283,8 @@ class PregameLiveExecutor:
         never-crossable on the LIVE book, enforces the shared caps, reprices via cancel->confirm->place."""
         armed = self.pre_armed() if phase == "pre" else self.inplay_armed()
         assert_live_allowed(phase, armed)             # HARD (cheap) re-lock immediately before any order
+        if now_ts < self._place_fail_until.get(c.key, 0.0):   # venue refused recently -> back off
+            return
         token = c.rest_ref[1]
         price = float(dec.quote_price)
         tick = self._rest_tick(c, store)
@@ -326,7 +335,7 @@ class PregameLiveExecutor:
         try:
             res = self._do_rest(c, price, size, tick, store)
         except Exception as exc:  # noqa: BLE001
-            self._alert(f"[MAKER_RT][LIVE] PLACE FAILED {c.game} {c.direction} [{phase}] @ {price:.4f}: {exc}")
+            self._on_place_failed(c, phase, price, exc, now_ts)
             return
         oid = res.get("order_id")
         if not oid:
@@ -339,6 +348,7 @@ class PregameLiveExecutor:
                         rest_venue=c.rest_venue,
                         kalshi_side=(c.rest_ref[2] if c.rest_venue == "kalshi" else ""))
         self.open_orders[c.key] = lo
+        self._place_fail_n.pop(c.key, None)            # a successful place clears the refusal streak
         self._track_rested(lo)                         # reconcile this instrument for flatness (persisted)
         self.caps.on_open()
         kind = "reprice" if existing is not None else "quote"
@@ -348,6 +358,27 @@ class PregameLiveExecutor:
         matched = float(res.get("shares") or 0)          # a maker shouldn't fill on POST, but the book can move
         if matched > 0:
             self._on_fill_detected(c.key, matched, float(res.get("avg_price") or price), store, now, now_ts)
+
+    def _on_place_failed(self, c: Any, phase: str, price: float, exc: Any, now_ts: float) -> None:
+        """A venue REFUSED the placement. Back the candidate off instead of retrying ~1x/second forever.
+
+        A closed market never reopens, so retrying it is pure churn — and because every attempt used to
+        fire an instant Telegram, one closed tennis market produced a steady 1/s alert stream. That is
+        how the alert channel earns HTTP 429s (1,682 of them during the invisible-fill incident), and a
+        rate-limited alert channel is one that cannot deliver the ORPHAN scream when it matters."""
+        msg = str(exc)
+        terminal = any(s in msg for s in ("market_closed", "market_not_active", "market_settled",
+                                          "not_active", "closed"))
+        self._place_fail_until[c.key] = now_ts + (self.place_backoff_terminal_s if terminal
+                                                  else self.place_backoff_s)
+        n = self._place_fail_n.get(c.key, 0) + 1
+        self._place_fail_n[c.key] = n
+        text = (f"[MAKER_RT][LIVE] PLACE FAILED {c.game} {c.direction} [{phase}] @ {price:.4f}: {msg}")
+        if n == 1:                                   # scream ONCE per candidate, then log-only
+            self._alert(text + ("  — market closed; backing off for the day." if terminal
+                                else f"  — backing off {self.place_backoff_s:.0f}s."))
+        elif self.log:
+            self.log.warning("%s (suppressed repeat #%d)", text, n)
 
     def _reservation_ok(self, direction: str) -> bool:
         """True iff ``direction`` may claim one more of max_open_quotes without eating another enabled

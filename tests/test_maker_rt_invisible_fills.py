@@ -316,7 +316,55 @@ def test_spawn_feeds_attaches_on_fill_at_construction(monkeypatch):
 
 
 # --------------------------------------------------------------------------- #
-# 7. flap counter                                                                #
+# 7. place-failure backoff (keeps the alert channel usable)                      #
+# --------------------------------------------------------------------------- #
+def test_closed_market_place_failure_backs_off_and_alerts_once(tmp_path):
+    """A closed market was retried ~1x/s, each attempt firing an instant Telegram. That noise is how
+    the alert channel earns 429s — and a throttled channel cannot deliver the ORPHAN scream."""
+    koc = _KalshiOC()
+    sent: list = []
+    ex, _ = _exec_kalshi(tmp_path, kalshi_oc=koc)
+    ex.roll_day(NOW)
+    ex.telegram = sent.append
+    ex.log = _Log()
+
+    def _closed(*_a, **_kw):
+        raise RuntimeError('409 on POST /portfolio/events/orders: {"error":{"code":"market_closed"}}')
+
+    koc.rest = _closed
+    c = _cand_kalshi()
+    store = _Store(kalshi_ask=0.60)
+    for i in range(5):                                  # five loop passes over the same dead candidate
+        ex.place_or_reprice(c, _dec(0.46, hedge_ask=0.55), None, store, NOW, 1000.0 + i, "pre")
+    assert len(sent) == 1, f"must scream ONCE, not once per retry (got {len(sent)})"
+    assert "market closed" in sent[0]
+    # And it stops hitting the venue at all until the backoff expires: exactly ONE refusal happened,
+    # so there is one log line and zero "suppressed repeat" lines.
+    assert len([w for w in ex.log.warns if "PLACE FAILED" in w]) == 1
+    assert not [w for w in ex.log.warns if "suppressed repeat" in w], \
+        "the candidate must not be retried at all inside the backoff window"
+    # A new UTC day clears the backoff (markets reopen).
+    ex.roll_day(__import__("datetime").datetime(2026, 7, 24, tzinfo=__import__("datetime").timezone.utc))
+    assert ex._place_fail_until == {}
+
+
+def test_transient_place_failure_uses_short_backoff(tmp_path):
+    """A non-terminal refusal backs off for a minute, not the whole day."""
+    koc = _KalshiOC()
+    ex, _ = _exec_kalshi(tmp_path, kalshi_oc=koc)
+    ex.roll_day(NOW)
+
+    def _boom(*_a, **_kw):
+        raise RuntimeError("503 temporarily unavailable")
+
+    koc.rest = _boom
+    c = _cand_kalshi()
+    ex.place_or_reprice(c, _dec(0.46, hedge_ask=0.55), None, _Store(kalshi_ask=0.60), NOW, 1000.0, "pre")
+    assert ex._place_fail_until[c.key] == 1000.0 + ex.place_backoff_s
+
+
+# --------------------------------------------------------------------------- #
+# 8. flap counter                                                                #
 # --------------------------------------------------------------------------- #
 def test_flap_counter_counts_cycles_and_downtime(tmp_path):
     ex, _ = _exec_kalshi(tmp_path)
