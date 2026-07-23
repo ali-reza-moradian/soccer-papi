@@ -61,7 +61,14 @@ if ($components.Count -eq 0) { Log 'FATAL: ops.py returned no components - exiti
 function Start-Component($name) {
     $c = $components[$name]
     $log = Join-Path $ops "$name.log"
-    $inner = "$($c.cmd) *>> '$log'"      # append BOTH stdout+stderr (all streams) to the component log
+    # UTF-8 log capture. PS5.1 `*>>` writes the file as UTF-16 (BOM + null-interleaved bytes), which
+    # blinds grep/tail. Instead: force the child console to DECODE the native (python) UTF-8 output
+    # correctly ([Console]::OutputEncoding), merge ALL streams (*>&1), and APPEND as UTF-8 via Out-File.
+    # Proven on this host: 0 null bytes, em-dashes intact, and grep/tail work WHILE the process holds the
+    # file open. The try/catch guards the rare no-console case (degrades to ASCII-correct, never crashes).
+    $inner = "try{[Console]::OutputEncoding=[System.Text.Encoding]::UTF8}catch{}; " +
+             "`$OutputEncoding=[System.Text.Encoding]::UTF8; $($c.cmd) *>&1 | " +
+             "Out-File -FilePath '$log' -Append -Encoding utf8"
     $p = Start-Process powershell -WindowStyle Hidden -PassThru -ArgumentList @(
         '-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', $inner)
     Log "started $name (pid $($p.Id))"

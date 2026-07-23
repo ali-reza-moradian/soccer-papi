@@ -22,6 +22,30 @@ import math
 from typing import Any, Optional
 
 
+def direction_slot_ok(direction: str, open_by_direction: dict, enabled_directions: Any,
+                      max_open: int, reserve: int) -> bool:
+    """PER-DIRECTION SLOT RESERVATION. Of ``max_open`` total resting slots, guarantee ``reserve`` to EACH
+    enabled direction; the remainder float. Returns True iff ``direction`` may claim ONE MORE slot WITHOUT
+    eating into another enabled direction's still-unclaimed reserve.
+
+    PURE (no I/O, no state) so it is unit-tested directly. ``open_by_direction`` maps direction -> current
+    open-quote count. The GLOBAL ``max_open`` cap is enforced separately (LiveCaps.can_place); this only
+    layers the fairness reservation on top.
+
+      * ``reserve <= 0``            -> disabled -> always True (today's behavior; no reservation).
+      * a single enabled direction  -> no 'other' to protect -> always True (single-direction unaffected).
+
+    Example (max_open=2, reserve=1, dirs={rest-poly, rest-kalshi}): if rest-kalshi already holds 1 and
+    rest-poly holds 0, rest-kalshi is REFUSED a 2nd (poly's 1 reserved slot is protected), while rest-poly
+    is allowed its slot. Once both hold 1, the global max_open cap refuses either a 3rd."""
+    if reserve <= 0:
+        return True
+    reserved_for_others = sum(max(0, reserve - int(open_by_direction.get(d, 0)))
+                              for d in enabled_directions if d != direction)
+    mine = int(open_by_direction.get(direction, 0))
+    return mine < max_open - reserved_for_others
+
+
 class LiveCaps:
     """Per-day live exposure accounting + the pre-place decision. One instance per process/day."""
 

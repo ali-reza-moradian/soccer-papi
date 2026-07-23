@@ -160,6 +160,19 @@ class _State:
         self.rows.append(row)
 
 
+class _Log:
+    """Capturing logger: records fully-formatted info/warning lines for assertions."""
+    def __init__(self):
+        self.infos: list = []
+        self.warns: list = []
+
+    def info(self, msg, *a):
+        self.infos.append(msg % a if a else msg)
+
+    def warning(self, msg, *a):
+        self.warns.append(msg % a if a else msg)
+
+
 class _Guard:
     def __init__(self):
         self.held = None
@@ -380,6 +393,70 @@ def test_cap_refuses_on_max_open(tmp_path):
     c2 = _cand(direction="rest-poly", token="B"); c2.key = ("mlb", "G2", "ml2", "Home", "rest-poly")
     ex.place_or_reprice(c2, _dec(0.46), None, store, None, 2.0)
     assert len(oc.rests) == 1 and ex.open_count() == 1        # second refused by max_open_quotes
+
+
+# --------------------------------------------------------------------------- #
+# per-direction slot reservation (executor)                                     #
+# --------------------------------------------------------------------------- #
+def test_reserve_per_direction_protects_each_direction(tmp_path):
+    """max_open=2, reserve=1: rest-kalshi holding 1 CANNOT grab the 2nd slot (reserved for poly), but
+    rest-poly still can claim its guaranteed slot; and vice-versa is covered by the pure test."""
+    ex, _ = _exec_kalshi(tmp_path)                            # both directions enabled, max_open_quotes=2
+    ex.reserve_per_direction = 1
+    store = _Store(poly_best_ask=0.60, kalshi_ask=0.55)
+    ck1 = _cand_kalshi(ticker="KX-1")
+    ex.place_or_reprice(ck1, _dec(0.46, hedge_ask=0.50), None, store, None, 1.0, "pre")
+    assert ex.open_count() == 1 and len(ex.kalshi_order_client.rests) == 1
+    # 2nd rest-kalshi (different node) -> REFUSED: poly's one reserved slot is protected.
+    ck2 = _cand_kalshi(ticker="KX-2"); ck2.key = ("mlb", "G2", "ml2", "Home", "rest-kalshi")
+    ex.place_or_reprice(ck2, _dec(0.46, hedge_ask=0.50), None, store, None, 2.0, "pre")
+    assert ex.open_count() == 1 and len(ex.kalshi_order_client.rests) == 1     # still just one kalshi rest
+    # rest-poly CAN take its guaranteed slot (fills the 2nd of 2).
+    cp = _cand(direction="rest-poly", token="POLYA")
+    ex.place_or_reprice(cp, _dec(0.46, hedge_ask=0.50), None, store, None, 3.0, "pre")
+    assert ex.open_count() == 2 and len(ex.order_client.rests) == 1
+
+
+def test_reserve_per_direction_single_direction_unaffected(tmp_path):
+    """Reserve on, but only rest-poly enabled -> no other direction to protect -> poly uses BOTH slots."""
+    caps = LiveCaps(mrt_config.LiveConfig(max_open_quotes=2, max_daily_stake_usd=1000, max_fills_per_day=9))
+    oc = _OrderClient()
+    ex, _ = _exec(tmp_path, order_client=oc, caps=caps)       # default directions = {rest-poly} only
+    ex.reserve_per_direction = 1
+    store = _Store(poly_best_ask=0.60)
+    ex.place_or_reprice(_cand("rest-poly", "A"), _dec(0.46), None, store, None, 1.0)
+    c2 = _cand("rest-poly", "B"); c2.key = ("mlb", "G2", "ml2", "Home", "rest-poly")
+    ex.place_or_reprice(c2, _dec(0.46), None, store, None, 2.0)
+    assert ex.open_count() == 2 and len(oc.rests) == 2        # both slots used despite reserve=1
+
+
+# --------------------------------------------------------------------------- #
+# slot-refusal spam throttle + digest suppressed-count                          #
+# --------------------------------------------------------------------------- #
+def test_slot_refuse_throttled_once_per_window_and_counted(tmp_path):
+    """A recurring max_open_quotes refusal logs at most once / REFUSE_LOG_EVERY_S per node+direction; the
+    suppressed hits are counted and surfaced in the digest line (not spammed to the log)."""
+    from src.genz.maker_rt.pregame_exec import REFUSE_LOG_EVERY_S
+    caps = LiveCaps(mrt_config.LiveConfig(max_open_quotes=1, max_daily_stake_usd=1000, max_fills_per_day=9))
+    oc = _OrderClient()
+    ex, _ = _exec(tmp_path, order_client=oc, caps=caps)
+    ex.log = _Log()
+    sent: list = []
+    ex.telegram = sent.append
+    store = _Store(poly_best_ask=0.60)
+    ex.place_or_reprice(_cand("rest-poly", "A"), _dec(0.46), None, store, None, 1.0)   # fills the 1 slot
+    # A DIFFERENT node keeps getting refused every loop; only the 1st per window logs.
+    c2 = _cand("rest-poly", "B"); c2.key = ("mlb", "G2", "ml2", "Home", "rest-poly")
+    for t in (2.0, 3.0, 4.0, 5.0, 6.0):                       # 1 log (t=2) + 4 suppressed
+        ex.place_or_reprice(c2, _dec(0.46), None, store, None, t)
+    ex.place_or_reprice(c2, _dec(0.46), None, store, None, 2.0 + REFUSE_LOG_EVERY_S + 5)   # window reopened -> logs again
+    refuse_logs = [m for m in ex.log.infos if "REFUSE" in m]
+    assert len(refuse_logs) == 2                              # only 2 REFUSE lines despite 6 refusals
+    assert ex._digest["refuse_suppressed"] == 4
+    # digest surfaces the suppressed count.
+    ex.maybe_flush_digest(10_000.0)                           # init the window
+    ex.maybe_flush_digest(10_000.0 + ex.digest_min * 60 + 1)  # elapse -> one digest line
+    assert any("4 slot-refuses suppressed" in m for m in sent)
 
 
 # --------------------------------------------------------------------------- #

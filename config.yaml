@@ -478,6 +478,7 @@ maker_rt:
   quote_usd: 100                    # shadow quote notional per node/direction
   target_net: 0.010                 # min net edge a hedged maker combo must clear at the quote price
   directions: [rest_poly, rest_kalshi]   # LIVE rest directions (both SMOKE-proven); shared caps + one-in-flight span them
+  reserve_per_direction: 1          # of live.max_open_quotes, GUARANTEE 1 slot to EACH enabled direction (rest_kalshi can't monopolize both)
   debounce_ms: 250                  # quote-engine debounce
   expire_before_kickoff_s: 120      # cancel/expire every quote at kickoff - this
   poly_fee_rate: 0.05               # Polymarket sports taker rate (hedge-fee model)

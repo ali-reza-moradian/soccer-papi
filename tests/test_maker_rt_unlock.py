@@ -7,7 +7,7 @@ import asyncio
 
 from src.genz.maker_rt import config as mrt_config
 from src.genz.maker_rt import live, smoke
-from src.genz.maker_rt.caps import LiveCaps
+from src.genz.maker_rt.caps import LiveCaps, direction_slot_ok
 from src.genz.maker_rt.clients import build_pregame_order_clients
 
 
@@ -153,6 +153,27 @@ def test_caps_open_and_fills_and_loss():
     assert caps.halted is True
     ok, r = caps.can_place(1.0)
     assert ok is False and r.startswith("halted")
+
+
+# --------------------------------------------------------------------------- #
+# 5b) per-direction slot reservation (pure)                                     #
+# --------------------------------------------------------------------------- #
+def test_direction_slot_reservation_pure():
+    dirs = {"rest-poly", "rest-kalshi"}
+    M, R = 2, 1
+    # OFF (reserve 0) -> always allowed regardless of holdings (today's behavior).
+    assert direction_slot_ok("rest-kalshi", {"rest-kalshi": 1}, dirs, M, 0) is True
+    # kalshi holds 1, poly holds 0: kalshi CANNOT take poly's reserved slot; poly CAN take its own.
+    assert direction_slot_ok("rest-kalshi", {"rest-kalshi": 1}, dirs, M, R) is False
+    assert direction_slot_ok("rest-poly", {"rest-kalshi": 1}, dirs, M, R) is True
+    # symmetric: poly holds 1, kalshi holds 0.
+    assert direction_slot_ok("rest-poly", {"rest-poly": 1}, dirs, M, R) is False
+    assert direction_slot_ok("rest-kalshi", {"rest-poly": 1}, dirs, M, R) is True
+    # both idle -> either may claim its own guaranteed slot.
+    assert direction_slot_ok("rest-poly", {}, dirs, M, R) is True
+    assert direction_slot_ok("rest-kalshi", {}, dirs, M, R) is True
+    # SINGLE-direction config -> no 'other' to protect -> may use every slot even with reserve on.
+    assert direction_slot_ok("rest-poly", {"rest-poly": 1}, {"rest-poly"}, M, R) is True
 
 
 # --------------------------------------------------------------------------- #

@@ -31,9 +31,15 @@ from dataclasses import dataclass
 from typing import Any, Optional
 
 from . import hedge as hedge_mod
+from .caps import direction_slot_ok
 from .live import assert_live_allowed
 
 HEDGE_DECLINE_FLOOR = -0.010     # re-verify at fill: walked locked-net below this -> decline+unwind (both phases)
+# A full-slot refusal (max_open_quotes / reserve_per_direction) recurs EVERY debounce loop while the caps
+# are full — the driver retries each viable candidate ~4x/s. Log a given node+direction's slot refusal at
+# most once per this window; the suppressed count is surfaced in the Telegram digest line instead.
+REFUSE_LOG_EVERY_S = 300.0
+_SLOT_REFUSE_REASONS = ("max_open_quotes", "reserve_per_direction")
 
 
 @dataclass
@@ -82,6 +88,10 @@ class PregameLiveExecutor:
         # LIVE-eligible rest directions (normalised, e.g. {"rest-poly","rest-kalshi"}). rest_kalshi stays
         # OFF until its SMOKE-KALSHI passes and config maker_rt.directions adds it.
         self.directions = {str(d).replace("_", "-") for d in getattr(cfg, "directions", ("rest_poly",))}
+        # PER-DIRECTION SLOT RESERVATION: guarantee each enabled direction this many of max_open_quotes so
+        # one direction (e.g. rest-kalshi) can't monopolize every slot. 0 = off / single-direction no-op.
+        self.reserve_per_direction = int(getattr(cfg, "reserve_per_direction", 0))
+        self._refuse_log_at: dict = {}           # (candidate key, reason) -> last log ts (throttles slot-refusal spam)
         self._neg_cache: dict = {}               # token -> neg_risk (fetched once)
         self._traded_tickers: set = set()        # kalshi tickers we've rested on -> reconcile for flatness
         # IN-PLAY first-fill circuit (per UTC day; replaces the calendar guard).
@@ -101,7 +111,7 @@ class PregameLiveExecutor:
         self.node_quiet_max_s = float(getattr(ip, "node_quiet_max_s", 180.0))
         # TELEGRAM digest (routine quote/reprice/cancel collapse; fills/hedges/pause/halt/errors instant).
         self.digest_min = float(getattr(cfg, "telegram_digest_min", 15.0))
-        self._digest = {"quotes": 0, "cancels": {}, "fills": 0}
+        self._digest = {"quotes": 0, "cancels": {}, "fills": 0, "refuse_suppressed": 0}
         self._digest_since = 0.0
         # LIFETIME metrics (live quotes only): closed-quote lifetimes + an at-best time sampler.
         self._lifetimes: list = []
@@ -284,10 +294,10 @@ class PregameLiveExecutor:
         hedge_ask = dec.hedge_best_ask if dec.hedge_best_ask is not None else price
         projected = self.caps.projected_pair_stake(price, size, hedge_ask, size)
         ok, reason = self.caps.can_place(projected)
+        if ok and not self._reservation_ok(c.direction):     # per-direction slot fairness (global cap passed)
+            ok, reason = False, "reserve_per_direction"
         if not ok:
-            self._routine("refuse", f"[MAKER_RT][LIVE] REFUSE {c.game} {c.direction} [{phase}] @ "
-                          f"{price:.4f}: {reason} (projected pair ${projected:.2f}, "
-                          f"stake_today ${self.caps.stake_today:.2f})")
+            self._refuse(c, phase, price, reason, projected, now_ts)
             self._record(c, "expire", now, phase, price=price, size=size, hedge_ask=hedge_ask, reason=reason)
             return
         try:
@@ -315,6 +325,31 @@ class PregameLiveExecutor:
         matched = float(res.get("shares") or 0)          # a maker shouldn't fill on POST, but the book can move
         if matched > 0:
             self._on_fill_detected(c.key, matched, float(res.get("avg_price") or price), store, now, now_ts)
+
+    def _reservation_ok(self, direction: str) -> bool:
+        """True iff ``direction`` may claim one more of max_open_quotes without eating another enabled
+        direction's guaranteed reserve (per-direction slot fairness). Counts the CURRENT opens per
+        direction from the live order book. Off (or single direction) -> always True."""
+        open_by_direction: dict = {}
+        for lo in self.open_orders.values():
+            open_by_direction[lo.direction] = open_by_direction.get(lo.direction, 0) + 1
+        return direction_slot_ok(direction, open_by_direction, self.directions,
+                                 self.caps.max_open_quotes, self.reserve_per_direction)
+
+    def _refuse(self, c: Any, phase: str, price: float, reason: str, projected: float,
+                now_ts: float) -> None:
+        """Log a placement refusal. A full-slot refusal (max_open_quotes / reserve_per_direction) recurs
+        every loop while the caps are full, so it is throttled to once per REFUSE_LOG_EVERY_S per
+        node+direction+reason; suppressed hits are counted for the digest line instead of spamming."""
+        text = (f"[MAKER_RT][LIVE] REFUSE {c.game} {c.direction} [{phase}] @ {price:.4f}: {reason} "
+                f"(projected pair ${projected:.2f}, stake_today ${self.caps.stake_today:.2f})")
+        if reason in _SLOT_REFUSE_REASONS:
+            k = (c.key, reason)
+            if now_ts - self._refuse_log_at.get(k, -1e18) < REFUSE_LOG_EVERY_S:
+                self._digest["refuse_suppressed"] = self._digest.get("refuse_suppressed", 0) + 1
+                return
+            self._refuse_log_at[k] = now_ts
+        self._routine("refuse", text)
 
     # -- cancels -------------------------------------------------------------
     def cancel(self, c: Any, now: Any, reason: str) -> bool:
@@ -950,14 +985,17 @@ class PregameLiveExecutor:
             return
         d = self._digest
         total = sum(d["cancels"].values())
-        if d["quotes"] or total or d["fills"]:
+        suppressed = d.get("refuse_suppressed", 0)
+        if d["quotes"] or total or d["fills"] or suppressed:
             reasons = ", ".join(f"{v} {k}" for k, v in sorted(d["cancels"].items(), key=lambda x: -x[1]))
             line = (f"[MAKER_RT][DIGEST {int(self.digest_min)}m] {d['quotes']} quotes, {total} cancels"
-                    f"{' [' + reasons + ']' if reasons else ''}, {d['fills']} fills, open {len(self.open_orders)}")
+                    f"{' [' + reasons + ']' if reasons else ''}, {d['fills']} fills"
+                    f"{f', {suppressed} slot-refuses suppressed' if suppressed else ''}, "
+                    f"open {len(self.open_orders)}")
             self._send_telegram(line)
             if self.log:
                 self.log.warning(line)
-        self._digest = {"quotes": 0, "cancels": {}, "fills": 0}
+        self._digest = {"quotes": 0, "cancels": {}, "fills": 0, "refuse_suppressed": 0}
         self._digest_since = now_ts
 
     def sample_metrics(self, store: Any, now_ts: float) -> None:

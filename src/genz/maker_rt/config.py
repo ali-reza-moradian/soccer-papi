@@ -109,6 +109,11 @@ class MakerRtConfig:
     # LIVE-eligible rest directions. rest_poly is proven+armed; rest_kalshi stays OFF (shadow) until its
     # own SMOKE-KALSHI passes, then add "rest_kalshi" here. Shared caps/one-in-flight span both.
     directions: tuple = ("rest_poly",)
+    # PER-DIRECTION SLOT RESERVATION: of maker_rt.live.max_open_quotes total resting slots, GUARANTEE
+    # this many to EACH enabled direction (the remainder float freely). Stops one direction (e.g.
+    # rest-kalshi) monopolizing every open slot and starving the other. 0 = off; single-direction
+    # configs are unaffected either way (there is no other direction to protect a slot for).
+    reserve_per_direction: int = 0
     head_poll_s: int = 60                  # stale-code guard: exit 0 on git HEAD change
     ping_s: int = 10                       # ws keepalive PING cadence (poly)
     # REPRICE HYSTERESIS (stop shredding queue position): a VOLUNTARY upward reprice needs >= this many
@@ -161,9 +166,10 @@ def load_maker_rt_config(config_path: Optional[str] = None,
     cfg = MakerRtConfig()
     for name in ("max_games", "quote_usd", "target_net", "debounce_ms", "expire_before_kickoff_s",
                  "poly_fee_rate", "head_poll_s", "ping_s", "reprice_min_ticks", "min_rest_s",
-                 "hedge_persist_s", "telegram_digest_min"):
+                 "hedge_persist_s", "telegram_digest_min", "reserve_per_direction"):
         if blk.get(name) is not None:
             setattr(cfg, name, blk[name])
+    cfg.reserve_per_direction = int(cfg.reserve_per_direction)
     cfg.max_games = int(cfg.max_games)
     cfg.quote_usd = float(cfg.quote_usd)
     cfg.target_net = float(cfg.target_net)

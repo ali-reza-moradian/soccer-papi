@@ -428,6 +428,7 @@ def test_config_defaults_and_live_locked(tmp_path):
     empty.write_text("{}\n")
     cfg = mrt_config.load_maker_rt_config(config_path=str(empty))
     assert cfg.max_games == 20 and cfg.quote_usd == 100.0 and cfg.target_net == 0.010
+    assert cfg.reserve_per_direction == 0                        # per-direction slot reservation OFF by default
     assert cfg.live.enabled is False                              # ships LOCKED
     # PILOT caps (dataclass defaults): rest-leg $5, daily-stake $100, 10 fills/day, 2 open, $25 loss.
     assert cfg.live.quote_usd_max == 5.0 and cfg.live.max_open_quotes == 2
@@ -436,6 +437,13 @@ def test_config_defaults_and_live_locked(tmp_path):
     # in-play rail defaults come from the dataclass, not the live file
     assert cfg.inplay.fresh_s == 10.0 and cfg.inplay.shock_move == 0.05 and cfg.inplay.persist_ms == 1500
     assert cfg.poly_leg_cap == {"tennis": 0.65, "ufc": 0.65}
+
+
+def test_reserve_per_direction_loads_from_yaml(tmp_path):
+    y = tmp_path / "c.yaml"
+    y.write_text("maker_rt:\n  reserve_per_direction: 1\n")
+    cfg = mrt_config.load_maker_rt_config(config_path=str(y))
+    assert cfg.reserve_per_direction == 1
 
 
 def test_state_summary_and_heartbeat(tmp_path):
