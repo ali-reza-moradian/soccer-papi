@@ -305,7 +305,8 @@ class MakerState:
         b.add_achievable(float(value), self._rng)
 
     def _append_csv(self, row: dict, now: datetime) -> None:
-        path = mrt_config.events_path_for(now.strftime("%Y%m%d"))
+        path = mrt_config.events_path_for(now.strftime("%Y%m%d"))   # resolver-guarded
+        mrt_config.assert_writable(path)          # guard at the WRITE site too, not just the resolver
         os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
         new = not os.path.exists(path)
         full = {c: "" for c in CSV_COLUMNS}
@@ -362,7 +363,7 @@ class MakerState:
 
     def write_summary(self, mode: str, sockets: dict, now: datetime,
                       path: Optional[str] = None) -> None:
-        _atomic_json(path or mrt_config.SUMMARY_PATH, self.summary(mode, sockets, now))
+        _atomic_json(path or mrt_config.summary_path(), self.summary(mode, sockets, now))
 
     def heartbeat(self, mode: str, sockets: dict, open_quotes: int, now: datetime) -> dict:
         hb = {"ts": now.strftime("%Y-%m-%dT%H:%M:%SZ"), "schema": SCHEMA, "mode": mode,
@@ -390,7 +391,7 @@ class MakerState:
 
     def write_heartbeat(self, mode: str, sockets: dict, open_quotes: int, now: datetime,
                         path: Optional[str] = None) -> None:
-        _atomic_json(path or mrt_config.HEARTBEAT_PATH,
+        _atomic_json(path or mrt_config.heartbeat_path(),
                      self.heartbeat(mode, sockets, open_quotes, now))
 
 
@@ -400,6 +401,7 @@ def _atomic_json(path: str, obj: dict, *, retries: int = 5, backoff_s: float = 0
     weekend (50/51 tracebacks) took the whole maker process down here. Retry with a short backoff, and
     if still blocked, WARN and skip this write rather than crash. A per-pid tmp avoids old/new-process
     collisions during a restart."""
+    mrt_config.assert_writable(path)     # GUARD at the write site: also covers explicit-path callers
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     tmp = f"{path}.{os.getpid()}.tmp"
     with open(tmp, "w", encoding="utf-8") as fh:
@@ -422,7 +424,7 @@ def _atomic_json(path: str, obj: dict, *, retries: int = 5, backoff_s: float = 0
 
 
 def _runstate_path() -> str:
-    return os.path.join(mrt_config.OPS_DIR, RUNSTATE_NAME)
+    return mrt_config.runtime_path("runstate")
 
 
 def bump_restart(now: datetime) -> int:
@@ -444,7 +446,7 @@ def bump_restart(now: datetime) -> int:
 
 
 def _tuning_path() -> str:
-    return os.path.join(mrt_config.OPS_DIR, TUNING_NAME)
+    return mrt_config.runtime_path("tuning")
 
 
 def load_tuning() -> dict:

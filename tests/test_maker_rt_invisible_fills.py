@@ -19,9 +19,11 @@ flap counter.
 from __future__ import annotations
 
 import json
+import os
 from types import SimpleNamespace
 
 from src.executor.kalshi_exec import fp_num
+from src.genz.maker_rt import config as mrt_config
 from src.genz.maker_rt.pregame_exec import PregameLiveExecutor
 
 from .test_maker_rt_pregame import (_KalshiExec, _KalshiOC, _Log, _Poly, _State, _Store, _cand_kalshi,
@@ -258,9 +260,10 @@ def test_orphan_halts_and_persists_even_when_telegram_raises(tmp_path):
     ex._orphan_detected("G1", "KX-1", "pre", 50.0, "test", NOW)
     assert ex.orphan is not None, "orphan must latch"
     assert ex.caps.halted is True, "halt must land even though Telegram raised"
-    path = tmp_path / "maker_rt_ORPHAN.json"
-    assert path.exists(), "the panel banner file must be written without Telegram"
-    assert json.loads(path.read_text())["remaining"] == 50.0
+    path = mrt_config.runtime_path("orphan")
+    assert os.path.exists(path), "the panel banner file must be written without Telegram"
+    with open(path, encoding="utf-8") as fh:
+        assert json.load(fh)["remaining"] == 50.0
 
 
 def test_persisted_orphan_relatches_on_restart(tmp_path):

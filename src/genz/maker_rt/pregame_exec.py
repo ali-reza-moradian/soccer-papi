@@ -30,6 +30,7 @@ import os
 from dataclasses import dataclass
 from typing import Any, Optional
 
+from . import config as mrt_config
 from . import hedge as hedge_mod
 from .caps import direction_slot_ok
 from .live import assert_live_allowed
@@ -122,19 +123,18 @@ class PregameLiveExecutor:
         self.orphan: Optional[dict] = None
         self._traded_tokens: set = set()             # tokens we've placed on -> reconcile these for flatness
         self.auto_flatten = bool(getattr(getattr(cfg, "live", None), "auto_flatten", False))
-        # Persist the watch-set NEXT TO the arm file (data/ops in prod; the test tmp dir in tests) so a
-        # token left non-flat by a CRASHED prior run is re-checked by the startup reconcile. The in-memory
-        # set alone dies with the process, and a blanket list_positions() sweep is unusable on this funder
-        # wallet (hundreds of unrelated positions -> every one a false orphan; see reconcile_positions).
-        _arm = getattr(getattr(cfg, "live", None), "arm_file", "") or ""
-        self._ops_dir = os.path.dirname(_arm) if _arm else ""
-        self._traded_path = (os.path.join(self._ops_dir, "maker_rt_traded_tokens.json")
-                             if self._ops_dir else "")
+        # Persist the watch-set so a token left non-flat by a CRASHED prior run is re-checked by the
+        # startup reconcile. The in-memory set alone dies with the process, and a blanket
+        # list_positions() sweep is unusable on this funder wallet (hundreds of unrelated positions ->
+        # every one a false orphan; see reconcile_positions).
+        # BOTH paths come from config.runtime_path(): these used to be derived by hand from the arm
+        # file's directory, which was a SECOND path derivation that silently bypassed OPS_DIR — exactly
+        # the kind of one-off join that made isolating test writes a matter of remembering.
+        self._traded_path = mrt_config.runtime_path("traded_tokens")
         # ORPHAN durability: the halt banner is written to disk so it survives a restart AND is visible to
         # the panel even when Telegram is unreachable (Telegram 429'd 1,682x in the incident log — an
         # alert channel is NEVER the detection channel).
-        self._orphan_path = (os.path.join(self._ops_dir, "maker_rt_ORPHAN.json")
-                             if self._ops_dir else "")
+        self._orphan_path = mrt_config.runtime_path("orphan")
         # WS-INDEPENDENT FILL AUTHORITY: REST is the primary detector, the socket is an accelerator.
         self.fill_poll_s = float(getattr(getattr(cfg, "live", None), "fill_poll_s", 10.0))
         self._force_fill_poll = False        # set by a cancel that failed because the order FILLED
@@ -967,6 +967,7 @@ class PregameLiveExecutor:
         if not self._orphan_path or self.orphan is None:
             return
         try:
+            mrt_config.assert_writable(self._orphan_path)   # never write live state under pytest
             tmp = self._orphan_path + ".tmp"
             with open(tmp, "w", encoding="utf-8") as fh:
                 json.dump(self.orphan, fh, default=str)
@@ -1018,6 +1019,7 @@ class PregameLiveExecutor:
         if not self._traded_path:
             return
         try:
+            mrt_config.assert_writable(self._traded_path)   # never write live state under pytest
             tmp = self._traded_path + ".tmp"
             with open(tmp, "w", encoding="utf-8") as fh:
                 json.dump({"tokens": sorted(self._traded_tokens),

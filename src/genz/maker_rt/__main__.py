@@ -32,7 +32,11 @@ HEARTBEAT_EVERY_S = 2.5
 # (fill-poll cadence now lives in cfg.live.fill_poll_s — the REST poll is the fill authority of record,
 #  not a "backup", so it is a tunable config value rather than a module constant.)
 RECONCILE_EVERY_S = 300.0                     # position reconciliation cadence while armed (5 min)
-STOP_ALL_PATH = os.path.join(mrt_config.OPS_DIR, "STOP_ALL")
+# STOP_ALL is read-only, but it resolves through the one resolver like every other runtime path.
+# It MUST stay a function: a module-level constant would resolve at IMPORT time, which both defeats
+# monkeypatching of OPS_DIR and (under pytest) would trip the live-write guard during collection.
+def stop_all_path() -> str:
+    return mrt_config.runtime_path("stop_all")
 _STOP = {"flag": False}                       # set by a SIGTERM/SIGBREAK handler -> graceful cancel-all + exit
 
 
@@ -277,9 +281,10 @@ async def _run(cfg: Any, log: Any) -> int:
             now, now_ts = utcnow(), time.time()
             # GRACEFUL STOP: the supervisor drops data/ops/STOP_ALL (or a SIGTERM/SIGBREAK arrives) —
             # return 0 so the finally cancels every live order BEFORE the supervisor can force-kill us.
-            if _STOP["flag"] or os.path.exists(STOP_ALL_PATH):
+            stop_all = os.path.exists(stop_all_path())
+            if _STOP["flag"] or stop_all:
                 log.warning("[MAKER_RT] graceful stop (%s) — cancelling live orders + exiting.",
-                            "STOP_ALL" if os.path.exists(STOP_ALL_PATH) else "signal")
+                            "STOP_ALL" if stop_all else "signal")
                 return 0
             driver.refresh_quotes(store, now, now_ts)
             driver.process_drift(store, now, now_ts)

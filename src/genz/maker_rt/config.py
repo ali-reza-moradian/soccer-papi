@@ -7,6 +7,7 @@ self-check (see ``LiveGate``). Nothing here places an order.
 from __future__ import annotations
 
 import os
+import tempfile
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
@@ -18,14 +19,106 @@ REPO_ROOT = gz_config.REPO_ROOT
 GENZ_DIR = gz_config.GENZ_DIR
 OPS_DIR = os.path.join(REPO_ROOT, "data", "ops")
 
-# Runtime artifacts (all under data/genz/, isolated per the maker_rt namespace).
-HEARTBEAT_PATH = os.path.join(GENZ_DIR, "maker_rt_heartbeat.json")
-SUMMARY_PATH = os.path.join(GENZ_DIR, "maker_rt_summary.json")
+
+# --------------------------------------------------------------------------- #
+# THE runtime-path resolver — the ONE place a runtime write path is built        #
+# --------------------------------------------------------------------------- #
+# Every file the maker writes at runtime is named here and resolved through
+# ``runtime_path()``. Nothing else may join a directory to a runtime filename: a second derivation is
+# a second thing to remember to isolate, and forgetting cost us a corrupted trading ledger (a suite
+# run injected 2,904 rows including 177 fake fills into the live events CSV, and the running maker
+# then reported a fabricated 0.7% locked_net). An autouse fixture patched that, but a convention is
+# not a guarantee — so the resolver also enforces the guard below.
+#
+# ``base`` is resolved from the MODULE ATTRIBUTES on every call (never captured at import), so
+# monkeypatching GENZ_DIR / OPS_DIR actually redirects everything.
+RUNTIME_FILES: dict[str, tuple[str, str]] = {
+    "events":        ("genz", "maker_rt_{day}.csv"),
+    "heartbeat":     ("genz", "maker_rt_heartbeat.json"),
+    "summary":       ("genz", "maker_rt_summary.json"),
+    "runstate":      ("ops",  "maker_rt_runstate.json"),
+    "tuning":        ("ops",  "maker_rt_tuning.json"),
+    "traded_tokens": ("ops",  "maker_rt_traded_tokens.json"),
+    "orphan":        ("ops",  "maker_rt_ORPHAN.json"),
+    "stop_all":      ("ops",  "STOP_ALL"),
+}
+
+
+class LiveStateWriteUnderTest(RuntimeError):
+    """Raised when code running under pytest resolves or writes a LIVE runtime path."""
+
+
+def _norm(p: str) -> str:
+    return os.path.normcase(os.path.realpath(os.path.abspath(p)))
+
+
+def _tmp_roots() -> list[str]:
+    """Every directory we accept as 'a temp dir' (pytest's tmp_path lives under one of these)."""
+    out: list[str] = []
+    for r in (tempfile.gettempdir(), os.environ.get("PYTEST_DEBUG_TEMPROOT"),
+              os.environ.get("TMPDIR"), os.environ.get("TEMP"), os.environ.get("TMP")):
+        if not r:
+            continue
+        try:
+            out.append(_norm(r))
+        except (OSError, ValueError):     # pragma: no cover - unresolvable env value
+            continue
+    return out
+
+
+def under_tmp(path: str) -> bool:
+    """True iff ``path`` lives under a temp root (case/short-name normalised, drive-safe)."""
+    p = _norm(path)
+    for root in _tmp_roots():
+        try:
+            if os.path.commonpath([p, root]) == root:
+                return True
+        except ValueError:                # different drives on Windows -> not under it
+            continue
+    return False
+
+
+def assert_writable(path: str) -> str:
+    """THE GUARD. Under pytest, refuse any path that is not under a temp dir.
+
+    Returns ``path`` unchanged in production (the env lookup short-circuits before any filesystem
+    work). Under pytest it RAISES rather than writing, so a test can never touch live trading state —
+    not by forgetting a fixture, not by passing an explicit path, not via a new call site."""
+    if not os.environ.get("PYTEST_CURRENT_TEST"):
+        return path
+    if under_tmp(path):
+        return path
+    raise LiveStateWriteUnderTest(
+        f"REFUSED: test tried to write LIVE maker_rt runtime state at {path!r}.\n"
+        f"  Tests must never touch data/genz or data/ops — a suite run once injected 2,904 rows "
+        f"(incl. 177 fake fills) into the live events ledger.\n"
+        f"  tests/conftest.py points GENZ_DIR/OPS_DIR at tmp_path for every test; if you see this, "
+        f"something resolved a path WITHOUT the module attributes (e.g. a value captured at import, "
+        f"or a directory joined by hand instead of via config.runtime_path())."
+    )
+
+
+def runtime_path(kind: str, **fmt: Any) -> str:
+    """Resolve a named runtime artifact. The ONLY sanctioned way to build a runtime write path."""
+    try:
+        base, name = RUNTIME_FILES[kind]
+    except KeyError:
+        raise KeyError(f"unknown runtime file {kind!r}; known: {sorted(RUNTIME_FILES)}") from None
+    directory = GENZ_DIR if base == "genz" else OPS_DIR
+    return assert_writable(os.path.join(directory, name.format(**fmt) if fmt else name))
 
 
 def events_path_for(day: str) -> str:
     """The dated per-event log — data/genz/maker_rt_YYYYMMDD.csv."""
-    return os.path.join(GENZ_DIR, f"maker_rt_{day}.csv")
+    return runtime_path("events", day=day)
+
+
+def heartbeat_path() -> str:
+    return runtime_path("heartbeat")
+
+
+def summary_path() -> str:
+    return runtime_path("summary")
 
 
 # --------------------------------------------------------------------------- #

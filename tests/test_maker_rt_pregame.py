@@ -834,12 +834,12 @@ def test_reconcile_prunes_confirmed_flat_token(tmp_path):
 
 
 def test_traded_tokens_persist_across_restart_catches_orphan(tmp_path):
-    """A position stranded by a CRASHED run must survive the restart: the watch-set is persisted next to
-    the arm file, reloaded by a fresh executor, and the startup reconcile then catches the orphan."""
+    """A position stranded by a CRASHED run must survive the restart: the watch-set is persisted at the
+    canonical runtime path, reloaded by a fresh executor, and the startup reconcile catches the orphan."""
     ex1, _ = _exec(tmp_path, poly=_Poly())                    # "run 1"
     ex1._traded_tokens.add("TOKX")
     ex1._persist_traded_tokens()
-    assert (tmp_path / "maker_rt_traded_tokens.json").exists()
+    assert os.path.exists(mrt_config.runtime_path("traded_tokens"))
     poly2 = _Poly()
     poly2.position = 3.0                                       # the crash left 3 naked shares on TOKX
     ex2, _ = _exec(tmp_path, poly=poly2)                       # "run 2" (restart) reloads the watch-set
