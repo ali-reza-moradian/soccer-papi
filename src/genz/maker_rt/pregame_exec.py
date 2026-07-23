@@ -391,9 +391,10 @@ class PregameLiveExecutor:
         how the alert channel earns HTTP 429s (1,682 of them during the invisible-fill incident), and a
         rate-limited alert channel is one that cannot deliver the ORPHAN scream when it matters."""
         msg = str(exc)
+        msg_l = msg.lower()          # venues return error codes in mixed case — match case-INSENSITIVELY
         # TERMINAL = the market itself is gone/finished, so no amount of waiting brings it back.
-        terminal = any(s in msg for s in ("market_closed", "market_not_active", "market_settled",
-                                          "market_not_found", "not_active", "closed"))
+        terminal = any(s in msg_l for s in ("market_closed", "market_not_active", "market_settled",
+                                            "market_not_found", "not_active", "closed"))
         n = self._place_fail_n.get(c.key, 0) + 1
         self._place_fail_n[c.key] = n
         # Non-terminal refusals escalate (60s, 120s, 240s... capped at an hour) so a persistently
@@ -405,7 +406,8 @@ class PregameLiveExecutor:
         # Prefer the venue's error CODE ("market_closed", "too_many_requests") over the HTTP-line prefix.
         import re as _re
         m = _re.search(r'"code"\s*:\s*"([^"]+)"', msg)
-        why = "market gone" if terminal else alerts.humanize_reason(m.group(1) if m else msg.split(":")[0])
+        code = (m.group(1) if m else msg.split(":")[0]).lower()   # normalise for the humanizer's map
+        why = "market gone" if terminal else alerts.humanize_reason(code)
         detail = (f"place failed — {subj} · {why}"
                   + (" (backing off for the day)" if terminal else f" (retry in {wait:.0f}s)"))
         if n == 1:                                   # scream ONCE per candidate, then log-only
