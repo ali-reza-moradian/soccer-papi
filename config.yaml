@@ -476,7 +476,16 @@ papermaker:
 maker_rt:
   max_games: 30                     # nearest-by-kickoff games to quote across BOTH sports combined
   quote_usd: 100                    # shadow quote notional per node/direction
-  target_net: 0.010                 # min net edge a hedged maker combo must clear at the quote price
+  # Min net edge a hedged maker combo must clear at the quote price. LOWERED 1.0% -> 0.6% to raise fill
+  # frequency: FILLS are the bottleneck, not edge availability (rails-clean achievable data shows ~9% of
+  # tennis/mlb moments clear 1%, but very few of those quotes ever get taken). Floor chosen so that after
+  # the worst realistic hedge slippage (~0.3%) a fill still clears costs. This buys MORE at-best resting
+  # bids, not riskier ones — caps, in-play rails and the hedge-depth precondition are deliberately
+  # unchanged, so a thinner edge still requires a provable hedge before anything rests.
+  # REVISIT once >= 20 real fills have accumulated: read summary.locked_net_p50 / locked_net_p10 (the
+  # realized locked-net distribution) together with unwind_rate_recent. If p10 is negative or the recent
+  # unwind rate climbs, 0.6% was too thin.
+  target_net: 0.006
   directions: [rest_poly, rest_kalshi]   # LIVE rest directions (both SMOKE-proven); shared caps + one-in-flight span them
   reserve_per_direction: 1          # of live.max_open_quotes, GUARANTEE 1 slot to EACH enabled direction (rest_kalshi can't monopolize both)
   debounce_ms: 250                  # quote-engine debounce

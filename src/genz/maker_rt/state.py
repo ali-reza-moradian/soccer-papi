@@ -165,6 +165,17 @@ class MakerState:
     lifetime_fills: int = 0
     lifetime_unwinds: int = 0
     recent_outcomes: Any = field(default_factory=lambda: deque(maxlen=20))
+    # TARGET-NET TUNING SIGNALS (both survive the daily roll — see below). These are the two numbers that
+    # say whether lowering target_net to 0.6% was right or too thin:
+    #   fills_per_100_quotes — did the thinner floor actually buy us more SHOTS TAKEN? A day-scoped
+    #     fill_rate is useless here because fills are rare enough to read 0/750 on most days, so this
+    #     counts across days. lifetime_quotes is the denominator (lifetime_fills already exists).
+    #   recent_locked_nets — the REALIZED locked net (%) of the last 20 cleanly-hedged fills, so we can
+    #     see the p50/p10 of what we actually captured rather than what we hoped to at quote time.
+    #     Read it WITH unwind_rate_recent over the same window: this deque only holds fills that LOCKED,
+    #     so on its own it cannot show fills that paid the exit toll instead.
+    lifetime_quotes: int = 0
+    recent_locked_nets: Any = field(default_factory=lambda: deque(maxlen=20))
     gates: dict = field(default_factory=dict)          # {"pre": bool, "inplay": bool} — armed states, set at startup
     live: dict = field(default_factory=dict)           # PRE-GAME live snapshot (open_quotes/stake/fills/pnl/halt/feed_ok)
     buckets: dict = field(default_factory=dict)        # (sport, phase) -> _Bucket
@@ -174,10 +185,12 @@ class MakerState:
     def _roll(self, day: str) -> None:
         if day != self.day:
             keep = (self.log, self.restarts_today, self.gates, self.live,   # survive the daily reset
-                    self.lifetime_fills, self.lifetime_unwinds, self.recent_outcomes)
+                    self.lifetime_fills, self.lifetime_unwinds, self.recent_outcomes,
+                    self.lifetime_quotes, self.recent_locked_nets)
             self.__init__(day=day)  # type: ignore[misc]
             (self.log, self.restarts_today, self.gates, self.live,
-             self.lifetime_fills, self.lifetime_unwinds, self.recent_outcomes) = keep
+             self.lifetime_fills, self.lifetime_unwinds, self.recent_outcomes,
+             self.lifetime_quotes, self.recent_locked_nets) = keep
 
     def _bucket(self, sport: str, phase: str) -> _Bucket:
         return self.buckets.setdefault((str(sport or "?"), str(phase or "pre")), _Bucket())
@@ -199,7 +212,7 @@ class MakerState:
         self._roll(day)
         b = self._bucket(row.get("sport"), row.get("phase"))
         if ev == "quote":
-            self.n_quotes += 1; b.quotes += 1
+            self.n_quotes += 1; b.quotes += 1; self.lifetime_quotes += 1
             if row.get("at_best"):
                 self.at_best_hits += 1; b.at_best_hits += 1
         elif ev == "reprice":
@@ -216,6 +229,8 @@ class MakerState:
                 self.pnl_today += float(row.get("locked_pnl") or 0.0)
         elif ev == "hedge_locked":
             self.recent_outcomes.append(0)                  # a CLEAN hedge — the fill did NOT need an exit
+            if row.get("locked_net") is not None:           # REALIZED locked net (%) — the target_net check
+                self.recent_locked_nets.append(float(row["locked_net"]))
         elif ev in ("hedge_declined", "hedge_unwound", "unwind_FAILED"):
             # the fill required an EXIT (we paid the unwind toll). unwind_cost is on the row here, BEFORE
             # _append_csv drops it (it's not a CSV column — realized_pnl_usd carries -cost to the CSV).
@@ -291,6 +306,13 @@ class MakerState:
             "unwind_rate_recent": (round(sum(self.recent_outcomes) / len(self.recent_outcomes), 4)
                                    if self.recent_outcomes else 0.0),   # over the last <=20 fills
             "unwind_window": len(self.recent_outcomes),
+            # -- target_net tuning: did 0.6% buy more SHOTS, and what did we actually CAPTURE? --
+            "fills_per_100_quotes": (round(100.0 * self.lifetime_fills / self.lifetime_quotes, 3)
+                                     if self.lifetime_quotes else 0.0),
+            "fills_per_100_quotes_n": self.lifetime_quotes,   # denominator — a tiny sample must be visible
+            "locked_net_p50": _pctl(list(self.recent_locked_nets), 0.5),   # % , last <=20 LOCKED fills
+            "locked_net_p10": _pctl(list(self.recent_locked_nets), 0.1),   # the thin tail that kills us
+            "locked_net_window": len(self.recent_locked_nets),
             "gates": dict(self.gates), "live": dict(self.live),
             "by_sport": self._by_sport(), "by_phase": self._by_phase(),
         }
@@ -314,6 +336,13 @@ class MakerState:
         flaps = (self.live or {}).get("flaps")
         if flaps:
             hb["flaps"] = flaps
+        # target_net tuning signals on the heartbeat too, so the panel shows them even before the
+        # (larger, less frequently written) summary lands.
+        hb["fills_per_100_quotes"] = (round(100.0 * self.lifetime_fills / self.lifetime_quotes, 3)
+                                      if self.lifetime_quotes else 0.0)
+        hb["locked_net_p50"] = _pctl(list(self.recent_locked_nets), 0.5)
+        hb["locked_net_p10"] = _pctl(list(self.recent_locked_nets), 0.1)
+        hb["locked_net_window"] = len(self.recent_locked_nets)
         return hb
 
     def write_heartbeat(self, mode: str, sockets: dict, open_quotes: int, now: datetime,

@@ -661,6 +661,21 @@ function makerStripHtml(m){   // PURE: the MAKER RT v3 strip (top line + per-spo
         ? '<b style="color:#f5a623" title="unwind rate '+mrtPctInt(m.unwind_rate_recent)+' over the last '+(m.unwind_window||0)+' fills exceeds 20% — paying the exit toll too often">'+mrtPctInt(m.unwind_rate)+' &#9888;</b>'
         : '<b title="lifetime unwinds/fills">'+mrtPctInt(m.unwind_rate)+'</b>')
     +rst;
+  // TARGET-NET TUNING (target_net lowered 1.0% -> 0.6% to raise fill frequency): the two numbers that
+  // say whether that was right. f/100q = shots actually TAKEN per 100 quotes (across days - a day-scoped
+  // fill rate reads 0 on most days). locked p50/p10 = the REALIZED locked net of the last <=20 fills
+  // that LOCKED; read alongside the unwind rate above, which covers the fills that did NOT lock.
+  // p10 < 0 means the thin tail is losing money -> 0.6% is too thin.
+  var lnW=(+m.locked_net_window||0);
+  function ln(v){return (v==null)?'&mdash;':mrtPct2(v);}
+  var thin=(lnW>=5)&&(m.locked_net_p10!=null)&&((+m.locked_net_p10)<0);
+  var tuneLine='<div class="mrtsub"><span class="v">target_net 0.6%:</span> f/100q <b title="'
+    +(+m.fills_per_100_quotes_n||0)+' quotes observed">'+((+m.fills_per_100_quotes||0).toFixed(2))+'</b>'
+    +' &middot; realized locked p50 <b>'+ln(m.locked_net_p50)+'</b> p10 '
+    +(thin ? '<b style="color:#e5484d" title="p10 of the realized locked net is NEGATIVE over the last '
+             +lnW+' locked fills - 0.6% is too thin">'+ln(m.locked_net_p10)+' &#9888;</b>'
+           : '<b>'+ln(m.locked_net_p10)+'</b>')
+    +' <span class="v">(last '+lnW+' locked fills'+(lnW<20?', need 20':'')+')</span></div>';
   // PRE | LIVE phase split.
   var byp=m.by_phase||{},pre=byp.pre,ip=byp.inplay;
   function phaseSeg(lbl,ph){return '<b>'+lbl+'</b> q '+((ph&&ph.quotes)||0)+' f '+((ph&&ph.fills)||0)
@@ -704,7 +719,7 @@ function makerStripHtml(m){   // PURE: the MAKER RT v3 strip (top line + per-spo
   // Per-sport mini-rows (SPORTS order; only sports present in by_sport).
   var bys=m.by_sport||{},rows='';
   SPORTS.forEach(function(sp){var k=sp[0];if(bys[k])rows+=mrtSportRow(sp[1],bys[k]);});
-  return top+phaseLine+liveLine+rows;
+  return top+tuneLine+phaseLine+liveLine+rows;
 }
 function makerStrip(){   // MAKER RT v2 strip + a red banner when the heartbeat is >90s stale
   var el=document.getElementById('mrtstrip'),banner=document.getElementById('mrtbanner');

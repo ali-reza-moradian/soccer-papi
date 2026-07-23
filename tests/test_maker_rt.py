@@ -491,6 +491,55 @@ def test_state_unwind_economics_and_amber_window():
     assert summ2["unwind_count_today"] == 8                    # 2 + 6
 
 
+def test_target_net_tuning_metrics_fill_rate_and_realized_locked_net():
+    """The two signals that say whether target_net 1.0% -> 0.6% was right or too thin."""
+    from datetime import datetime, timezone
+    from src.genz.maker_rt.state import MakerState
+    st = MakerState()
+    now = datetime(2026, 7, 23, 18, 0, 0, tzinfo=timezone.utc)
+    quote = lambda: st.record({"event": "quote", "sport": "mlb", "phase": "pre"}, now)  # noqa: E731
+    fill = lambda: st.record({"event": "fill", "sport": "mlb", "game": "G", "market_key": "ml2"}, now)  # noqa: E731
+    for _ in range(200):
+        quote()
+    # 5 fills that LOCKED, realized nets (%) 0.4 / 0.5 / 0.6 / 0.9 / 1.2
+    for ln in (0.4, 0.5, 0.6, 0.9, 1.2):
+        fill(); st.record({"event": "hedge_locked", "locked_net": ln}, now)
+    summ = st.summary("live", {}, now)
+    assert summ["fills_per_100_quotes"] == 2.5                 # 5 fills / 200 quotes
+    assert summ["fills_per_100_quotes_n"] == 200               # denominator is visible
+    assert summ["locked_net_p50"] == 0.6
+    assert summ["locked_net_p10"] == 0.4                       # the thin tail
+    assert summ["locked_net_window"] == 5
+    # A fill that did NOT lock contributes to the unwind rate, NOT to the locked distribution — the two
+    # must be read together (that pairing is documented on both the field and the panel).
+    fill(); st.record({"event": "hedge_unwound", "unwind_cost": 0.5}, now)
+    summ2 = st.summary("live", {}, now)
+    assert summ2["locked_net_window"] == 5                     # unchanged
+    assert summ2["unwind_window"] == 6 and summ2["unwind_rate_recent"] > 0
+    assert summ2["fills_per_100_quotes"] == 3.0                # 6 fills / 200 quotes
+
+
+def test_target_net_tuning_metrics_survive_the_daily_roll():
+    """fills are rare enough that a day-scoped rate reads 0 on most days — these must cross midnight."""
+    from datetime import datetime, timezone
+    from src.genz.maker_rt.state import MakerState
+    st = MakerState()
+    d1 = datetime(2026, 7, 23, 23, 59, 0, tzinfo=timezone.utc)
+    for _ in range(100):
+        st.record({"event": "quote", "sport": "mlb", "phase": "pre"}, d1)
+    st.record({"event": "fill", "sport": "mlb", "game": "G", "market_key": "ml2"}, d1)
+    st.record({"event": "hedge_locked", "locked_net": 0.7}, d1)
+    d2 = datetime(2026, 7, 24, 0, 1, 0, tzinfo=timezone.utc)          # next UTC day
+    st.record({"event": "quote", "sport": "mlb", "phase": "pre"}, d2)  # triggers the roll
+    summ = st.summary("live", {}, d2)
+    assert summ["day"] == "20260724"
+    assert summ["quotes"] == 1                                  # day counters DID reset
+    assert summ["fills_per_100_quotes_n"] == 101                # rolling denominator did NOT
+    assert summ["locked_net_p50"] == 0.7 and summ["locked_net_window"] == 1
+    hb = st.heartbeat("live", {}, 0, d2)
+    assert hb["locked_net_p50"] == 0.7 and hb["fills_per_100_quotes"] > 0
+
+
 def test_build_universe_filters_settlement_and_pregame():
     from src.genz.maker_rt.universe import build_universe, kalshi_tickers, poly_tokens
     node = lambda side, tok, kt, risk=None: {   # noqa: E731
