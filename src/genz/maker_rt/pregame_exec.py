@@ -367,16 +367,20 @@ class PregameLiveExecutor:
         how the alert channel earns HTTP 429s (1,682 of them during the invisible-fill incident), and a
         rate-limited alert channel is one that cannot deliver the ORPHAN scream when it matters."""
         msg = str(exc)
+        # TERMINAL = the market itself is gone/finished, so no amount of waiting brings it back.
         terminal = any(s in msg for s in ("market_closed", "market_not_active", "market_settled",
-                                          "not_active", "closed"))
-        self._place_fail_until[c.key] = now_ts + (self.place_backoff_terminal_s if terminal
-                                                  else self.place_backoff_s)
+                                          "market_not_found", "not_active", "closed"))
         n = self._place_fail_n.get(c.key, 0) + 1
         self._place_fail_n[c.key] = n
+        # Non-terminal refusals escalate (60s, 120s, 240s... capped at an hour) so a persistently
+        # unplaceable candidate cannot settle into a steady retry drip either.
+        wait = (self.place_backoff_terminal_s if terminal
+                else min(self.place_backoff_s * (2 ** (n - 1)), 3600.0))
+        self._place_fail_until[c.key] = now_ts + wait
         text = (f"[MAKER_RT][LIVE] PLACE FAILED {c.game} {c.direction} [{phase}] @ {price:.4f}: {msg}")
         if n == 1:                                   # scream ONCE per candidate, then log-only
-            self._alert(text + ("  — market closed; backing off for the day." if terminal
-                                else f"  — backing off {self.place_backoff_s:.0f}s."))
+            self._alert(text + ("  — market gone; backing off for the day." if terminal
+                                else f"  — backing off {wait:.0f}s."))
         elif self.log:
             self.log.warning("%s (suppressed repeat #%d)", text, n)
 

@@ -337,7 +337,7 @@ def test_closed_market_place_failure_backs_off_and_alerts_once(tmp_path):
     for i in range(5):                                  # five loop passes over the same dead candidate
         ex.place_or_reprice(c, _dec(0.46, hedge_ask=0.55), None, store, NOW, 1000.0 + i, "pre")
     assert len(sent) == 1, f"must scream ONCE, not once per retry (got {len(sent)})"
-    assert "market closed" in sent[0]
+    assert "market gone; backing off for the day" in sent[0]
     # And it stops hitting the venue at all until the backoff expires: exactly ONE refusal happened,
     # so there is one log line and zero "suppressed repeat" lines.
     assert len([w for w in ex.log.warns if "PLACE FAILED" in w]) == 1
@@ -348,8 +348,8 @@ def test_closed_market_place_failure_backs_off_and_alerts_once(tmp_path):
     assert ex._place_fail_until == {}
 
 
-def test_transient_place_failure_uses_short_backoff(tmp_path):
-    """A non-terminal refusal backs off for a minute, not the whole day."""
+def test_transient_place_failure_backs_off_and_escalates(tmp_path):
+    """A non-terminal refusal backs off a minute, then doubles — never a steady retry drip."""
     koc = _KalshiOC()
     ex, _ = _exec_kalshi(tmp_path, kalshi_oc=koc)
     ex.roll_day(NOW)
@@ -359,8 +359,26 @@ def test_transient_place_failure_uses_short_backoff(tmp_path):
 
     koc.rest = _boom
     c = _cand_kalshi()
+    store = _Store(kalshi_ask=0.60)
+    ex.place_or_reprice(c, _dec(0.46, hedge_ask=0.55), None, store, NOW, 1000.0, "pre")
+    assert ex._place_fail_until[c.key] == 1000.0 + 60.0
+    ex.place_or_reprice(c, _dec(0.46, hedge_ask=0.55), None, store, NOW, 1100.0, "pre")   # past backoff
+    assert ex._place_fail_until[c.key] == 1100.0 + 120.0, "consecutive refusals must escalate"
+
+
+def test_market_not_found_is_terminal(tmp_path):
+    """'market not found' is as permanent as 'market closed' — observed live 2026-07-23T15:07:50Z."""
+    koc = _KalshiOC()
+    ex, _ = _exec_kalshi(tmp_path, kalshi_oc=koc)
+    ex.roll_day(NOW)
+
+    def _gone(*_a, **_kw):
+        raise RuntimeError('404 on POST /portfolio/events/orders: {"code":"market_not_found"}')
+
+    koc.rest = _gone
+    c = _cand_kalshi()
     ex.place_or_reprice(c, _dec(0.46, hedge_ask=0.55), None, _Store(kalshi_ask=0.60), NOW, 1000.0, "pre")
-    assert ex._place_fail_until[c.key] == 1000.0 + ex.place_backoff_s
+    assert ex._place_fail_until[c.key] == 1000.0 + ex.place_backoff_terminal_s
 
 
 # --------------------------------------------------------------------------- #
