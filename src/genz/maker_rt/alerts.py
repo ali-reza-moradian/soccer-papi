@@ -41,6 +41,8 @@ REASON_HUMAN = {
     "hedge_thin_cooldown": "hedge too thin", "now_behind": "no longer best", "book_gone": "book gone",
     "inplay_stale": "book went stale", "inplay_frozen": "price shock — frozen",
     "shutdown": "shutting down", "market_closed": "market closed", "market_not_found": "market gone",
+    "too_many_requests": "rate limited", "insufficient_balance": "insufficient balance",
+    "post_only_would_cross": "would cross (post-only)", "market_not_active": "market not active",
 }
 
 _MONEYLINE_KEYS = {"ml", "ml2", "moneyline", "match_winner", "fight_winner", "winner"}

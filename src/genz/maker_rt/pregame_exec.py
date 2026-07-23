@@ -402,7 +402,10 @@ class PregameLiveExecutor:
                 else min(self.place_backoff_s * (2 ** (n - 1)), 3600.0))
         self._place_fail_until[c.key] = now_ts + wait
         subj = alerts.subject(c.sport, c.game, c.market_key, c.rest_side, getattr(c, "teams", ""))
-        why = "market gone" if terminal else alerts.humanize_reason(msg.split(":")[0] if ":" in msg else msg)
+        # Prefer the venue's error CODE ("market_closed", "too_many_requests") over the HTTP-line prefix.
+        import re as _re
+        m = _re.search(r'"code"\s*:\s*"([^"]+)"', msg)
+        why = "market gone" if terminal else alerts.humanize_reason(m.group(1) if m else msg.split(":")[0])
         detail = (f"place failed — {subj} · {why}"
                   + (" (backing off for the day)" if terminal else f" (retry in {wait:.0f}s)"))
         if n == 1:                                   # scream ONCE per candidate, then log-only
