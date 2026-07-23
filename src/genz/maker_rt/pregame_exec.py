@@ -30,6 +30,7 @@ import os
 from dataclasses import dataclass
 from typing import Any, Optional
 
+from . import alerts
 from . import config as mrt_config
 from . import hedge as hedge_mod
 from .caps import direction_slot_ok
@@ -63,6 +64,7 @@ class _LiveOrder:
     matched_seen: float = 0.0
     rest_venue: str = "polymarket"     # "polymarket" | "kalshi" — dispatches place/cancel/fill/unwind/verify
     kalshi_side: str = ""              # YES|NO when rest_venue == "kalshi" (rest_ref[2])
+    teams: str = ""                   # 'AWAY vs HOME' — for the human alert name
 
 
 class PregameLiveExecutor:
@@ -92,6 +94,20 @@ class PregameLiveExecutor:
         # PER-DIRECTION SLOT RESERVATION: guarantee each enabled direction this many of max_open_quotes so
         # one direction (e.g. rest-kalshi) can't monopolize every slot. 0 = off / single-direction no-op.
         self.reserve_per_direction = int(getattr(cfg, "reserve_per_direction", 0))
+        # A reserve is only PROTECTED for a direction that currently HAS a viable candidate. The driver
+        # refreshes this each cycle; the default (all enabled) preserves the old behaviour until it does.
+        # This is the fix for the slot deadlock: rest-poly's reserved slot must not block rest-kalshi from
+        # the physically-free slot when rest-poly has nothing to place.
+        self._viable_directions: set = set(self.directions)
+        # SLOT AGE-OUT: a resting order this old is repriced-or-cancelled so no order holds a slot forever
+        # (the live digest showed one order held a slot for 46 min, behind best, while 3,042 candidates
+        # were refused). The driver reprices if still viable; otherwise the age-out cancel frees the slot.
+        self.max_quote_age_s = float(getattr(getattr(cfg, "live", None), "max_quote_age_s", 900.0))
+        self._stale_grace_s = 5.0                # don't release a just-placed order the venue hasn't indexed
+        self._slot_released = 0                  # tracked orders released as stale (venue no longer resting)
+        self._aged_out = 0                       # tracked orders cancelled by the age-out
+        self._slot_wait_since: dict = {}         # candidate key -> ts it FIRST got a slot refusal (reset on place)
+        self.slot_wait_max_s = 0.0               # longest any candidate is currently waiting for a slot (panel)
         self._refuse_log_at: dict = {}           # (candidate key, reason) -> last log ts (throttles slot-refusal spam)
         self._neg_cache: dict = {}               # token -> neg_risk (fetched once)
         self._traded_tickers: set = set()        # kalshi tickers we've rested on -> reconcile for flatness
@@ -112,7 +128,7 @@ class PregameLiveExecutor:
         self.node_quiet_max_s = float(getattr(ip, "node_quiet_max_s", 180.0))
         # TELEGRAM digest (routine quote/reprice/cancel collapse; fills/hedges/pause/halt/errors instant).
         self.digest_min = float(getattr(cfg, "telegram_digest_min", 15.0))
-        self._digest = {"quotes": 0, "cancels": {}, "fills": 0, "refuse_suppressed": 0}
+        self._digest = {"quotes": 0, "cancels": {}, "fills": 0, "refuse_suppressed": 0, "best_edge": 0.0}
         self._digest_since = 0.0
         # LIFETIME metrics (live quotes only): closed-quote lifetimes + an at-best time sampler.
         self._lifetimes: list = []
@@ -346,15 +362,23 @@ class PregameLiveExecutor:
                         market_key=c.market_key, hedge_lookup=dict(c.hedge_lookup), poly_rate=c.poly_rate,
                         placed_ts=now_ts, phase=phase, best_bid=getattr(rest, "best_bid", None),
                         rest_venue=c.rest_venue,
-                        kalshi_side=(c.rest_ref[2] if c.rest_venue == "kalshi" else ""))
+                        kalshi_side=(c.rest_ref[2] if c.rest_venue == "kalshi" else ""),
+                        teams=getattr(c, "teams", ""))
         self.open_orders[c.key] = lo
         self._place_fail_n.pop(c.key, None)            # a successful place clears the refusal streak
+        self._slot_wait_since.pop(c.key, None)         # got its slot -> no longer waiting
         self._track_rested(lo)                         # reconcile this instrument for flatness (persisted)
         self.caps.on_open()
         kind = "reprice" if existing is not None else "quote"
         self._record(c, kind, now, phase, price=price, size=size, hedge_ask=hedge_ask, order_id=oid)
-        self._routine("quote", f"[MAKER_RT][LIVE] {kind.upper()} {c.game} {c.market_key} {c.direction} "
-                      f"[{phase}] @ {price:.4f} x{int(size)} (~${price*size:.2f}) id {oid}")
+        if getattr(dec, "net_at_quote", None) is not None:       # best edge SEEN this digest window (panel)
+            self._digest["best_edge"] = max(self._digest.get("best_edge", 0.0),
+                                            float(dec.net_at_quote) * 100.0)
+        if existing is not None:
+            self._emit_event("repriced", lo, instant=False, digest_kind="reprice",
+                             old_price=existing.price, new_price=price)
+        else:
+            self._emit_event("placed", lo, instant=False, digest_kind="quote", price=price, size=size)
         matched = float(res.get("shares") or 0)          # a maker shouldn't fill on POST, but the book can move
         if matched > 0:
             self._on_fill_detected(c.key, matched, float(res.get("avg_price") or price), store, now, now_ts)
@@ -377,21 +401,34 @@ class PregameLiveExecutor:
         wait = (self.place_backoff_terminal_s if terminal
                 else min(self.place_backoff_s * (2 ** (n - 1)), 3600.0))
         self._place_fail_until[c.key] = now_ts + wait
-        text = (f"[MAKER_RT][LIVE] PLACE FAILED {c.game} {c.direction} [{phase}] @ {price:.4f}: {msg}")
+        subj = alerts.subject(c.sport, c.game, c.market_key, c.rest_side, getattr(c, "teams", ""))
+        why = "market gone" if terminal else alerts.humanize_reason(msg.split(":")[0] if ":" in msg else msg)
+        detail = (f"place failed — {subj} · {why}"
+                  + (" (backing off for the day)" if terminal else f" (retry in {wait:.0f}s)"))
         if n == 1:                                   # scream ONCE per candidate, then log-only
-            self._alert(text + ("  — market gone; backing off for the day." if terminal
-                                else f"  — backing off {wait:.0f}s."))
+            self._emit_event("problem", instant=True, detail=detail)
         elif self.log:
-            self.log.warning("%s (suppressed repeat #%d)", text, n)
+            self.log.warning("[MAKER_RT][LIVE] PLACE FAILED %s: %s (suppressed repeat #%d)", subj, msg, n)
+
+    def set_viable_directions(self, dirs: Any) -> None:
+        """The driver reports which directions currently have a viable candidate. A reserved slot is then
+        only protected for a direction in this set — so a reserve can NEVER block another direction when
+        the reserving direction has nothing to place (the slot-starvation deadlock)."""
+        self._viable_directions = {str(d).replace("_", "-") for d in (dirs or ())} & self.directions
 
     def _reservation_ok(self, direction: str) -> bool:
-        """True iff ``direction`` may claim one more of max_open_quotes without eating another enabled
+        """True iff ``direction`` may claim one more of max_open_quotes without eating another VIABLE
         direction's guaranteed reserve (per-direction slot fairness). Counts the CURRENT opens per
-        direction from the live order book. Off (or single direction) -> always True."""
+        direction from the live order book. Off (or single direction) -> always True.
+
+        NON-BLOCKING: only directions that currently HAVE a viable candidate protect their reserve, so
+        an idle direction's reserved slot never starves an active one. ``direction`` itself always
+        counts as viable (it is asking to place right now)."""
         open_by_direction: dict = {}
         for lo in self.open_orders.values():
             open_by_direction[lo.direction] = open_by_direction.get(lo.direction, 0) + 1
-        return direction_slot_ok(direction, open_by_direction, self.directions,
+        protected = set(self._viable_directions) | {direction}     # only protect reserves of viable dirs
+        return direction_slot_ok(direction, open_by_direction, protected,
                                  self.caps.max_open_quotes, self.reserve_per_direction)
 
     def _refuse(self, c: Any, phase: str, price: float, reason: str, projected: float,
@@ -402,6 +439,13 @@ class PregameLiveExecutor:
         text = (f"[MAKER_RT][LIVE] REFUSE {c.game} {c.direction} [{phase}] @ {price:.4f}: {reason} "
                 f"(projected pair ${projected:.2f}, stake_today ${self.caps.stake_today:.2f})")
         if reason in _SLOT_REFUSE_REASONS:
+            # SLOT-WAIT metric: a candidate refused for a slot has been WAITING since the first refusal.
+            # Store [first_seen, last_seen]; a candidate that stops being refused is pruned (no longer waiting).
+            w = self._slot_wait_since.get(c.key)
+            if w is None:
+                self._slot_wait_since[c.key] = [now_ts, now_ts]
+            else:
+                w[1] = now_ts
             k = (c.key, reason)
             if now_ts - self._refuse_log_at.get(k, -1e18) < REFUSE_LOG_EVERY_S:
                 self._digest["refuse_suppressed"] = self._digest.get("refuse_suppressed", 0) + 1
@@ -436,8 +480,7 @@ class PregameLiveExecutor:
         self.caps.on_close()
         self._record_lifetime(lo, now)
         self._record_lo(lo, "expire", now, reason=reason)
-        self._routine("cancel", f"[MAKER_RT][LIVE] CANCEL {lo.game} {lo.direction} [{lo.phase}] "
-                      f"({reason}) id {lo.order_id}", reason=reason)
+        self._emit_event("cancelled", lo, instant=False, digest_kind="cancel", reason=reason)
         return True
 
     #: venue order statuses that mean "this order is gone because it TRADED", not because we cancelled it.
@@ -580,6 +623,13 @@ class PregameLiveExecutor:
             except Exception:  # noqa: BLE001
                 continue
             if not isinstance(o, dict) or not o:
+                # VENUE NO LONGER KNOWS THIS ORDER (cancelled + purged). It cannot have filled unhedged —
+                # the account-wide fill sweep (poll_kalshi_fills) and the matched branch below catch every
+                # fill first. Release the phantom slot so a stale bookkeeping entry never starves the book
+                # (the "open 1, 3,042 slot-refuses" digest). A short grace protects a just-placed order the
+                # venue hasn't indexed yet.
+                if lo.matched_seen <= 1e-9 and now_ts - lo.placed_ts >= self._stale_grace_s:
+                    self._release_stale(key, lo, now)
                 continue
             matched = self._order_matched(lo, o)
             status = str(o.get("status") or "").upper()
@@ -587,8 +637,44 @@ class PregameLiveExecutor:
             if matched is not None and float(matched) > lo.matched_seen + 1e-9:
                 self._on_fill_detected(key, float(matched), price, store, now, now_ts)
             elif status in ("CANCELED", "CANCELLED") and lo.matched_seen <= 1e-9:
-                self.open_orders.pop(key, None)      # cancelled out-of-band -> stop tracking
-                self.caps.on_close()
+                self._release_stale(key, lo, now)    # cancelled out-of-band -> stop tracking, free the slot
+            elif (self.max_quote_age_s > 0 and now_ts - lo.placed_ts >= self.max_quote_age_s
+                  and lo.matched_seen <= 1e-9):
+                # AGE-OUT: a resting order this old is holding a slot indefinitely (behind best, edge gone,
+                # the driver never revisits it because its node stopped producing a viable decision).
+                # Cancel it; if the node is still viable the driver re-places next cycle, otherwise the slot
+                # is freed for another candidate.
+                self._aged_out += 1
+                if self.log:
+                    self.log.info("[MAKER_RT][LIVE] AGE-OUT %s — resting %.0fmin > %.0fmin cap; freeing slot.",
+                                  self._name_for(lo), (now_ts - lo.placed_ts) / 60, self.max_quote_age_s / 60)
+                self._cancel(key, now, "age_out")    # emits the human 'CANCELLED … held too long (aged out)'
+        # RESYNC the caps counter to ground truth. can_place() gates on caps.open_quotes while the reserve
+        # counts len(open_orders); if they ever drift (a release/fill path that missed a decrement), one
+        # slot is silently lost. len(open_orders) is authoritative — every entry is a tracked live order.
+        if self.caps.open_quotes != len(self.open_orders):
+            if self.log:
+                self.log.warning("[MAKER_RT][LIVE] slot counter drift: caps.open_quotes=%d vs tracked=%d "
+                                 "— resyncing to tracked.", self.caps.open_quotes, len(self.open_orders))
+            self.caps.open_quotes = len(self.open_orders)
+
+    def _release_stale(self, key: tuple, lo: Any, now: Any) -> None:
+        """Drop a tracked order the venue no longer shows resting (cancelled/purged) and free its slot."""
+        if self.open_orders.pop(key, None) is None:
+            return
+        self.caps.on_close()
+        self._slot_released += 1
+        self._record_lo(lo, "slot_released", now, reason="venue_not_resting")
+        if self.log:
+            self.log.info("[MAKER_RT][LIVE] released stale slot %s (venue no longer resting).", lo.order_id)
+
+    def sample_slot_wait(self, now_ts: float) -> None:
+        """Recompute the panel's slot-wait gauge: the longest a currently-waiting candidate has gone
+        without a slot. A candidate not refused within the last 30s is pruned (it stopped waiting)."""
+        for k, w in list(self._slot_wait_since.items()):
+            if now_ts - w[1] > 30.0:
+                self._slot_wait_since.pop(k, None)
+        self.slot_wait_max_s = max((now_ts - w[0] for w in self._slot_wait_since.values()), default=0.0)
 
     def poll_kalshi_fills(self, store: Any, now: Any, now_ts: float) -> int:
         """Account-wide Kalshi fill sweep (GET /portfolio/fills) — ONE call that covers every open order
@@ -743,9 +829,7 @@ class PregameLiveExecutor:
         re_mark = hedge_mod.mark_hedge(hv.ask_ladder, matched, hedge_venue, lo.poly_rate) if hv else None
         locked = hedge_mod.locked_net(fill_price, re_mark["cost_per_share"]) if re_mark else None
         self._record_fill(lo, matched, fill_price, now)          # ledger chain head: fill -> hedge_* -> unwind
-        self._instant(f"[MAKER_RT][LIVE] FILL {lo.game} {lo.direction} [{lo.phase}] {matched:.0f}@"
-                      f"{fill_price:.4f} (id {lo.order_id}) -- verifying hedge "
-                      f"(locked~{'n/a' if locked is None else f'{locked*100:.2f}%'}).")
+        self._emit_event("filled", lo, instant=True, price=fill_price, size=matched)
         # DECLINE: the walked hedge is too dear -> do NOT leg in; unwind the WHOLE fill (verified).
         if locked is None or locked < HEDGE_DECLINE_FLOOR:
             return self._unwind_and_record(lo, matched, fill_price, locked, "hedge_declined", now)
@@ -769,8 +853,9 @@ class PregameLiveExecutor:
             self.caps.on_fill(pnl)
             self._record_lo(lo, "hedge_locked", now, price=fill_price, size=matched, locked_net=locked,
                             locked_pnl=pnl, hedge_avg=hedge_avg, hedge_order_id=hedge_oid)
-            self._instant(f"[MAKER_RT][LIVE] HEDGE LOCKED {lo.game} [{lo.phase}] {matched:.0f} -> "
-                          f"pnl ${pnl:.2f} (hedge id {hedge_oid})")
+            self._emit_event("locked", lo, instant=True, pnl=pnl,
+                             net_pct=(locked * 100.0 if locked is not None else None),
+                             hedge_price=hedge_avg, hedge_venue=hedge_venue)
             return {"outcome": "hedge_locked", "locked_net": locked, "pnl": pnl, "hedge_order_id": hedge_oid,
                     "chain": self._chain(lo, matched, fill_price, "locked", locked, pnl, hedge_oid)}
         # MISS / PARTIAL / ERROR -> unwind the UNHEDGED remainder (verified). A partial hedge locks its part.
@@ -797,8 +882,8 @@ class PregameLiveExecutor:
                 self.caps.commit_stake(float(u["sell_px"]) * float(u["sold"]))
             self._record_lo(lo, ok_outcome, now, price=fill_price, size=shares, locked_net=locked,
                             unwind_cost=cost)
-            self._instant(f"[MAKER_RT][LIVE] {ok_outcome.upper()} {lo.game} [{lo.phase}] -- VERIFIED FLAT; "
-                          f"sold {u['sold']:.0f}@{u['sell_px']} cost ${cost:.2f} (hedge id {hedge_oid})")
+            self._emit_event("unwound", lo, instant=True, size=u["sold"], price=u["sell_px"],
+                             reason=("hedge too dear" if ok_outcome == "hedge_declined" else "hedge missed"))
             return {"outcome": ok_outcome, "locked_net": locked, "pnl": -cost, "hedge_order_id": hedge_oid,
                     "chain": self._chain(lo, shares, fill_price, ok_outcome, locked, -cost, hedge_oid)}
         # VERIFY-OR-SCREAM: the position is NOT confirmed flat -> ORPHAN. Book the worst-case loss.
@@ -820,9 +905,10 @@ class PregameLiveExecutor:
         locked = (result or {}).get("locked_net")
         if locked is not None and locked <= self.inplay_halt_locked_net and not self.inplay_halted:
             self.inplay_halted = True
-            self._alert(f"[MAKER_RT][INPLAY] DAY-HALT: in-play fill locked_net {locked*100:.2f}% <= "
-                        f"{self.inplay_halt_locked_net*100:.1f}% -- in-play placement stopped for the day "
-                        f"(pre-game continues).")
+            self._emit_event("halted", instant=True,
+                             detail=(f"in-play day-halt — fill locked {locked*100:.2f}% "
+                                     f"≤ {self.inplay_halt_locked_net*100:.1f}% floor; in-play stopped "
+                                     f"for the day (pre-game continues)"))
             self.cancel_inplay_open(now, "inplay_day_halt")
         if self.inplay_fills_today == 1:
             self.inplay_pause_until = now_ts + self.inplay_first_fill_pause_s
@@ -956,9 +1042,10 @@ class PregameLiveExecutor:
         self.caps.halt_reason = "orphan_position"
         self._persist_orphan()                               # survives restart + drives the panel banner
         self.cancel_all("orphan_halt", now)
-        self._instant(f"[MAKER_RT][CRITICAL] ORPHAN POSITION {game} [{phase}] token {str(token)[:12]}... "
-                      f"remaining={remaining} ({detail}). HALTING all live quoting + cancelling opens. "
-                      f"MANUAL CHECK REQUIRED.")
+        self._emit_event("halted", instant=True,
+                         detail=(f"ORPHAN POSITION {game} [{phase}] token {str(token)[:12]}… "
+                                 f"remaining={remaining} ({detail}). All live quoting HALTED + opens "
+                                 f"cancelled. MANUAL CHECK REQUIRED."))
 
     def _persist_orphan(self) -> None:
         """Write the latched orphan to disk (atomic). The panel reads this file, so the red ORPHAN banner
@@ -1131,6 +1218,12 @@ class PregameLiveExecutor:
                 # the operator must see it rather than infer it from the log.
                 "flaps": dict(self.flaps), "flap_secs": {k: round(v, 1) for k, v in self.flap_secs.items()},
                 "fill_poll_s": self.fill_poll_s,
+                # SLOT HEALTH: max_open (Y in "open X/Y"), how long the longest candidate has waited for a
+                # slot, and how many stale/aged slots we've reclaimed (the slot-starvation guards at work).
+                "max_open": self.caps.max_open_quotes, "slot_wait_max_s": round(self.slot_wait_max_s, 1),
+                "slot_released": self._slot_released, "aged_out": self._aged_out,
+                "viable_directions": sorted(self._viable_directions),
+                "max_quote_age_s": self.max_quote_age_s,
                 "median_quote_age_s": med, "time_at_best_share": atbest, "quotes": quotes}
 
     # -- CSV + telegram ------------------------------------------------------
@@ -1200,6 +1293,25 @@ class PregameLiveExecutor:
 
     _alert = _instant                                # back-compat: existing instant call sites
 
+    # -- human alert names ---------------------------------------------------
+    def _name_for(self, lo: Any) -> str:
+        """'⚾ MLB · Yankees ML' for a live order — the real team/player name, never the ticker."""
+        return alerts.head(lo.sport, lo.game, lo.market_key, lo.side, getattr(lo, "teams", ""))
+
+    def _emit_event(self, kind: str, lo: Any = None, *, instant: bool, digest_kind: str = "",
+                    **fields: Any) -> None:
+        """Build the human alert line for ``kind`` and route it (instant Telegram vs digest bucket)."""
+        base = {}
+        if lo is not None:
+            base = {"sport": lo.sport, "game": lo.game, "market_key": lo.market_key,
+                    "side": lo.side, "teams": getattr(lo, "teams", ""),
+                    "venue": lo.rest_venue, "phase": lo.phase}
+        text = alerts.format_event(kind, **{**base, **fields})
+        if instant:
+            self._instant(text)
+        else:
+            self._routine(digest_kind or kind, text, reason=fields.get("reason"))
+
     @staticmethod
     def _digest_bucket(reason: Any) -> str:
         r = str(reason or "")
@@ -1235,19 +1347,21 @@ class PregameLiveExecutor:
         if now_ts - self._digest_since < self.digest_min * 60.0:
             return
         d = self._digest
-        total = sum(d["cancels"].values())
-        suppressed = d.get("refuse_suppressed", 0)
-        if d["quotes"] or total or d["fills"] or suppressed:
-            reasons = ", ".join(f"{v} {k}" for k, v in sorted(d["cancels"].items(), key=lambda x: -x[1]))
-            line = (f"[MAKER_RT][DIGEST {int(self.digest_min)}m] {d['quotes']} quotes, {total} cancels"
-                    f"{' [' + reasons + ']' if reasons else ''}, {d['fills']} fills"
-                    f"{f', {suppressed} slot-refuses suppressed' if suppressed else ''}, "
-                    f"open {len(self.open_orders)}")
+        cancelled = sum(d["cancels"].values())
+        if d["quotes"] or cancelled or d["fills"]:
+            best = d.get("best_edge", 0.0)
+            line = alerts.digest_line(self.digest_min, placed=d["quotes"], cancelled=cancelled,
+                                      fills=d["fills"], open_now=len(self.open_orders),
+                                      max_open=self.caps.max_open_quotes,
+                                      best_edge_pct=(best if best else None))
             self._send_telegram(line)
             if self.log:
                 self.log.warning(line)
-        self._digest = {"quotes": 0, "cancels": {}, "fills": 0, "refuse_suppressed": 0}
+        self._reset_digest()
         self._digest_since = now_ts
+
+    def _reset_digest(self) -> None:
+        self._digest = {"quotes": 0, "cancels": {}, "fills": 0, "refuse_suppressed": 0, "best_edge": 0.0}
 
     def sample_metrics(self, store: Any, now_ts: float) -> None:
         """Each loop: sample whether each LIVE quote is currently AT BEST (our price >= live best bid)."""

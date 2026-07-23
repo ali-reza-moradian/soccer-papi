@@ -456,11 +456,12 @@ def test_slot_refuse_throttled_once_per_window_and_counted(tmp_path):
     ex.place_or_reprice(c2, _dec(0.46), None, store, None, 2.0 + REFUSE_LOG_EVERY_S + 5)   # window reopened -> logs again
     refuse_logs = [m for m in ex.log.infos if "REFUSE" in m]
     assert len(refuse_logs) == 2                              # only 2 REFUSE lines despite 6 refusals
-    assert ex._digest["refuse_suppressed"] == 4
-    # digest surfaces the suppressed count.
+    assert ex._digest["refuse_suppressed"] == 4                # still tracked internally (log throttle)
+    # The human digest DROPS the slot-refuse jargon and shows 'open X/Y' instead (per the alert spec).
     ex.maybe_flush_digest(10_000.0)                           # init the window
     ex.maybe_flush_digest(10_000.0 + ex.digest_min * 60 + 1)  # elapse -> one digest line
-    assert any("4 slot-refuses suppressed" in m for m in sent)
+    digest = next(m for m in sent if m.startswith("📊"))
+    assert "slot-refuse" not in digest and "open 1/1" in digest
 
 
 # --------------------------------------------------------------------------- #
@@ -733,12 +734,13 @@ def test_telegram_digest_batches_routine_and_passes_instant(tmp_path):
     assert ex.digest_min == 15.0                               # digest ON (default)
     store = _Store(poly_best_ask=0.60, poly_best_bid=0.45)
     ex.place_or_reprice(_cand(), _dec(0.46), None, store, None, 1.0, "pre")
-    assert sent == []                                          # routine QUOTE batched, NOT sent instantly
+    assert sent == []                                          # routine PLACED batched, NOT sent instantly
     ex.on_order_update({"order_id": oc.rests[0]["oid"], "size_matched": 5, "price": 0.46}, store, None, 2.0)
-    assert any("HEDGE" in m or "FILL" in m for m in sent)      # instant fill/hedge passes through
+    assert any("LOCKED" in m or "FILLED" in m for m in sent)   # instant fill/lock passes through
     ex.maybe_flush_digest(1000.0)                              # init the digest window
     ex.maybe_flush_digest(1000.0 + 15 * 60 + 1)                # window elapsed -> ONE digest line
-    assert any("DIGEST" in m and "quotes" in m and "fills" in m for m in sent)
+    digest = next(m for m in sent if m.startswith("📊"))       # the human roll-up
+    assert "placed" in digest and "fills" in digest and "open" in digest
 
 
 def test_digest_off_sends_routine_instantly(tmp_path):
@@ -749,7 +751,7 @@ def test_digest_off_sends_routine_instantly(tmp_path):
     ex.digest_min = 0.0                                        # telegram_digest_min 0 -> old behavior
     ex.place_or_reprice(_cand(), _dec(0.46), None, _Store(poly_best_ask=0.60, poly_best_bid=0.45),
                         None, 1.0, "pre")
-    assert any("QUOTE" in m for m in sent)                     # routine sent instantly when digest off
+    assert any("PLACED" in m for m in sent)                    # routine sent instantly when digest off
 
 
 def test_lifetime_and_atbest_metrics(tmp_path):

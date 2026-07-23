@@ -26,11 +26,24 @@ class Component:
     cmd: str        # inner PowerShell launch command; {py}/{repo}/{data} filled by the supervisor
 
 
+# -------------------------------------------------------------------------------------------------- #
+# SUPERVISED COMPONENTS — the authoritative list of what run_all keeps alive.                          #
+#                                                                                                      #
+# RETIRED 2026-07-23: the legacy soccer OG scanner ('og' / run_og_loop.ps1). It scanned the World Cup  #
+# via the OddsPapi FREE tier, which is exhausted — so every cycle it did nothing but Telegram          #
+# "Arb bot paused: only N API requests left". The World Cup is over, and og_multi now covers           #
+# MLB/tennis/UFC on the PAID the-odds-api key. The component is removed from this list so the           #
+# supervisor no longer respawns it; the script (run_og_loop.ps1) and src/run.py are kept for reuse.     #
+# TO RE-ENABLE soccer OG: (1) top up the OddsPapi key (or repoint run.py at a funded key),              #
+# (2) restore the Component line below, (3) let run_all pick it up (or launch run_og_loop.ps1 by hand). #
+#     Component("og", "run_og_loop.ps1", "& '{repo}\\scripts\\run_og_loop.ps1'"),                       #
+# The budget-guard alert in src/run.py is now throttled to once per 6h regardless, so even a manual     #
+# relaunch on an exhausted key can no longer spam.                                                      #
+# -------------------------------------------------------------------------------------------------- #
 COMPONENTS: list[Component] = [
     Component("http", "http.server 8080", "Set-Location '{data}'; & '{py}' -m http.server 8080"),
     Component("tree", "run_tree_loop.ps1", "& '{repo}\\scripts\\run_tree_loop.ps1'"),
     Component("genz", "run_genz_loop.ps1", "& '{repo}\\scripts\\run_genz_loop.ps1'"),
-    Component("og", "run_og_loop.ps1", "& '{repo}\\scripts\\run_og_loop.ps1'"),
     # MLB — a SECOND sport, fully isolated from soccer (own tree/price loops, own data files, own logs).
     Component("mlb_tree", "run_mlb_tree_loop.ps1", "& '{repo}\\scripts\\run_mlb_tree_loop.ps1'"),
     Component("mlb", "run_mlb_loop.ps1", "& '{repo}\\scripts\\run_mlb_loop.ps1'"),

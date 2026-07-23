@@ -786,6 +786,38 @@ def _fetch_odds_per_book(client, cfg, tournament_ids, books, log):
 
 
 # --------------------------------------------------------------------------- #
+# Budget-exhausted alert throttle                                               #
+# --------------------------------------------------------------------------- #
+_BUDGET_ALERT_EVERY_S = 6 * 3600.0        # the "arb bot paused" Telegram fires at most this often
+
+
+def _budget_alert_path() -> str:
+    from .config import REPO_ROOT
+    return os.path.join(REPO_ROOT, "data", "ops", "og_budget_alert.json")
+
+
+def _budget_alert_due(now_ts: float, *, path: Optional[str] = None,
+                      every_s: float = _BUDGET_ALERT_EVERY_S) -> bool:
+    """True iff >= ``every_s`` since the last budget-exhausted Telegram (persisted across the fresh
+    interpreter each scan cycle spawns). Records ``now_ts`` when it returns True. Best-effort: any I/O
+    problem returns True (fail OPEN — a missed throttle only means one extra alert, never a lost one)."""
+    p = path or _budget_alert_path()
+    try:
+        last = None                       # None = never alerted -> the first call always fires
+        if os.path.exists(p):
+            with open(p, "r", encoding="utf-8") as fh:
+                last = float((json.load(fh) or {}).get("last_ts", 0.0))
+        if last is not None and now_ts - last < every_s:
+            return False
+        os.makedirs(os.path.dirname(p) or ".", exist_ok=True)
+        with open(p, "w", encoding="utf-8") as fh:
+            json.dump({"last_ts": now_ts}, fh)
+        return True
+    except (OSError, ValueError, TypeError):
+        return True
+
+
+# --------------------------------------------------------------------------- #
 # Main cycle                                                                     #
 # --------------------------------------------------------------------------- #
 def run_cycle(cfg: Config, log) -> int:
@@ -819,9 +851,14 @@ def run_cycle(cfg: Config, log) -> int:
     if not acct.get("safe_to_run", True):
         log.warning("Request budget nearly gone (remaining=%s <= margin=%s). Skipping scan.",
                     acct.get("remaining"), safety)
-        if cfg.secrets.telegram_ready and not cfg.dry_run:
+        # THROTTLE: on an exhausted key this fires every cycle (~5 min) forever. Alert at most once per
+        # 6h regardless — the state stops mattering once soft-notified, and the spam is what made the
+        # legacy soccer OG unbearable before it was retired (scripts/ops.py). Best-effort persisted so a
+        # fresh interpreter per cycle still respects it.
+        if cfg.secrets.telegram_ready and not cfg.dry_run and _budget_alert_due(now.timestamp()):
             send_message(cfg.secrets.telegram_bot_key, cfg.secrets.telegram_group_id,
-                         f"⚠️ Arb bot paused: only {acct.get('remaining')} API requests left this month.", log)
+                         f"⚠️ Arb bot paused: only {acct.get('remaining')} API requests left this month. "
+                         f"(This alert is throttled to once per 6h.)", log)
         return 0
 
     # 2) Catalogs ----------------------------------------------------------------

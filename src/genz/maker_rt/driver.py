@@ -39,6 +39,7 @@ class Candidate:
     hedge_lookup: dict        # how to fetch the hedge SideView from the store at any moment
     kickoff_ts: float
     poly_leg_cap: Optional[float] = None   # per-sport poly-leg cap (None = uncapped sport)
+    teams: str = ""           # 'AWAY vs HOME' — for human alert names (resolves MLB home/away sides)
 
     @property
     def node3(self) -> tuple:
@@ -129,7 +130,7 @@ class QuoteDriver:
                     poly_rate=self.cfg.poly_rate if hasattr(self.cfg, "poly_rate") else self.cfg.poly_fee_rate,
                     hedge_lookup={"venue": "kalshi", "ticker": hedge_node.kalshi_ticker,
                                   "side": hedge_node.kalshi_side},
-                    kickoff_ts=qm.kickoff_ts, poly_leg_cap=cap))
+                    kickoff_ts=qm.kickoff_ts, poly_leg_cap=cap, teams=getattr(qm, 'teams', '')))
             # rest on KALSHI, hedge on POLY (skip if this series charges a maker fee)
             series = str(rest_node.kalshi_ticker or "").split("-", 1)[0]
             maker_fee = series in getattr(self.cfg, "kalshi_maker_fee_series", ())
@@ -141,7 +142,7 @@ class QuoteDriver:
                     rest_venue="kalshi", hedge_venue="polymarket", tick=0.01, hedge_tick=0.01,
                     poly_rate=float(hedge_node.poly_fee_rate or self.cfg.poly_fee_rate),
                     hedge_lookup={"venue": "polymarket", "token": hedge_node.poly_token_id},
-                    kickoff_ts=qm.kickoff_ts, poly_leg_cap=cap))
+                    kickoff_ts=qm.kickoff_ts, poly_leg_cap=cap, teams=getattr(qm, 'teams', '')))
         return out
 
     # -- lookups + phase ---------------------------------------------------
@@ -199,6 +200,7 @@ class QuoteDriver:
         """Re-evaluate every candidate against the current books; arm/reprice/expire + record events.
         In-play candidates pass the anti-phantom rails (fresh / shock-freeze / persistence) first."""
         ip = self._ip()
+        viable_dirs: set = set()          # directions that produced a viable placement this cycle
         for c in self._cands:
             phase = self.phase(c.kickoff_ts, now_ts)
             rest = self._rest_view(store, c)
@@ -275,6 +277,7 @@ class QuoteDriver:
                 # path expires as before. A brief best-bid flicker no longer shreds queue position.
                 if (self.pregame_exec is not None and c.key in self.pregame_exec.open_orders
                         and self.pregame_exec.eligible(c, phase, now_ts)):
+                    viable_dirs.add(c.direction)     # a live order momentarily behind still holds a viable slot
                     self.pregame_exec.place_or_reprice(c, dec, rest, store, now, now_ts, phase)
                 else:
                     self._expire_if_open(c, now, "now_behind", phase)
@@ -324,6 +327,7 @@ class QuoteDriver:
             # >= reprice_min_ticks improvement after min_rest_s) so it is called every tick and decides
             # place / reprice / keep-resting itself — no 1-tick churn gate here.
             if self.pregame_exec is not None and self.pregame_exec.eligible(c, phase, now_ts):
+                viable_dirs.add(c.direction)          # this direction HAS a viable candidate this cycle
                 self.pregame_exec.place_or_reprice(c, dec, rest, store, now, now_ts, phase)
                 self.last_event[c.key] = "quote"
                 continue
@@ -344,6 +348,10 @@ class QuoteDriver:
                               "%.3f%%, at_best=%s, q_ahead=%.0f)", c.game, c.market_key, c.direction, phase,
                               dec.quote_price, dec.floor or 0, dec.hedge_best_ask or 0,
                               (dec.net_at_quote or 0) * 100, dec.at_best, queue_ahead)
+        # SLOT-RESERVE NON-BLOCKING: tell the executor which directions actually have a viable candidate
+        # this cycle, so an idle direction's reserved slot never starves an active one.
+        if self.pregame_exec is not None and hasattr(self.pregame_exec, "set_viable_directions"):
+            self.pregame_exec.set_viable_directions(viable_dirs)
 
     def _freeze_node(self, c: Candidate, now_ts: float, until_ts: float, now: Any, move: float) -> None:
         """Shock freeze: disarm EVERY open shadow quote of the node and place none until ``until_ts``."""

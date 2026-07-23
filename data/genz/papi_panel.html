@@ -696,7 +696,17 @@ function makerStripHtml(m){   // PURE: the MAKER RT v3 strip (top line + per-spo
       +(L.inplay_halted?rb('INPLAY HALTED','in-play day-halt (locked_net <= -2%); pre-game continues'):'')
       +((L.inplay_paused&&!L.inplay_halted)?ab('INPLAY PAUSED','first-fill circuit: in-play paused; pre-game unaffected'):'')
       +(userUp?'':rb('USER SOCKET DOWN','Poly user socket DOWN: open quotes auto-cancel + placement halted'));
+    // SLOT HEALTH: "open X/Y" plus the slot-wait gauge + reclaimed-slot counters (starvation guards).
+    var mo=(+L.max_open||0), openN=(+L.open_quotes!=null?+L.open_quotes:((+L.pre_open||0)+(+L.inplay_open||0)));
+    var sw=(+L.slot_wait_max_s||0);
+    var slotSeg=' &middot; slots <b>'+openN+'/'+mo+'</b>'
+      +(sw>0 ? ' <span class="v" title="longest a candidate has waited for a slot">wait '
+               +(sw>=120?'<b style="color:#f5a623">'+Math.round(sw/60)+'m &#9888;</b>':Math.round(sw)+'s')+'</span>' : '')
+      +(((+L.slot_released||0)+(+L.aged_out||0))>0
+          ? ' <span class="v" title="stale slots released / orders aged out — slot-starvation guards at work">(reclaimed '
+            +(+L.slot_released||0)+'+'+(+L.aged_out||0)+')</span>' : '');
     liveLine='<div class="mrtsub"><span class="lv">LIVE</span> open pre <b>'+(+L.pre_open||0)+'</b> / inplay <b>'+(+L.inplay_open||0)+'</b>'
+      +slotSeg
       +' &middot; stake <b>$'+st.toFixed(2)+'</b>/$'+cap+' <span class="v">('+pct+'%)</span>'
       +' &middot; fills <b>'+(+L.fills_today||0)+'</b> <span class="v">(inplay '+(+L.inplay_fills||0)+')</span>'
       +' &middot; pnl <b>$'+((+L.pnl_today||0).toFixed(2))+'</b>'

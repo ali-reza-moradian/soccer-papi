@@ -340,10 +340,9 @@ def test_closed_market_place_failure_backs_off_and_alerts_once(tmp_path):
     for i in range(5):                                  # five loop passes over the same dead candidate
         ex.place_or_reprice(c, _dec(0.46, hedge_ask=0.55), None, store, NOW, 1000.0 + i, "pre")
     assert len(sent) == 1, f"must scream ONCE, not once per retry (got {len(sent)})"
-    assert "market gone; backing off for the day" in sent[0]
-    # And it stops hitting the venue at all until the backoff expires: exactly ONE refusal happened,
-    # so there is one log line and zero "suppressed repeat" lines.
-    assert len([w for w in ex.log.warns if "PLACE FAILED" in w]) == 1
+    assert "PROBLEM" in sent[0] and "market gone" in sent[0] and "backing off for the day" in sent[0]
+    # And it stops hitting the venue at all until the backoff expires: exactly ONE refusal happened
+    # (one instant alert, above), so there are zero "suppressed repeat" log lines.
     assert not [w for w in ex.log.warns if "suppressed repeat" in w], \
         "the candidate must not be retried at all inside the backoff window"
     # A new UTC day clears the backoff (markets reopen).

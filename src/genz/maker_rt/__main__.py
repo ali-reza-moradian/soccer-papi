@@ -306,6 +306,7 @@ async def _run(cfg: Any, log: Any) -> int:
                 pregame_exec.set_feed_ok(pu_up, now)
                 pregame_exec.set_kalshi_feed_ok(ks_up, now)       # rest-kalshi FILL-signal health
                 pregame_exec.sample_metrics(store, now_ts)        # at-best sampler for the lifetime metrics
+                pregame_exec.sample_slot_wait(now_ts)             # slot-wait gauge (starvation early warning)
                 pregame_exec.maybe_flush_digest(now_ts)           # routine-event Telegram digest (15 min)
                 # WS-INDEPENDENT FILL AUTHORITY (primary detector; the socket is only an accelerator).
                 if (now_ts - last_fill_poll >= pregame_exec.fill_poll_s

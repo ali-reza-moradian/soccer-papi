@@ -197,8 +197,11 @@ python -m http.server 8080
 ```
 
 Start each loop in its own window so the tabs have data:
-- OG: `powershell -ExecutionPolicy Bypass -File scripts\run_og_loop.ps1`
 - GenZ: `powershell -ExecutionPolicy Bypass -File scripts\run_genz_loop.ps1`
+- ~~OG (legacy soccer): `scripts\run_og_loop.ps1`~~ — **RETIRED 2026-07-23.** The World Cup is over and
+  its OddsPapi free key is exhausted; `og_multi` now covers MLB/tennis/UFC on the paid the-odds-api key.
+  The script and `src/run.py` are kept for reuse — to bring soccer OG back, top up the OddsPapi key and
+  restore the `og` component in `scripts/ops.py` (see the RETIRED note there).
 
 **Prefer these fresh-interpreter loop runners over a long-lived `python -m src.genz.cli run --loop`.**
 A long-lived process keeps running the bytecode it started with, so after a `git pull` the snapshot
@@ -226,7 +229,8 @@ schtasks /Run /TN SoccerPapi          # start it now, without rebooting
 - **`scripts\install_autostart.ps1`** — registers a single **ONSTART** scheduled task `SoccerPapi`
   (SYSTEM, highest run level) that launches the supervisor at every boot. Reboot-proof.
 - **Logs** live in `data\ops\` (gitignored): `supervisor.log`, per-component `http.log` / `tree.log` /
-  `genz.log` / `og.log`, and `supervisor_heartbeat.json` (`{ts, components:{name: pid|null}}`).
+  `genz.log`, and `supervisor_heartbeat.json` (`{ts, components:{name: pid|null}}`). (`og.log` is legacy;
+  the soccer OG component was retired 2026-07-23.)
 - **Stop the stack:** `powershell -File scripts\stop_all.ps1` — drops `data\ops\STOP_ALL`, the
   supervisor kills all four and exits, then the flag is cleared. It returns on the next boot.
 - **Disable autostart entirely:** `schtasks /Change /TN SoccerPapi /Disable`.

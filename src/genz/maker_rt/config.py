@@ -152,6 +152,10 @@ class LiveConfig:
     # the account fill history) every this many seconds. The private websocket fill channel is only an
     # accelerator — this poll is the detector of record and needs no socket to be connected.
     fill_poll_s: float = 10.0
+    # SLOT AGE-OUT: a resting order older than this (seconds) is repriced-or-cancelled so no order holds
+    # one of the (scarce) max_open_quotes slots forever — a stuck order behind best fills nothing and
+    # starves every other candidate. 0 disables the age-out.
+    max_quote_age_s: float = 900.0
 
 
 @dataclass
@@ -318,11 +322,12 @@ def load_maker_rt_config(config_path: Optional[str] = None,
     lc = LiveConfig()
     for name in ("enabled", "arm_file", "quote_usd_max", "max_open_quotes", "max_fills_per_day",
                  "max_daily_loss_usd", "max_daily_stake_usd", "hedge_timeout_ms", "unwind_on_hedge_fail",
-                 "auto_flatten", "fill_poll_s"):
+                 "auto_flatten", "fill_poll_s", "max_quote_age_s"):
         if live_blk.get(name) is not None:
             setattr(lc, name, live_blk[name])
     lc.enabled = bool(lc.enabled)
     lc.auto_flatten = bool(lc.auto_flatten)
+    lc.max_quote_age_s = float(lc.max_quote_age_s)
     lc.fill_poll_s = float(lc.fill_poll_s)
     lc.quote_usd_max = float(lc.quote_usd_max)
     lc.max_open_quotes = int(lc.max_open_quotes)

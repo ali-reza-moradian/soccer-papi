@@ -536,6 +536,10 @@ maker_rt:
     # v1 field names against a v2 payload, so BOTH authorities were blind and two filled orders sat naked
     # for 11.5h. Never let this be the only thing you rely on, and never let it be absent.
     fill_poll_s: 10
+    # SLOT AGE-OUT: a resting order older than this (s) is repriced-or-cancelled so no order holds one of
+    # the scarce max_open_quotes slots forever. The live digest once showed one order held a slot for 46
+    # min, behind best, while 3,042 candidates were refused (slot starvation). 0 disables.
+    max_quote_age_s: 900
   # LIVE-INPLAY — the SECOND, INDEPENDENT live gate, for IN-PLAY markets only (the pre-game `live` gate
   # above is separate and unchanged). BUILT, LOCKED: an in-play live order requires BOTH enabled AND its
   # OWN arm file (data/ops/ARM_MAKER_INPLAY) AND the startup self-check. Rails are STRICTER than pre-game
