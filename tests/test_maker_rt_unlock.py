@@ -232,3 +232,66 @@ def test_shutdown_cancel_all_fires():
     n = smoke._cancel_tracked(poly, ["a", "b"], None, None)
     assert set(poly.cancelled) == {"a", "b"}
     assert poly.cancel_all_called == 1 and n == 2
+
+
+# --------------------------------------------------------------------------- #
+# 10) ARM banner states the REAL posture (enabled directions + slot reserve)     #
+# --------------------------------------------------------------------------- #
+def test_armed_banner_names_enabled_directions_and_reserve():
+    """The banner used to hardcode "rest-poly" and kept claiming that after rest_kalshi went live. It must
+    name the ACTUALLY-enabled directions and the per-direction reserve."""
+    from src.genz.maker_rt.__main__ import _armed_startup_alert
+
+    class _Log:
+        def __init__(self):
+            self.warns = []
+
+        def warning(self, msg, *a):
+            self.warns.append(msg % a if a else msg)
+
+    cfg = mrt_config.MakerRtConfig()
+    cfg.directions = ("rest_poly", "rest_kalshi")
+    cfg.reserve_per_direction = 1
+    log, sent = _Log(), []
+    _armed_startup_alert(cfg, True, False, sent.append, 0, log)
+    banner = log.warns[0]
+    assert "rest-kalshi,rest-poly" in banner            # BOTH directions, underscores normalised
+    assert "reserve/direction 1" in banner
+    assert "phases: pre" in banner
+    assert banner == sent[0]                            # same text goes to Telegram
+
+    # single-direction config still reads correctly
+    cfg2 = mrt_config.MakerRtConfig()
+    cfg2.directions = ("rest_poly",)
+    log2 = _Log()
+    _armed_startup_alert(cfg2, True, True, None, 3, log2)
+    assert "(rest-poly; phases: pre+inplay)" in log2.warns[0]
+    assert "reserve/direction 0" in log2.warns[0]
+
+
+# --------------------------------------------------------------------------- #
+# 11) telegram alerts are HTML-safe (parse_mode=HTML rejected bare '<')          #
+# --------------------------------------------------------------------------- #
+def test_telegram_sender_html_escapes_alert_text(monkeypatch):
+    """send_message posts parse_mode=HTML, so a bare '<' in our PLAIN-TEXT alerts made Telegram reject the
+    whole message with 400 'Unsupported start tag'. That silently killed the ARM banner and BOTH halt
+    alerts in production. The sender must escape."""
+    import src.telegram as tg_mod
+    from src.genz.maker_rt import __main__ as mrt_main
+
+    sent = []
+    monkeypatch.setattr(tg_mod, "send_message",
+                        lambda k, c, text, log: sent.append(text) or True)
+    monkeypatch.setenv("TELEGRAM_BOT_KEY", "k")
+    monkeypatch.setenv("TELEGRAM_GROUP_ID", "c")
+
+    send = mrt_main._telegram_sender(log=None)
+    assert send is not None
+    # the exact production string that was 400-ing every restart
+    send("[MAKER_RT][LIVE] LIVE ARMED. SHARED caps: quote<=$5, open<=2 & rising")
+    assert sent == ["[MAKER_RT][LIVE] LIVE ARMED. SHARED caps: quote&lt;=$5, open&lt;=2 &amp; rising"]
+    assert "<" not in sent[0]                     # nothing Telegram can read as a tag
+
+    # missing creds -> no sender (unchanged)
+    monkeypatch.delenv("TELEGRAM_BOT_KEY")
+    assert mrt_main._telegram_sender(log=None) is None

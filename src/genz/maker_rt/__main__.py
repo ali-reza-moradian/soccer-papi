@@ -8,6 +8,7 @@ maker_rt.head_poll_s and exits 0 so the .ps1 wrapper restarts on fresh bytecode.
 from __future__ import annotations
 
 import asyncio
+import html
 import os
 import signal
 import sys
@@ -50,7 +51,13 @@ def _install_signal_handlers(log: Any) -> None:
 
 def _telegram_sender(log: Any):
     """A ``callable(text)`` that alerts Telegram, or None when creds are absent. Only ever called by the
-    in-play executor when the (locked) in-play gate is armed."""
+    in-play executor when the (locked) in-play gate is armed.
+
+    HTML-ESCAPES the text. ``send_message`` posts with parse_mode=HTML (other senders in this repo use
+    real markup), so a bare ``<`` in OUR plain-text alerts was parsed as a start tag and Telegram
+    REJECTED the whole message with 400 "Unsupported start tag". That silently killed every alert
+    containing a ``<=``: the ARM banner ("quote<=$5"), the in-play AUTO-HALT ("pnl_today <= -$X") and
+    the pre-game DAY-HALT ("locked_net <= -2%") — i.e. exactly the messages that matter most."""
     key, chat = os.environ.get("TELEGRAM_BOT_KEY"), os.environ.get("TELEGRAM_GROUP_ID")
     if not (key and chat):
         return None
@@ -58,7 +65,7 @@ def _telegram_sender(log: Any):
         from ...telegram import send_message
     except Exception:  # noqa: BLE001
         return None
-    return lambda text: send_message(key, chat, text, log)
+    return lambda text: send_message(key, chat, html.escape(text, quote=False), log)
 
 
 def _kalshi_ws_auth() -> tuple:
@@ -120,10 +127,14 @@ def _startup_stray_cancel_armed(poly_oc: Any, kalshi_oc: Any, log: Any) -> int:
 def _armed_startup_alert(cfg: Any, pre_armed: bool, inplay_armed: bool, telegram: Any, swept: int,
                          log: Any) -> None:
     phases = "+".join(p for p, on in (("pre", pre_armed), ("inplay", inplay_armed)) if on) or "none"
-    msg = ("[MAKER_RT][LIVE] LIVE ARMED (rest-poly; phases: %s). stray-cancel=%d. SHARED caps: "
-           "quote<=$%.0f, daily_stake<=$%.0f, open<=%d, fills/day<=%d, loss<=$%.0f. in-play circuit: "
-           "first-fill pause %.0fs, day-halt at locked_net %.1f%%."
-           % (phases, swept, cfg.live.quote_usd_max, cfg.live.max_daily_stake_usd, cfg.live.max_open_quotes,
+    # Name the ACTUALLY-enabled directions (this used to hardcode "rest-poly" and kept saying so after
+    # rest_kalshi went live) and the per-direction slot reserve, so the banner states the real posture.
+    dirs = ",".join(sorted(str(d).replace("_", "-") for d in getattr(cfg, "directions", ("rest_poly",))))
+    msg = ("[MAKER_RT][LIVE] LIVE ARMED (%s; phases: %s). stray-cancel=%d. SHARED caps: "
+           "quote<=$%.0f, daily_stake<=$%.0f, open<=%d (reserve/direction %d), fills/day<=%d, loss<=$%.0f. "
+           "in-play circuit: first-fill pause %.0fs, day-halt at locked_net %.1f%%."
+           % (dirs or "none", phases, swept, cfg.live.quote_usd_max, cfg.live.max_daily_stake_usd,
+              cfg.live.max_open_quotes, int(getattr(cfg, "reserve_per_direction", 0)),
               cfg.live.max_fills_per_day, cfg.live.max_daily_loss_usd,
               cfg.live_inplay.first_fill_pause_s, cfg.live_inplay.halt_locked_net * 100))
     log.warning(msg)
