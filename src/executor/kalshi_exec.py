@@ -113,21 +113,56 @@ def _avg_price_cents_to_dollars(v: Any) -> Optional[float]:
     return c / 100.0 if c > 1.0 else c   # tolerate already-dollar responses in mocks
 
 
+def fp_num(row: Any, *names: str) -> Optional[float]:
+    """Read a COUNT-ish numeric field off a Kalshi order/position/fill row across API generations.
+
+    v2 suffixes contract counts with ``_fp`` and serializes them as fixed-point STRINGS ("50.00");
+    v1 used the bare name with an int. Every read path must accept both — the v1->v2 order migration
+    kept the bare v1 names on the READ side, so `fill_count` was permanently absent and every fill on a
+    resting Kalshi order read as "no fill" (the 2026-07-23 invisible-fill incident). Tries each name,
+    then each name + "_fp". Returns None when no variant is present."""
+    if not isinstance(row, dict):
+        return None
+    for n in names:
+        for cand in (n, f"{n}_fp"):
+            v = row.get(cand)
+            if v is None or v == "":
+                continue
+            try:
+                return float(v)
+            except (TypeError, ValueError):
+                continue
+    return None
+
+
 def _ask_levels_from_orderbook(book: dict[str, Any], side: str) -> list[tuple[float, float]]:
     """Normalized ascending (price_dollars, size) ladder you would CONSUME to BUY ``side``.
 
-    Kalshi's orderbook gives resting YES bids and NO bids as [[price_cents, size], ...]. To BUY
-    YES you lift the cheapest available YES offers, which are the complements of resting NO bids:
-    a NO bid at c cents implies a YES offer at (100 - c) cents. Symmetric for buying NO."""
-    ob = (book or {}).get("orderbook", book) or {}
+    Kalshi's orderbook gives resting YES bids and NO bids. To BUY YES you lift the cheapest available
+    YES offers, which are the complements of resting NO bids: a NO bid at price p implies a YES offer
+    at (1 - p). Symmetric for buying NO.
+
+    TWO wire shapes are accepted, because the live v2 API serves the second one and reading only the
+    first silently yields an EMPTY ladder (the same class of defect as the `_fp` count fields):
+      v1: {"orderbook": {"yes"|"no": [[price_CENTS, size], ...]}}
+      v2: {"orderbook_fp": {"yes_dollars"|"no_dollars": [["0.4100", "55221.00"], ...]}}"""
+    src = book or {}
     opp = "no" if str(side).upper() == "YES" else "yes"
+    ob = src.get("orderbook_fp")
+    if isinstance(ob, dict) and (ob.get(f"{opp}_dollars") is not None or ob.get(opp) is not None):
+        raw = ob.get(f"{opp}_dollars") or ob.get(opp) or []
+        scale = 1.0                                   # already dollars
+    else:
+        ob = src.get("orderbook", src) or {}
+        raw = ob.get(f"{opp}_dollars") or ob.get(opp) or []
+        scale = 1.0 if ob.get(f"{opp}_dollars") is not None else 0.01   # bare name == cents
     levels: list[tuple[float, float]] = []
-    for lvl in ob.get(opp) or []:
+    for lvl in raw:
         try:
-            c, size = float(lvl[0]), float(lvl[1])
+            p, size = float(lvl[0]) * scale, float(lvl[1])
         except (TypeError, ValueError, IndexError):
             continue
-        price = (100.0 - c) / 100.0
+        price = 1.0 - p                               # complement: their bid -> our offer
         if 0.0 < price < 1.0 and size > 0:
             levels.append((price, size))
     levels.sort(key=lambda x: x[0])
@@ -288,11 +323,13 @@ class KalshiExec:
 
     def _normalize_order_response(self, raw: Any, requested: int) -> dict[str, Any]:
         order = (raw or {}).get("order", raw) if isinstance(raw, dict) else {}
-        filled = 0
-        for k in ("fill_count", "filled_count", "taker_fill_count", "count_filled"):
-            if order.get(k) is not None:
-                filled = int(float(order[k]))        # v2 counts are fixed-point strings ("3.00")
-                break
+        # fp_num accepts BOTH the v1 bare names and the v2 "_fp" fixed-point strings ("3.00").
+        n = fp_num(order, "fill_count", "filled_count", "taker_fill_count", "count_filled")
+        if n is None:                                # last resort: initial - remaining
+            init = fp_num(order, "initial_count", "count")
+            rem = fp_num(order, "remaining_count")
+            n = (init - rem) if (init is not None and rem is not None) else None
+        filled = int(n) if n is not None else 0
         avg = None
         for k in ("average_fill_price", "avg_fill_price", "fill_price", "avg_price"):
             if order.get(k) is not None:
@@ -325,3 +362,50 @@ class KalshiExec:
         sweep to find + cancel any of ours (client_order_id prefix) left resting by a previous run."""
         params = {k: v for k, v in (("status", status), ("ticker", ticker)) if v}
         return self._request("GET", "/portfolio/orders", params=params or None)
+
+    def get_order(self, order_id: str) -> dict[str, Any]:
+        """Single-order read (GET /portfolio/orders/{id}) — the AUTHORITATIVE per-order status. Falls back
+        to a list scan on 404/error so a venue quirk degrades rather than blinds us. Returns {} if truly
+        absent. NOTE: a FILLED order is NOT 'resting', so it must never be looked up with status='resting'
+        (that is exactly how the 2026-07-23 invisible fills stayed invisible)."""
+        try:
+            raw = self._request("GET", f"/portfolio/orders/{order_id}")
+            if isinstance(raw, dict):
+                return raw.get("order", raw) or {}
+        except Exception:  # noqa: BLE001 — fall through to the list scan
+            pass
+        try:
+            resp = self.get_orders()
+        except Exception:  # noqa: BLE001
+            return {}
+        orders = resp.get("orders") if isinstance(resp, dict) else (resp or [])
+        for o in orders or []:
+            if isinstance(o, dict) and (o.get("order_id") == order_id or o.get("id") == order_id):
+                return o
+        return {}
+
+    def get_fills(self, *, min_ts: Optional[int] = None, ticker: Optional[str] = None,
+                  order_id: Optional[str] = None, limit: int = 200,
+                  max_pages: int = 10) -> list[dict[str, Any]]:
+        """AUTHORITATIVE fill history (GET /portfolio/fills), cursor-paged. This is the same data the
+        private WS 'fill' channel carries, so it is the WS-INDEPENDENT fill authority: one call covers
+        every open order at once. ``min_ts`` is a unix-seconds lower bound."""
+        params_base: dict[str, Any] = {"limit": limit}
+        for k, v in (("min_ts", min_ts), ("ticker", ticker), ("order_id", order_id)):
+            if v is not None:
+                params_base[k] = v
+        out: list[dict[str, Any]] = []
+        cursor = None
+        for _ in range(max(1, max_pages)):
+            params = dict(params_base)
+            if cursor:
+                params["cursor"] = cursor
+            raw = self._request("GET", "/portfolio/fills", params=params)
+            page = (raw or {}).get("fills") if isinstance(raw, dict) else None
+            if not page:
+                break
+            out.extend(x for x in page if isinstance(x, dict))
+            cursor = (raw or {}).get("cursor")
+            if not cursor:
+                break
+        return out

@@ -300,11 +300,21 @@ class MakerState:
         _atomic_json(path or mrt_config.SUMMARY_PATH, self.summary(mode, sockets, now))
 
     def heartbeat(self, mode: str, sockets: dict, open_quotes: int, now: datetime) -> dict:
-        return {"ts": now.strftime("%Y-%m-%dT%H:%M:%SZ"), "schema": SCHEMA, "mode": mode,
-                "sockets": dict(sockets), "open_quotes": open_quotes,
-                "fills_today": self.n_fills, "pnl_today": round(self.pnl_today, 4),
-                "restarts_today": self.restarts_today, "gates": dict(self.gates),
-                "live": dict(self.live)}
+        hb = {"ts": now.strftime("%Y-%m-%dT%H:%M:%SZ"), "schema": SCHEMA, "mode": mode,
+              "sockets": dict(sockets), "open_quotes": open_quotes,
+              "fills_today": self.n_fills, "pnl_today": round(self.pnl_today, 4),
+              "restarts_today": self.restarts_today, "gates": dict(self.gates),
+              "live": dict(self.live)}
+        # TOP-LEVEL ORPHAN + FLAP banner: a naked position must be visible in the heartbeat itself, not
+        # buried under live{}. This is the surface that does NOT depend on Telegram being reachable.
+        orph = (self.live or {}).get("orphan")
+        if orph:
+            hb["ORPHAN"] = orph
+            hb["halted"] = True
+        flaps = (self.live or {}).get("flaps")
+        if flaps:
+            hb["flaps"] = flaps
+        return hb
 
     def write_heartbeat(self, mode: str, sockets: dict, open_quotes: int, now: datetime,
                         path: Optional[str] = None) -> None:

@@ -520,6 +520,13 @@ maker_rt:
     max_daily_loss_usd: 25
     hedge_timeout_ms: 3000          # miss/partial after this -> market-unwind the fill + freeze market
     unwind_on_hedge_fail: true
+    # WS-INDEPENDENT FILL AUTHORITY. While ANY live order is open we poll its REST order status AND sweep
+    # /portfolio/fills every this many seconds. The private websocket 'fill' channel is only an
+    # ACCELERATOR -- this poll is the detector of record and needs no socket to be connected. On
+    # 2026-07-23 the socket callback was silently dropped by a feed respawn and the REST path was reading
+    # v1 field names against a v2 payload, so BOTH authorities were blind and two filled orders sat naked
+    # for 11.5h. Never let this be the only thing you rely on, and never let it be absent.
+    fill_poll_s: 10
   # LIVE-INPLAY — the SECOND, INDEPENDENT live gate, for IN-PLAY markets only (the pre-game `live` gate
   # above is separate and unchanged). BUILT, LOCKED: an in-play live order requires BOTH enabled AND its
   # OWN arm file (data/ops/ARM_MAKER_INPLAY) AND the startup self-check. Rails are STRICTER than pre-game

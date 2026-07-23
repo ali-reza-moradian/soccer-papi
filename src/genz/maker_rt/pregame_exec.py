@@ -127,9 +127,24 @@ class PregameLiveExecutor:
         # set alone dies with the process, and a blanket list_positions() sweep is unusable on this funder
         # wallet (hundreds of unrelated positions -> every one a false orphan; see reconcile_positions).
         _arm = getattr(getattr(cfg, "live", None), "arm_file", "") or ""
-        self._traded_path = (os.path.join(os.path.dirname(_arm), "maker_rt_traded_tokens.json")
-                             if _arm else "")
+        self._ops_dir = os.path.dirname(_arm) if _arm else ""
+        self._traded_path = (os.path.join(self._ops_dir, "maker_rt_traded_tokens.json")
+                             if self._ops_dir else "")
+        # ORPHAN durability: the halt banner is written to disk so it survives a restart AND is visible to
+        # the panel even when Telegram is unreachable (Telegram 429'd 1,682x in the incident log — an
+        # alert channel is NEVER the detection channel).
+        self._orphan_path = (os.path.join(self._ops_dir, "maker_rt_ORPHAN.json")
+                             if self._ops_dir else "")
+        # WS-INDEPENDENT FILL AUTHORITY: REST is the primary detector, the socket is an accelerator.
+        self.fill_poll_s = float(getattr(getattr(cfg, "live", None), "fill_poll_s", 10.0))
+        self._force_fill_poll = False        # set by a cancel that failed because the order FILLED
+        self._last_fills_sweep_ts = 0.0      # unix-seconds low-water mark for the /portfolio/fills sweep
+        self._seen_fill_ids: set = set()     # fill_id dedupe across sweeps + the socket
+        self.flaps = {"kalshi": 0, "poly_user": 0}          # reconnect counters (panel)
+        self.flap_down_since: dict = {}                     # venue -> ts of the current DOWN edge
+        self.flap_secs = {"kalshi": 0.0, "poly_user": 0.0}  # cumulative seconds spent DOWN
         self._load_traded_tokens()
+        self._load_orphan()
 
     # -- daily roll ----------------------------------------------------------
     def roll_day(self, now: Any) -> None:
@@ -220,14 +235,22 @@ class PregameLiveExecutor:
 
     @staticmethod
     def _order_matched(lo: _LiveOrder, o: dict) -> Any:
-        """Matched quantity from a venue order dict (Poly: size_matched; Kalshi: fill_count or count-remaining)."""
+        """Matched quantity from a venue order dict (Poly: size_matched; Kalshi: fill_count or
+        initial-remaining). Kalshi v2 suffixes every count with ``_fp`` and sends it as a fixed-point
+        STRING, so this MUST go through fp_num — reading only the bare v1 names is what made 6,126
+        consecutive REST polls report "no fill" on two fully-executed orders on 2026-07-23."""
         if lo.rest_venue == "kalshi":
-            for k in ("fill_count", "taker_fill_count", "filled_count", "count_filled"):
-                if o.get(k) is not None:
-                    return float(o[k])
-            cnt, rem = o.get("count"), o.get("remaining_count")
-            if cnt is not None and rem is not None:
-                return float(cnt) - float(rem)
+            from ...executor.kalshi_exec import fp_num
+            n = fp_num(o, "fill_count", "taker_fill_count", "filled_count", "count_filled")
+            if n is not None:
+                return n
+            init = fp_num(o, "initial_count", "count")
+            rem = fp_num(o, "remaining_count")
+            if init is not None and rem is not None:
+                return init - rem
+            # Terminal-but-countless: an 'executed' order with no readable count is FULLY filled.
+            if str(o.get("status") or "").lower() == "executed":
+                return float(lo.size)
             return None
         return o.get("size_matched")
 
@@ -382,7 +405,16 @@ class PregameLiveExecutor:
                       f"({reason}) id {lo.order_id}", reason=reason)
         return True
 
+    #: venue order statuses that mean "this order is gone because it TRADED", not because we cancelled it.
+    _FILLED_STATUSES = ("EXECUTED", "FILLED", "MATCHED", "COMPLETE", "COMPLETED")
+
     def _cancel_confirmed(self, lo: _LiveOrder, resp: Any) -> bool:
+        """True only when the order is confirmed CANCELLED (so a reprice never double-places).
+
+        A cancel that fails because the order already FILLED is the single most dangerous state in the
+        system: on 2026-07-23 two filled Kalshi orders 404'd on DELETE, read back status='executed',
+        and this returned False for 11.5h — "keeping tracked" while the position sat naked. A filled
+        order is now classified as such and FORCES an immediate fill poll instead of spinning."""
         if isinstance(resp, dict):
             canceled = resp.get("canceled") or resp.get("cancelled") or []
             if lo.order_id in canceled:
@@ -393,7 +425,17 @@ class PregameLiveExecutor:
             return True
         if not isinstance(o, dict) or not o:
             return True
-        return str(o.get("status") or "").upper() in ("CANCELED", "CANCELLED")
+        status = str(o.get("status") or "").upper()
+        if status in ("CANCELED", "CANCELLED"):
+            return True
+        if status in self._FILLED_STATUSES or (self._order_matched(lo, o) or 0) > lo.matched_seen + 1e-9:
+            # NOT a cancel — the venue filled us. Force the fill poll to run NOW, before the caller can
+            # re-place or keep spinning on a dead order id.
+            self._force_fill_poll = True
+            if self.log:
+                self.log.error("[MAKER_RT][LIVE] cancel of %s failed because it FILLED (status=%s) — "
+                               "routing to fill detection.", lo.order_id, status or "?")
+        return False
 
     def cancel_all(self, reason: str, now: Any = None) -> int:
         """Cancel EVERY open order (shutdown / halt / feed-down). Best-effort venue cancel-all + per-key
@@ -484,12 +526,22 @@ class PregameLiveExecutor:
         elif ok and not was and self.log:
             self.log.info("[MAKER_RT][LIVE] Kalshi WS UP -- rest-kalshi placement enabled.")
 
+    def needs_fill_poll(self) -> bool:
+        """True when something (a cancel that failed because the order FILLED) demands the fill poll run
+        NOW rather than at the next cadence tick."""
+        return self._force_fill_poll
+
     def poll_open_orders(self, store: Any, now: Any, now_ts: float) -> None:
-        """REST backup fill detector (throttled by the caller): read each open order's size_matched and
-        hedge any delta the socket missed. Also drops orders cancelled out from under us."""
+        """WS-INDEPENDENT FILL AUTHORITY. While ANY live order is open, read its REST status and hedge
+        any matched delta the socket missed; also drop orders cancelled out from under us.
+
+        This is the PRIMARY fill detector, not a backup: the private WS 'fill' channel is an accelerator
+        whose callback can be lost (feed respawn) or whose frames can be missed (flap). Nothing here
+        depends on a socket being connected."""
+        self._force_fill_poll = False
         for key, lo in list(self.open_orders.items()):
             try:
-                o = self._venue_get_order(lo)        # venue-dispatched (kalshi = get_orders lookup)
+                o = self._venue_get_order(lo)        # venue-dispatched single-order read
             except Exception:  # noqa: BLE001
                 continue
             if not isinstance(o, dict) or not o:
@@ -502,6 +554,115 @@ class PregameLiveExecutor:
             elif status in ("CANCELED", "CANCELLED") and lo.matched_seen <= 1e-9:
                 self.open_orders.pop(key, None)      # cancelled out-of-band -> stop tracking
                 self.caps.on_close()
+
+    def poll_kalshi_fills(self, store: Any, now: Any, now_ts: float) -> int:
+        """Account-wide Kalshi fill sweep (GET /portfolio/fills) — ONE call that covers every open order
+        and needs no socket at all. Catches a fill even when the order id has already left our book
+        (the exact hole the 2026-07-23 incident fell through). Returns how many fills were routed."""
+        if self.kalshi_order_client is None or not hasattr(self.kalshi_order_client, "fills_since"):
+            return 0
+        # Look back a generous window on the first sweep so a fill during startup/downtime is not missed.
+        first = self._last_fills_sweep_ts == 0.0
+        since = int(self._last_fills_sweep_ts or (now_ts - 3600.0)) - 5
+        fills = self.kalshi_order_client.fills_since(since)
+        self._last_fills_sweep_ts = now_ts
+        if first:
+            # PRIME ONLY. Fills that predate this process were already hedged (or are covered by the
+            # startup reconciliation via the persisted watch-set); replaying them as "surprises" would
+            # false-positive an orphan halt on every restart.
+            self._seen_fill_ids.update(f.get("fill_id") or f.get("trade_id") for f in fills
+                                       if (f.get("fill_id") or f.get("trade_id")))
+            if fills and self.log:
+                self.log.info("[MAKER_RT][LIVE] fills sweep primed with %d pre-existing fill(s).",
+                              len(fills))
+            return 0
+        routed = 0
+        for f in fills:
+            fid = f.get("fill_id") or f.get("trade_id")
+            if fid and fid in self._seen_fill_ids:
+                continue
+            key = self._key_for_oid(f.get("order_id"))
+            if key is None:
+                self._untracked_fill(f, now)          # a fill on NO tracked order -> naked, scream
+                if fid:
+                    self._seen_fill_ids.add(fid)
+                continue
+            if fid:
+                self._seen_fill_ids.add(fid)
+            lo = self.open_orders.get(key)
+            if lo is None:
+                continue
+            from ...executor.kalshi_exec import fp_num
+            cnt = fp_num(f, "count") or 0.0
+            if cnt <= 0:
+                continue
+            routed += 1
+            self._on_fill_detected(key, lo.matched_seen + cnt, lo.price, store, now, now_ts)
+        if len(self._seen_fill_ids) > 5000:           # bound the dedupe set
+            self._seen_fill_ids = set(list(self._seen_fill_ids)[-2500:])
+        return routed
+
+    def on_feed_reconnect(self, venue: str, store: Any, now: Any, now_ts: float) -> None:
+        """A socket just came back UP. NEVER trust the stream to have carried what happened while it was
+        away: immediately REST-poll every open order + sweep the account fill history before resuming."""
+        if self.log:
+            self.log.info("[MAKER_RT][LIVE] %s reconnect — REST-polling %d open order(s) before "
+                          "trusting the stream.", venue, len(self.open_orders))
+        try:
+            self.poll_open_orders(store, now, now_ts)
+            self.poll_kalshi_fills(store, now, now_ts)
+        except Exception as exc:  # noqa: BLE001 — a reconnect poll must never kill the loop
+            if self.log:
+                self.log.warning("[MAKER_RT][LIVE] reconnect poll failed: %s", exc)
+
+    def note_flap(self, venue: str, up: bool, now_ts: float) -> None:
+        """Count a socket DOWN->UP cycle and how long it stayed down (panel + re-arm evidence)."""
+        if not up:
+            if venue not in self.flap_down_since:
+                self.flap_down_since[venue] = now_ts
+            return
+        t0 = self.flap_down_since.pop(venue, None)
+        if t0 is None:
+            return
+        dur = max(0.0, now_ts - t0)
+        self.flaps[venue] = self.flaps.get(venue, 0) + 1
+        self.flap_secs[venue] = self.flap_secs.get(venue, 0.0) + dur
+        if self.log:
+            self.log.warning("[MAKER_RT] %s flap #%d — down %.1fs (cumulative %.0fs).",
+                             venue, self.flaps[venue], dur, self.flap_secs[venue])
+
+    def _untracked_fill(self, f: dict, now: Any) -> None:
+        """A venue fill we have NO open order for — always ledgered, and escalated to an ORPHAN only if
+        the position is actually NON-FLAT.
+
+        An unmatched fill is not itself proof of nakedness: a fill routed via the socket closes its order
+        out of ``open_orders`` before this sweep runs, so the same fill legitimately arrives here with no
+        match. NAKED means the venue says we still hold contracts. So we ask the venue. A read failure is
+        treated as non-flat (fail closed) — never silently as flat."""
+        from ...executor.kalshi_exec import fp_num
+        tk = f.get("ticker") or f.get("market_ticker") or "?"
+        cnt = fp_num(f, "count") or 0.0
+        px = f.get("yes_price_dollars") if str(f.get("side", "")).lower() == "yes" else f.get("no_price_dollars")
+        if self.state is not None:
+            self.state.record({"event": "fill_untracked", "mode": "live", "phase": "?", "game": tk,
+                               "market_key": tk, "side": str(f.get("side") or ""),
+                               "direction": "rest-kalshi", "rest_venue": "kalshi",
+                               "quote_price": px or "", "size": round(cnt, 2),
+                               "reason": f.get("order_id") or ""}, now)
+        try:
+            pos = self._kalshi_position(tk)
+        except Exception:  # noqa: BLE001 — cannot read == cannot prove flat == treat as naked
+            pos = None
+        if pos is not None and abs(pos) <= 0.5:
+            if self.log:
+                self.log.warning("[MAKER_RT][LIVE] untracked fill on %s (order %s, %.0f) — position is "
+                                 "FLAT, ledgered, no orphan.", tk, f.get("order_id"), cnt)
+            return
+        self._traded_tickers.add(tk)                    # make sure reconciliation keeps watching it
+        self._persist_traded_tokens()
+        self._orphan_detected(tk, tk, "?", pos if pos is not None else cnt,
+                              f"UNTRACKED venue fill (order {f.get('order_id')}) on a NON-FLAT position "
+                              f"(read={pos})", now)
 
     def _on_fill_detected(self, key: tuple, total_matched: float, avg_price: Any, store: Any,
                           now: Any, now_ts: float) -> None:
@@ -695,8 +856,15 @@ class PregameLiveExecutor:
         return {"ok": bool(flat), "sold": sold, "sell_px": sell_px, "cost": cost,
                 "remaining": remaining, "sell_res": sell_res}
 
-    def _kalshi_position(self, ticker: str) -> float:
-        """Net |contracts| held on ``ticker`` from the Kalshi portfolio positions endpoint (0 if flat/absent)."""
+    def _kalshi_position(self, ticker: str) -> Optional[float]:
+        """Net |contracts| held on ``ticker`` from the Kalshi portfolio positions endpoint.
+
+        Returns None when the read is UNUSABLE (endpoint error, or a row we found but cannot parse) and
+        0.0 only when the account is genuinely flat. That distinction is the whole guard: the old version
+        returned 0.0 for "ticker absent" AND for "field name unrecognized", so a v2 payload using the
+        ``_fp`` count names read as FLAT and reconciliation happily pruned real naked positions off the
+        watch-set instead of screaming. Counts go through fp_num (v1 bare + v2 _fp)."""
+        from ...executor.kalshi_exec import fp_num
         resp = self.kalshi.get_positions()
         rows = resp.get("market_positions") if isinstance(resp, dict) else (resp or [])
         if not rows and isinstance(resp, dict):
@@ -705,11 +873,14 @@ class PregameLiveExecutor:
             if not isinstance(p, dict):
                 continue
             if p.get("ticker") == ticker or p.get("market_ticker") == ticker:
-                for k in ("position", "net_position", "count"):
-                    if p.get(k) is not None:
-                        return abs(float(p[k]))
-                return 0.0
-        return 0.0
+                n = fp_num(p, "position", "net_position", "count", "market_position")
+                if n is None:
+                    if self.log:                     # found the row but cannot read it -> NOT flat
+                        self.log.error("[MAKER_RT][LIVE] unreadable Kalshi position row for %s: %s",
+                                       ticker, sorted(p)[:12])
+                    return None
+                return abs(n)
+        return 0.0                                    # absent from the positions list == flat
 
     def _settle_kalshi_flat(self, ticker: str, *, tries: int = 4, poll_s: float = 0.5) -> Optional[float]:
         """Poll the Kalshi position until it reads flat (<= 0.5) or ``tries`` exhausted — mirrors the Poly
@@ -743,12 +914,50 @@ class PregameLiveExecutor:
             detected = ""
         self.orphan = {"game": game, "token": token, "remaining": remaining, "phase": phase,
                        "detected": detected, "detail": detail}
+        # ORDER MATTERS. Halt + persist + log FIRST; Telegram LAST and never load-bearing. Telegram
+        # returned 429 (rate limit) 1,682 times in the incident window — if the scream came first and
+        # raised, the halt would never land. _send_telegram also swallows its own errors.
         self.caps.halted = True
         self.caps.halt_reason = "orphan_position"
+        self._persist_orphan()                               # survives restart + drives the panel banner
+        self.cancel_all("orphan_halt", now)
         self._instant(f"[MAKER_RT][CRITICAL] ORPHAN POSITION {game} [{phase}] token {str(token)[:12]}... "
                       f"remaining={remaining} ({detail}). HALTING all live quoting + cancelling opens. "
                       f"MANUAL CHECK REQUIRED.")
-        self.cancel_all("orphan_halt", now)
+
+    def _persist_orphan(self) -> None:
+        """Write the latched orphan to disk (atomic). The panel reads this file, so the red ORPHAN banner
+        appears even if every alert channel is down, and a restart re-latches the halt."""
+        import json
+        if not self._orphan_path or self.orphan is None:
+            return
+        try:
+            tmp = self._orphan_path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as fh:
+                json.dump(self.orphan, fh, default=str)
+            os.replace(tmp, self._orphan_path)
+        except Exception as exc:  # noqa: BLE001 — persistence must never crash the halt path
+            if self.log:
+                self.log.error("[MAKER_RT][LIVE] could not persist ORPHAN banner: %s", exc)
+
+    def _load_orphan(self) -> None:
+        """Re-latch a persisted orphan at startup: an unresolved naked position must NOT be cleared by a
+        restart. Cleared only by deleting the file after a manual flatten."""
+        import json
+        if not self._orphan_path or not os.path.exists(self._orphan_path):
+            return
+        try:
+            with open(self._orphan_path, "r", encoding="utf-8") as fh:
+                data = json.load(fh)
+            if isinstance(data, dict) and data:
+                self.orphan = data
+                self.caps.halted = True
+                self.caps.halt_reason = "orphan_position"
+                if self.log:
+                    self.log.error("[MAKER_RT][LIVE] STARTUP: persisted ORPHAN re-latched — live HALTED. %s",
+                                   data)
+        except Exception:  # noqa: BLE001
+            pass
 
     def _load_traded_tokens(self) -> None:
         """Reload the persisted watch-set at startup (best-effort; a corrupt/locked file never blocks
@@ -880,6 +1089,11 @@ class PregameLiveExecutor:
                 "inplay_fills": self.inplay_fills_today,
                 "inplay_paused": bool(now_ts and now_ts < self.inplay_pause_until),
                 "inplay_halted": self.inplay_halted, "orphan": self.orphan,
+                # FLAPS: reconnect count + cumulative downtime per socket. A rising kalshi flap count is
+                # the early warning that the fill channel is unreliable — the REST poll covers us, but
+                # the operator must see it rather than infer it from the log.
+                "flaps": dict(self.flaps), "flap_secs": {k: round(v, 1) for k, v in self.flap_secs.items()},
+                "fill_poll_s": self.fill_poll_s,
                 "median_quote_age_s": med, "time_at_best_share": atbest, "quotes": quotes}
 
     # -- CSV + telegram ------------------------------------------------------

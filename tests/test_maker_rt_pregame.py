@@ -88,6 +88,7 @@ class _KalshiOC:
         self.cancels = []
         self._n = 0
         self.status = {}                              # oid -> status dict (default {} = gone)
+        self.fills: list = []                         # /portfolio/fills rows for the WS-independent sweep
 
     def rest(self, ticker, side, price, count, client_order_id=None):
         self._n += 1
@@ -104,6 +105,9 @@ class _KalshiOC:
 
     def order_status(self, oid):
         return self.status.get(oid, {})
+
+    def fills_since(self, min_ts):
+        return list(self.fills)
 
 
 class _KalshiExec:

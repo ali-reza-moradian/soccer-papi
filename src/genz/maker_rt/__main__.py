@@ -29,7 +29,8 @@ from .store import BookStore
 from .universe import build_universe, kalshi_tickers, load_trees, poly_tokens, tree_mtimes
 
 HEARTBEAT_EVERY_S = 2.5
-LIVE_FILL_POLL_S = 1.5                        # REST backup fill-poll cadence (socket is the primary signal)
+# (fill-poll cadence now lives in cfg.live.fill_poll_s — the REST poll is the fill authority of record,
+#  not a "backup", so it is a tunable config value rather than a module constant.)
 RECONCILE_EVERY_S = 300.0                     # position reconciliation cadence while armed (5 min)
 STOP_ALL_PATH = os.path.join(mrt_config.OPS_DIR, "STOP_ALL")
 _STOP = {"flag": False}                       # set by a SIGTERM/SIGBREAK handler -> graceful cancel-all + exit
@@ -86,13 +87,19 @@ def _sport_breakdown(universe: list) -> str:
     return " ".join(f"{k}={c[k]}" for k in sorted(c)) or "empty"
 
 
-def _spawn_feeds(store: BookStore, universe: list, cfg: Any, log: Any) -> tuple:
-    """Create + start the shadow feeds (poly market + kalshi) for the current universe."""
+def _spawn_feeds(store: BookStore, universe: list, cfg: Any, log: Any, *,
+                 on_prints: Any = None, on_fill: Any = None) -> tuple:
+    """Create the feeds (poly market + kalshi) for the current universe WITH their callbacks attached.
+
+    The callbacks are parameters, not something the caller patches on afterwards, because forgetting to
+    re-attach one on respawn is exactly the 2026-07-23 invisible-fill bug: the universe-rebuild path
+    re-created both feeds and reattached only ``on_prints``, so the private Kalshi ``on_fill`` channel
+    silently reverted to its no-op default for the rest of the run."""
     api_key_id, signer = _kalshi_ws_auth()
     pm = PolyMarketFeed(store, poly_tokens(universe), ping_s=cfg.ping_s, log=log,
-                        on_prints=None, on_update=None)
+                        on_prints=on_prints, on_update=None)
     ks = KalshiFeed(store, kalshi_tickers(universe), api_key_id=api_key_id, signer=signer, log=log,
-                    on_prints=None, on_update=None)
+                    on_prints=on_prints, on_update=None, on_fill=on_fill)
     return pm, ks
 
 
@@ -240,13 +247,18 @@ async def _run(cfg: Any, log: Any) -> int:
     def on_prints(prints):
         driver.consume_prints(prints, store, utcnow(), time.time())
 
-    pm, ks = _spawn_feeds(store, universe, cfg, log)
-    pm.on_prints = on_prints
-    ks.on_prints = on_prints
-    # rest-kalshi live: route OUR Kalshi fills (private 'fill' channel) to the executor when that direction
-    # is enabled + armed. rest-poly-only configs leave this a no-op (the fills are never our resting orders).
+    # rest-kalshi live: route OUR Kalshi fills (private 'fill' channel) to the executor when that
+    # direction is enabled + armed. rest-poly-only configs leave this None (the fills are never ours).
+    on_kalshi_fill = None
     if pregame_exec is not None and "rest-kalshi" in getattr(pregame_exec, "directions", set()):
-        ks.on_fill = lambda e: pregame_exec.on_kalshi_fill(e, store, utcnow(), time.time())
+        on_kalshi_fill = lambda e: pregame_exec.on_kalshi_fill(e, store, utcnow(), time.time())  # noqa: E731
+
+    def _spawn_wired():
+        """Every feed creation goes through here, so no respawn can lose a callback."""
+        return _spawn_feeds(store, universe, cfg, log, on_prints=on_prints, on_fill=on_kalshi_fill)
+
+    pm, ks = _spawn_wired()
+    sub_tokens, sub_tickers = poly_tokens(universe), kalshi_tickers(universe)   # current subscription set
     tasks = [asyncio.create_task(pm.run()), asyncio.create_task(ks.run())]
     # Poly USER socket (our real fills/order updates) — started ONLY when armed. Route order updates to
     # the executor's fill detector; the REST poll below is the reliable backup.
@@ -258,6 +270,7 @@ async def _run(cfg: Any, log: Any) -> int:
     last_achv_log = 0.0
     last_fill_poll = 0.0
     last_reconcile = 0.0
+    feed_up = {"kalshi": False, "poly_user": False}   # DOWN->UP edge detector for the reconnect poll
     try:
         while True:
             now, now_ts = utcnow(), time.time()
@@ -273,13 +286,27 @@ async def _run(cfg: Any, log: Any) -> int:
             if pregame_exec is not None:
                 pregame_exec.roll_day(now)                        # reset in-play circuit + caps at UTC midnight
                 pregame_exec.enforce_arm_state(now)               # a phase disarmed mid-run -> cancel its opens
-                pregame_exec.set_feed_ok(bool(pm_user is not None and pm_user.connected), now)
-                pregame_exec.set_kalshi_feed_ok(bool(ks.connected), now)   # rest-kalshi FILL-signal health
+                ks_up, pu_up = bool(ks.connected), bool(pm_user is not None and pm_user.connected)
+                # RECONNECT DISCIPLINE: on every DOWN->UP edge, REST-poll all open orders + sweep the
+                # account fill history BEFORE trusting the stream again (a stream never replays what it
+                # missed while it was away). Flap count + downtime are recorded for the panel.
+                for _venue, _up, _was in (("kalshi", ks_up, feed_up["kalshi"]),
+                                          ("poly_user", pu_up, feed_up["poly_user"])):
+                    if _up != _was:
+                        pregame_exec.note_flap(_venue, _up, now_ts)
+                        if _up:
+                            pregame_exec.on_feed_reconnect(_venue, store, now, now_ts)
+                        feed_up[_venue] = _up
+                pregame_exec.set_feed_ok(pu_up, now)
+                pregame_exec.set_kalshi_feed_ok(ks_up, now)       # rest-kalshi FILL-signal health
                 pregame_exec.sample_metrics(store, now_ts)        # at-best sampler for the lifetime metrics
                 pregame_exec.maybe_flush_digest(now_ts)           # routine-event Telegram digest (15 min)
-                if now_ts - last_fill_poll >= LIVE_FILL_POLL_S:      # REST backup fill detector
+                # WS-INDEPENDENT FILL AUTHORITY (primary detector; the socket is only an accelerator).
+                if (now_ts - last_fill_poll >= pregame_exec.fill_poll_s
+                        or pregame_exec.needs_fill_poll()):
                     last_fill_poll = now_ts
                     pregame_exec.poll_open_orders(store, now, now_ts)
+                    pregame_exec.poll_kalshi_fills(store, now, now_ts)
                 if now_ts - last_reconcile >= RECONCILE_EVERY_S:     # POSITION RECONCILIATION (orphan guard)
                     last_reconcile = now_ts
                     try:
@@ -311,19 +338,30 @@ async def _run(cfg: Any, log: Any) -> int:
                     log.warning("[MAKER_RT] git HEAD changed — exiting 0 for a fresh restart.")
                     return 0
                 nm = tree_mtimes()
-                if nm != mtimes:                          # trees rebuilt -> rebuild universe + feeds
+                if nm != mtimes:                          # trees rebuilt -> rebuild the universe
                     mtimes = nm
                     universe = build_universe(load_trees(), now_ts, max_games=cfg.max_games,
                                               expire_before_kickoff_s=cfg.expire_before_kickoff_s,
                                               horizon_hours=horizon)
                     driver.set_universe(universe)
-                    for t in tasks:
-                        t.cancel()
-                    pm.stop(); ks.stop()
-                    pm, ks = _spawn_feeds(store, universe, cfg, log)
-                    pm.on_prints = on_prints; ks.on_prints = on_prints
-                    tasks = [asyncio.create_task(pm.run()), asyncio.create_task(ks.run())]
-                    log.info("[MAKER_RT] trees changed — universe now %d markets.", len(universe))
+                    # RESPAWN ONLY IF THE SUBSCRIPTION SET ACTUALLY CHANGED. A tree mtime bump is not a
+                    # reason to drop two healthy websockets: the scanners rewrite the trees every few
+                    # minutes, and tearing the sockets down on every bump is what produced the 113
+                    # "Kalshi WS DOWN" flaps (only 25 were real socket errors). Each teardown also
+                    # cancelled every open rest-kalshi quote and cost queue position.
+                    new_tokens, new_tickers = poly_tokens(universe), kalshi_tickers(universe)
+                    if set(new_tokens) != set(sub_tokens) or set(new_tickers) != set(sub_tickers):
+                        sub_tokens, sub_tickers = new_tokens, new_tickers
+                        for t in tasks:
+                            t.cancel()
+                        pm.stop(); ks.stop()
+                        pm, ks = _spawn_wired()    # callbacks attached at construction — never lost
+                        tasks = [asyncio.create_task(pm.run()), asyncio.create_task(ks.run())]
+                        log.info("[MAKER_RT] trees changed — universe now %d markets; feeds resubscribed "
+                                 "(%d tokens, %d tickers).", len(universe), len(sub_tokens), len(sub_tickers))
+                    else:
+                        log.info("[MAKER_RT] trees changed — universe now %d markets; subscription set "
+                                 "unchanged, feeds kept alive.", len(universe))
             await asyncio.sleep(cfg.debounce_ms / 1000.0)
     except asyncio.CancelledError:
         raise

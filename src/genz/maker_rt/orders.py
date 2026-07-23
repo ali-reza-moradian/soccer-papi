@@ -119,8 +119,16 @@ class KalshiOrderClient:
         return list(self._open)
 
     def order_status(self, order_id: str) -> dict:
-        """Best-effort single-order read via get_orders (KalshiExec has no get_order): returns the order
-        dict (or {} if not found). Used for cancel confirmation + the REST backup fill poll."""
+        """AUTHORITATIVE single-order read: prefers KalshiExec.get_order (GET /portfolio/orders/{id}),
+        falling back to a get_orders scan. Returns the order dict (or {} if truly absent). Used for
+        cancel confirmation + the REST backup fill poll."""
+        if hasattr(self.ex, "get_order"):
+            try:
+                o = self.ex.get_order(order_id)
+                if isinstance(o, dict) and o:
+                    return o
+            except Exception:  # noqa: BLE001 — fall through to the list scan
+                pass
         try:
             resp = self.ex.get_orders() if hasattr(self.ex, "get_orders") else None
         except Exception:  # noqa: BLE001
@@ -130,6 +138,19 @@ class KalshiOrderClient:
             if isinstance(o, dict) and (o.get("order_id") == order_id or o.get("id") == order_id):
                 return o
         return {}
+
+    def fills_since(self, min_ts: int) -> list:
+        """WS-INDEPENDENT fill authority: every account fill since ``min_ts`` (one call covers all open
+        orders). Empty list when the venue read fails — the caller treats that as 'no news', never as
+        'no fills'."""
+        if not hasattr(self.ex, "get_fills"):
+            return []
+        try:
+            return list(self.ex.get_fills(min_ts=min_ts) or [])
+        except Exception as exc:  # noqa: BLE001
+            if self.log:
+                self.log.warning("[MAKER_RT] kalshi fills poll failed: %s", exc)
+            return []
 
     # -- marketable hedge / unwind (both directions) -------------------------
     def marketable_limit(self, best_ask: float) -> float:

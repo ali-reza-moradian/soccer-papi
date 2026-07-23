@@ -55,6 +55,10 @@ class LiveConfig:
     # When position reconciliation finds an ORPHAN, market-sell it to flat before halting (default False =
     # halt + scream only; a human flattens). Even when true, live stays HALTED for manual review.
     auto_flatten: bool = False
+    # WS-INDEPENDENT FILL AUTHORITY: while ANY live order is open, poll its REST order status (and sweep
+    # the account fill history) every this many seconds. The private websocket fill channel is only an
+    # accelerator — this poll is the detector of record and needs no socket to be connected.
+    fill_poll_s: float = 10.0
 
 
 @dataclass
@@ -221,11 +225,12 @@ def load_maker_rt_config(config_path: Optional[str] = None,
     lc = LiveConfig()
     for name in ("enabled", "arm_file", "quote_usd_max", "max_open_quotes", "max_fills_per_day",
                  "max_daily_loss_usd", "max_daily_stake_usd", "hedge_timeout_ms", "unwind_on_hedge_fail",
-                 "auto_flatten"):
+                 "auto_flatten", "fill_poll_s"):
         if live_blk.get(name) is not None:
             setattr(lc, name, live_blk[name])
     lc.enabled = bool(lc.enabled)
     lc.auto_flatten = bool(lc.auto_flatten)
+    lc.fill_poll_s = float(lc.fill_poll_s)
     lc.quote_usd_max = float(lc.quote_usd_max)
     lc.max_open_quotes = int(lc.max_open_quotes)
     lc.max_fills_per_day = int(lc.max_fills_per_day)
