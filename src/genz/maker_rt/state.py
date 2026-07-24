@@ -191,6 +191,10 @@ class MakerState:
     settled_pnl_lifetime: float = 0.0                  # sum of true net across settled trades ($)
     settled_cost_lifetime: float = 0.0                 # sum of cost basis across settled trades ($; ROI denom)
     settled_trades: int = 0                            # count of settled hedged trades
+    # SANITY CEILING on |net| for a settled row (defense-in-depth: the reconciler guards at the source,
+    # this guards the AGGREGATOR so a backfill / CSV replay / future call site can't inject a corrupt
+    # number either). Set at startup from cfg.live.max_pair_stake_usd; the ROI ceiling is fixed at 50%.
+    settled_max_net_usd: float = 100.0
     _tuning_saved_ts: float = 0.0                      # last persist (see maybe_persist_tuning)
     gates: dict = field(default_factory=dict)          # {"pre": bool, "inplay": bool} — armed states, set at startup
     live: dict = field(default_factory=dict)           # PRE-GAME live snapshot (open_quotes/stake/fills/pnl/halt/feed_ok)
@@ -203,12 +207,14 @@ class MakerState:
             keep = (self.log, self.restarts_today, self.gates, self.live,   # survive the daily reset
                     self.lifetime_fills, self.lifetime_unwinds, self.recent_outcomes,
                     self.lifetime_quotes, self.recent_locked_nets,
-                    self.settled_pnl_lifetime, self.settled_cost_lifetime, self.settled_trades)
+                    self.settled_pnl_lifetime, self.settled_cost_lifetime, self.settled_trades,
+                    self.settled_max_net_usd)
             self.__init__(day=day)  # type: ignore[misc]
             (self.log, self.restarts_today, self.gates, self.live,
              self.lifetime_fills, self.lifetime_unwinds, self.recent_outcomes,
              self.lifetime_quotes, self.recent_locked_nets,
-             self.settled_pnl_lifetime, self.settled_cost_lifetime, self.settled_trades) = keep
+             self.settled_pnl_lifetime, self.settled_cost_lifetime, self.settled_trades,
+             self.settled_max_net_usd) = keep
 
     def _bucket(self, sport: str, phase: str) -> _Bucket:
         return self.buckets.setdefault((str(sport or "?"), str(phase or "pre")), _Bucket())
@@ -308,6 +314,23 @@ class MakerState:
             # column (like unwind_cost/locked_pnl — read here, then dropped by _append_csv); the human
             # cost/ROI is carried in ``reason``. Idempotency is the reconciler's job (keyed by market).
             if row.get("realized_pnl_usd") not in (None, ""):
+                # SANITY GUARD (defense-in-depth): a settled net larger than one pair's stake or with a
+                # >50% ROI is a unit/pairing bug (the $500-for-$5 incident). REFUSE it here so it can
+                # NEVER enter lifetime pnl, log CRITICAL, and rename the CSV event so no path re-reads it
+                # as a real settled trade. The reconciler already refuses at the source; this catches a
+                # backfill / CSV replay / any other caller.
+                from .settle import sane_settled
+                ok, why = sane_settled(row["realized_pnl_usd"], row.get("settled_cost_usd", 0.0) or 0.0,
+                                       max_net_usd=self.settled_max_net_usd)
+                if not ok:
+                    if self.log:
+                        crit = getattr(self.log, "critical", None) or self.log.error
+                        crit("[MAKER_RT][SETTLE][CRITICAL] REFUSED trade_settled %s %s (%s): net $%s "
+                             "cost $%s — NOT counted in lifetime pnl. %s", row.get("game"),
+                             row.get("market_key"), why, row.get("realized_pnl_usd"),
+                             row.get("settled_cost_usd"), row.get("reason"))
+                    self._append_csv({**row, "event": "trade_settled_refused"}, now)
+                    return                                       # never aggregate; audit row is inert
                 self.settled_pnl_lifetime += float(row["realized_pnl_usd"])
                 self.settled_trades += 1
                 if row.get("settled_cost_usd") not in (None, ""):

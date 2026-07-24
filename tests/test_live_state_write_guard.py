@@ -140,5 +140,5 @@ def test_every_runtime_file_is_registered():
     """The registry is the inventory of things that must be isolated — keep it complete."""
     assert set(mrt_config.RUNTIME_FILES) == {
         "events", "heartbeat", "summary", "runstate", "tuning",
-        "traded_tokens", "orphan", "settled_ledger", "stop_all",
+        "traded_tokens", "orphan", "settled_ledger", "expected_positions", "stop_all",
     }

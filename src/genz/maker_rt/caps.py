@@ -46,6 +46,46 @@ def direction_slot_ok(direction: str, open_by_direction: dict, enabled_direction
     return mine < max_open - reserved_for_others
 
 
+#: the constraint names the binding-constraint diagnostic can emit (the panel/digest keys).
+BINDING_CONSTRAINTS = ("quote_usd_max", "pair_cap", "hedge_depth", "book_depth", "venue_minimum")
+
+
+def binding_constraint(price: float, *, quote_usd_max: float, max_pair_stake_usd: float,
+                       hedge_ask: Optional[float], hedge_depth: Optional[float],
+                       book_depth: Optional[float], min_floor: int) -> tuple[str, float]:
+    """WHAT actually limits the rest-leg SIZE, so we can tell whether raising caps would grow fills or
+    whether depth (or the pilot minimum) is the ceiling.
+
+    The maker rests the pilot MINIMUM (``min_floor`` shares) by design — ``LiveCaps.size_shares`` never
+    scales up to the notional cap. So compute the largest whole-share count each resource would allow
+    and take the smallest:
+
+      * ``quote_usd_max`` — the rest-leg notional cap:            floor(quote_usd_max / price)
+      * ``pair_cap``      — the whole-pair stake cap:             floor(max_pair_stake_usd /(price+hedge))
+      * ``hedge_depth``   — resting hedge shares available:       floor(hedge_depth)
+      * ``book_depth``    — rest-book liquidity that could fill:  floor(book_depth)
+
+    If EVERY resource would allow >= ``min_floor``, the size is set by the pilot minimum -> return
+    ``('venue_minimum', min_floor)`` (raising caps/finding more depth would NOT grow the fill). Otherwise
+    return the single smallest resource and its share ceiling (raising THAT one would help). PURE."""
+    px = max(float(price), 1e-9)
+    allow: dict = {"quote_usd_max": int(float(quote_usd_max) / px + 1e-9)}
+    if hedge_ask:
+        denom = px + float(hedge_ask)
+        if denom > 1e-9:
+            allow["pair_cap"] = int(float(max_pair_stake_usd) / denom + 1e-9)
+    if hedge_depth is not None:
+        allow["hedge_depth"] = int(float(hedge_depth) + 1e-9)
+    if book_depth is not None:
+        allow["book_depth"] = int(float(book_depth) + 1e-9)
+    # Smallest allowance wins; ties break by the BINDING_CONSTRAINTS order (caps before depth).
+    order = {n: i for i, n in enumerate(BINDING_CONSTRAINTS)}
+    name, ceiling = min(allow.items(), key=lambda kv: (kv[1], order.get(kv[0], 99)))
+    if ceiling >= int(min_floor):
+        return "venue_minimum", float(min_floor)
+    return name, float(ceiling)
+
+
 class LiveCaps:
     """Per-day live exposure accounting + the pre-place decision. One instance per process/day."""
 

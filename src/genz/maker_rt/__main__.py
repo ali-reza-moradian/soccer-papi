@@ -229,6 +229,9 @@ async def _run(cfg: Any, log: Any) -> int:
     store = BookStore()
     state = MakerState(log=log)
     state.restarts_today = restarts
+    # SETTLED-PNL SANITY CEILING for the aggregator's defense-in-depth guard (a settled |net| above one
+    # pair's stake is a unit/pairing bug and is refused before it can touch lifetime pnl).
+    state.settled_max_net_usd = float(getattr(cfg.live, "max_pair_stake_usd", 100.0))
     state.load_tuning()          # cross-restart fill-rate + realized-locked-net windows (target_net tuning)
     state.gates = {"pre": bool(gate.armed), "inplay": bool(inplay_gate.armed)}
     telegram = _telegram_sender(log)

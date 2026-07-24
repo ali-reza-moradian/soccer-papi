@@ -15,8 +15,16 @@ This module is PURE + I/O-free at its core:
 """
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Any, Callable, Optional
+
+# SANITY RAILS on a settled trade. A hedged maker pair nets ~1% of a sub-$100 stake, so a settled row
+# claiming a huge ROI or a net larger than one whole pair's stake is a UNIT/PAIRING BUG, not a windfall
+# (the 2026-07-24 HANHAL row read $500.00 for a $5.00 Kalshi payout -> +$495.15 net, +10209% ROI). Such
+# a row is REFUSED, logged CRITICAL, and never enters lifetime pnl.
+SETTLED_ROI_CEILING = 0.50               # |net/cost| above this (50%) is implausible for a hedged pair
+SETTLED_MAX_NET_USD_DEFAULT = 100.0      # |net| above one pair's stake cap is implausible (config overrides)
 
 
 @dataclass
@@ -62,11 +70,13 @@ class SettledPnlReconciler:
     ``trade_settled`` row (true net + ROI) per market — ONCE. Best-effort + idempotent."""
 
     def __init__(self, *, kalshi: Any = None, poly: Any = None,
-                 record: Optional[Callable] = None, log: Any = None) -> None:
+                 record: Optional[Callable] = None, log: Any = None,
+                 max_pair_stake_usd: float = SETTLED_MAX_NET_USD_DEFAULT) -> None:
         self.kalshi = kalshi                       # KalshiExec (get_settlements)
         self.poly = poly                           # PolyExec (redemption inference / balance)
         self.record = record or (lambda row, now: None)
         self.log = log
+        self.max_pair_stake_usd = float(max_pair_stake_usd)   # sanity-guard ceiling for |net| (config-driven)
         self._settled_keys: set = set()            # (game, market_key) already reconciled
 
     def reconcile(self, pairs: list, now: Any) -> list:
@@ -89,6 +99,19 @@ class SettledPnlReconciler:
                     self.log.warning("[MAKER_RT][SETTLE] reconcile failed for %s: %s", key, exc)
                 row = None
             if row is not None:
+                ok, why = sane_settled(row.get("realized_pnl_usd", 0.0),
+                                       row.get("settled_cost_usd", 0.0),
+                                       max_net_usd=self.max_pair_stake_usd)
+                if not ok:
+                    # REFUSE at the source: a bug (bad unit / mispaired legs) produced an implausible
+                    # settled net. Mark the market settled so we don't re-scream it every pass, but NEVER
+                    # emit or record it — it must not reach lifetime pnl. A human reconciles by hand.
+                    self._settled_keys.add(key)
+                    _log_critical(self.log, "[MAKER_RT][SETTLE][CRITICAL] REFUSED implausible trade_settled "
+                                  "%s (%s): net $%s cost $%s — NOT counted. %s", key, why,
+                                  row.get("realized_pnl_usd"), row.get("settled_cost_usd"),
+                                  row.get("reason"))
+                    continue
                 self._settled_keys.add(key)
                 self.record(row, now)
                 emitted.append(row)
@@ -137,7 +160,7 @@ class SettledPnlReconciler:
         if rev is None:
             rev = st.get("settled_value") or st.get("payout")
         if rev is not None:
-            k_settle = _to_dollars(rev)
+            k_settle = kalshi_settle_dollars(rev)          # CENTS -> dollars, always (central normalizer)
         elif k_won is not None:
             k_settle = k_shares if k_won else 0.0
         else:
@@ -158,14 +181,47 @@ class SettledPnlReconciler:
                            market_id=k.get("ticker"))
 
 
-def _to_dollars(v: Any) -> float:
-    """Kalshi settlement revenue is CENTS (integer) on some payloads, dollars on others. Values above a
-    few hundred are almost certainly cents for our sub-$100 pilot; scale them down."""
+def kalshi_settle_dollars(v: Any) -> float:
+    """THE central Kalshi settlement money normalizer. Kalshi portfolio money (revenue / settled_value /
+    payout / market_exposure) is quoted in CENTS — a 5-contract win settles ``revenue=500`` meaning
+    $5.00. The prior heuristic only divided values >= $1000, so a $5.00 payout (500) sailed through as
+    $500.00 and booked a phantom +$495.15 / +10209% ROI that halted the bot and poisoned lifetime pnl.
+    Kalshi settlement is ALWAYS cents, so ALWAYS divide by 100 — one rule, one place, no magnitude
+    guessing. (Applied to every settlement money field read; the per-contract $1 fallback in
+    ``_reconcile_pair`` is already in dollars and does not pass through here.)"""
     try:
-        f = float(v)
+        return float(v) / 100.0
     except (TypeError, ValueError):
         return 0.0
-    return f / 100.0 if abs(f) >= 1000.0 else f
+
+
+def sane_settled(net: float, cost: float, *, max_net_usd: float = SETTLED_MAX_NET_USD_DEFAULT,
+                 roi_ceiling: float = SETTLED_ROI_CEILING) -> tuple[bool, str]:
+    """Guard a ``trade_settled`` net/cost before it can touch lifetime pnl. Returns (ok, reason).
+    REFUSES when |net| exceeds one pair's stake cap OR |net/cost| exceeds ``roi_ceiling`` — either is a
+    unit/pairing bug for a hedged pair whose real edge is ~1%. PURE (no I/O) so both the reconciler and
+    the state aggregator can gate on the same rule."""
+    try:
+        n, c = float(net), float(cost)
+    except (TypeError, ValueError):
+        return False, "unparseable net/cost"
+    if abs(n) > float(max_net_usd) + 1e-9:
+        return False, f"|net| ${abs(n):.2f} > max_pair_stake ${float(max_net_usd):.2f}"
+    roi = (n / c) if abs(c) > 1e-9 else 0.0
+    if abs(roi) > float(roi_ceiling) + 1e-9:
+        return False, f"|ROI| {abs(roi) * 100:.1f}% > {float(roi_ceiling) * 100:.0f}% ceiling"
+    return True, "ok"
+
+
+def _log_critical(log: Any, msg: str, *args: Any) -> None:
+    """CRITICAL log via the passed logger if it exposes .critical, else .error, else the module logger.
+    A refused settled row must scream loudly regardless of which logger the caller injected."""
+    for name in ("critical", "error", "warning"):
+        fn = getattr(log, name, None)
+        if callable(fn):
+            fn(msg, *args)
+            return
+    logging.getLogger("maker_rt").critical(msg, *args)
 
 
 def _settle_ts(st: dict, now: Any) -> str:

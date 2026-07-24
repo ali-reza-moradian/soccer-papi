@@ -41,6 +41,7 @@ RUNTIME_FILES: dict[str, tuple[str, str]] = {
     "traded_tokens": ("ops",  "maker_rt_traded_tokens.json"),
     "orphan":        ("ops",  "maker_rt_ORPHAN.json"),
     "settled_ledger": ("ops", "maker_rt_settled_ledger.json"),
+    "expected_positions": ("ops", "maker_rt_expected_positions.json"),
     "stop_all":      ("ops",  "STOP_ALL"),
 }
 
