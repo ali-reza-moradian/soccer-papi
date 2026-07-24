@@ -314,6 +314,38 @@ def test_poly_place_order_gtc_accepted_is_resting_not_filled(monkeypatch):
     assert res2["status"] == "filled" and res2["shares"] == 5
 
 
+def test_normalize_buy_counts_shares_from_taking_not_dollars_from_making():
+    """TBTOR ROOT CAUSE: a Poly BUY response reports makingAmount=USDC paid + takingAmount=SHARES
+    received. Counting makingAmount as shares under-reports a FULL hedge as a partial (a $16.21 buy of
+    17.37 shares read as 16.2 -> 'partial' -> the double-unwind). The BUY fill MUST be counted in
+    SHARES (takingAmount)."""
+    p = poly_exec.PolyExec(client=_FakePolyClient(post_result={}))
+    raw = {"success": True, "status": "matched", "makingAmount": "16.21", "takingAmount": "17.37",
+           "price": "0.933", "orderID": "0xhedge"}
+    res = p._normalize(raw, price=0.95, requested_shares=17, side="BUY")
+    assert res["shares"] == pytest.approx(17.37)      # SHARES, not the $16.21 making amount
+    assert res["status"] == "filled"                  # 17.37 >= 17 -> a FULL hedge, never 'partial'
+    assert res["avg_price"] == pytest.approx(0.933)
+
+
+def test_normalize_buy_derives_shares_from_dollars_when_only_making_present():
+    """If only the dollar leg (makingAmount) is present on a BUY, shares = dollars / avg fill price."""
+    p = poly_exec.PolyExec(client=_FakePolyClient(post_result={}))
+    raw = {"success": True, "status": "matched", "makingAmount": "16.21", "price": "0.933"}
+    res = p._normalize(raw, price=0.95, requested_shares=17, side="BUY")
+    assert res["shares"] == pytest.approx(16.21 / 0.933, rel=1e-6)   # ~17.37 shares
+    assert res["status"] == "filled"
+
+
+def test_normalize_sell_counts_shares_from_making_unchanged():
+    """A SELL reports makingAmount=SHARES sold (why the sell-side smoke passed) — behaviour preserved."""
+    p = poly_exec.PolyExec(client=_FakePolyClient(post_result={}))
+    raw = {"success": True, "status": "matched", "makingAmount": "5", "takingAmount": "2.70",
+           "price": "0.54", "orderID": "0xsell"}
+    res = p._normalize(raw, price=0.5, requested_shares=5, side="SELL")
+    assert res["shares"] == pytest.approx(5.0) and res["status"] == "filled"
+
+
 def test_poly_get_balance_passes_signature_type(monkeypatch):
     """get_balance() must scope the read to the FUNDER/PROXY by passing signature_type (and the v2
     client is built with that same signature_type), else it reads the empty signer EOA and a funded

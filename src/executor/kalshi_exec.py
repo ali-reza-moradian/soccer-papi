@@ -357,6 +357,13 @@ class KalshiExec:
     def get_positions(self) -> Any:
         return self._request("GET", "/portfolio/positions")
 
+    def get_settlements(self, *, limit: Optional[int] = None) -> Any:
+        """Settled markets for this account (GET /portfolio/settlements) — per-ticker market_result +
+        revenue. The settled-pnl reconciler nets this (the Kalshi leg's true payout) against the Poly
+        redemption to write the venue-truth realized pnl of a hedged pair."""
+        params = {"limit": limit} if limit is not None else None
+        return self._request("GET", "/portfolio/settlements", params=params)
+
     def get_orders(self, *, status: Optional[str] = None, ticker: Optional[str] = None) -> Any:
         """List orders (optionally by status e.g. 'resting' / ticker). Used by the startup stray-order
         sweep to find + cancel any of ours (client_order_id prefix) left resting by a previous run."""

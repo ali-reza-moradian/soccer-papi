@@ -40,6 +40,7 @@ RUNTIME_FILES: dict[str, tuple[str, str]] = {
     "tuning":        ("ops",  "maker_rt_tuning.json"),
     "traded_tokens": ("ops",  "maker_rt_traded_tokens.json"),
     "orphan":        ("ops",  "maker_rt_ORPHAN.json"),
+    "settled_ledger": ("ops", "maker_rt_settled_ledger.json"),
     "stop_all":      ("ops",  "STOP_ALL"),
 }
 
@@ -143,6 +144,10 @@ class LiveConfig:
     # SUM of ALL legs committed today (rest fills + hedges + unwinds). A new quote whose projected pair
     # stake would push the running total past this is REFUSED and quoting HALTS for the day (+Telegram).
     max_daily_stake_usd: float = 100.0
+    # PER-PAIR cap ($): the rest leg + its WORST-CASE hedge (shares x hedge best-ask) for ONE bet.
+    # quote_usd_max bounds the rest leg only; a cheap rest leg's hedge can be many multiples of it
+    # (TBTOR rest $1.02, hedge $16.21). A quote whose projected pair exceeds this is REFUSED (no day-halt).
+    max_pair_stake_usd: float = 25.0
     hedge_timeout_ms: int = 3000
     unwind_on_hedge_fail: bool = True
     # When position reconciliation finds an ORPHAN, market-sell it to flat before halting (default False =
@@ -156,6 +161,12 @@ class LiveConfig:
     # one of the (scarce) max_open_quotes slots forever — a stuck order behind best fills nothing and
     # starves every other candidate. 0 disables the age-out.
     max_quote_age_s: float = 900.0
+    # KALSHI WS FLAP GRACE (seconds): the Kalshi socket briefly drops `connected` on EVERY reconnect
+    # (incl. the quiet-market ping probe). Because REST is the WS-INDEPENDENT fill authority, a brief WS
+    # blip is not a fill-signal outage — so we only treat the Kalshi feed as DOWN (cancel resting
+    # rest-kalshi quotes) after it has been continuously down this long. A reconnect inside the grace
+    # preserves queue position. 0 disables the debounce (cancel on the first observed drop).
+    kalshi_feed_grace_s: float = 20.0
 
 
 @dataclass
@@ -321,8 +332,9 @@ def load_maker_rt_config(config_path: Optional[str] = None,
     live_blk = dict(live_blk) if isinstance(live_blk, dict) else {}
     lc = LiveConfig()
     for name in ("enabled", "arm_file", "quote_usd_max", "max_open_quotes", "max_fills_per_day",
-                 "max_daily_loss_usd", "max_daily_stake_usd", "hedge_timeout_ms", "unwind_on_hedge_fail",
-                 "auto_flatten", "fill_poll_s", "max_quote_age_s"):
+                 "max_daily_loss_usd", "max_daily_stake_usd", "max_pair_stake_usd", "hedge_timeout_ms",
+                 "unwind_on_hedge_fail", "auto_flatten", "fill_poll_s", "max_quote_age_s",
+                 "kalshi_feed_grace_s"):
         if live_blk.get(name) is not None:
             setattr(lc, name, live_blk[name])
     lc.enabled = bool(lc.enabled)
@@ -334,6 +346,8 @@ def load_maker_rt_config(config_path: Optional[str] = None,
     lc.max_fills_per_day = int(lc.max_fills_per_day)
     lc.max_daily_loss_usd = float(lc.max_daily_loss_usd)
     lc.max_daily_stake_usd = float(lc.max_daily_stake_usd)
+    lc.max_pair_stake_usd = float(lc.max_pair_stake_usd)
+    lc.kalshi_feed_grace_s = float(lc.kalshi_feed_grace_s)
     lc.hedge_timeout_ms = int(lc.hedge_timeout_ms)
     lc.unwind_on_hedge_fail = bool(lc.unwind_on_hedge_fail)
     cfg.live = lc

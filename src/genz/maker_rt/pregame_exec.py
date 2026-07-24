@@ -37,6 +37,8 @@ from .caps import direction_slot_ok
 from .live import assert_live_allowed
 
 HEDGE_DECLINE_FLOOR = -0.010     # re-verify at fill: walked locked-net below this -> decline+unwind (both phases)
+HEDGE_SHARE_TOL = 0.5            # share tolerance for "fully hedged"/"flat" position reads (< 1 contract)
+UNWIND_MAX_ATTEMPTS = 3         # reconcile-to-flat: re-sell the naked remainder up to this many times
 # A full-slot refusal (max_open_quotes / reserve_per_direction) recurs EVERY debounce loop while the caps
 # are full — the driver retries each viable candidate ~4x/s. Log a given node+direction's slot refusal at
 # most once per this window; the suppressed count is surfaced in the Telegram digest line instead.
@@ -128,7 +130,8 @@ class PregameLiveExecutor:
         self.node_quiet_max_s = float(getattr(ip, "node_quiet_max_s", 180.0))
         # TELEGRAM digest (routine quote/reprice/cancel collapse; fills/hedges/pause/halt/errors instant).
         self.digest_min = float(getattr(cfg, "telegram_digest_min", 15.0))
-        self._digest = {"quotes": 0, "cancels": {}, "fills": 0, "refuse_suppressed": 0, "best_edge": 0.0}
+        self._digest = {"quotes": 0, "cancels": {}, "fills": 0, "refuse_suppressed": 0, "best_edge": 0.0,
+                        "kalshi_flaps": 0, "kalshi_down_s": 0.0}
         self._digest_since = 0.0
         # LIFETIME metrics (live quotes only): closed-quote lifetimes + an at-best time sampler.
         self._lifetimes: list = []
@@ -164,7 +167,25 @@ class PregameLiveExecutor:
         self.flaps = {"kalshi": 0, "poly_user": 0}          # reconnect counters (panel)
         self.flap_down_since: dict = {}                     # venue -> ts of the current DOWN edge
         self.flap_secs = {"kalshi": 0.0, "poly_user": 0.0}  # cumulative seconds spent DOWN
+        # KALSHI WS FLAP DEBOUNCE: the socket drops `connected` on EVERY reconnect (incl. the quiet-market
+        # ping probe). REST is the WS-INDEPENDENT fill authority, so a brief blip is NOT a fill-signal
+        # outage — cancelling rest-kalshi quotes on it just shreds queue position. Only declare the feed
+        # DOWN (cancel) after it has been continuously down >= this grace; a reconnect inside it is a no-op.
+        self.kalshi_feed_grace_s = float(getattr(getattr(cfg, "live", None), "kalshi_feed_grace_s", 20.0))
+        self._kalshi_down_since: Optional[float] = None     # ts the Kalshi socket first dropped (None = up)
+        self._kalshi_declared_down = False                  # True once the grace elapsed and we cancelled
+        # SETTLED-P&L: per-market COST BASIS of every hedged pair we booked (rest leg + hedge leg), keyed
+        # by (game, market_key). The reconciler nets this against BOTH venues' settlement to write the
+        # venue-truth realized pnl once the market settles. Persisted so a settlement landing after a
+        # restart (games settle hours after the fill; the maker restarts ~10x/day) is still reconciled.
+        self._market_legs: dict = {}
+        self._settled_path = mrt_config.runtime_path("settled_ledger")
+        from .settle import SettledPnlReconciler
+        self._settle_reconciler = SettledPnlReconciler(
+            kalshi=self.kalshi, poly=self.poly,
+            record=(self.state.record if self.state is not None else None), log=self.log)
         self._load_traded_tokens()
+        self._load_settled_ledger()
         self._load_orphan()
 
     # -- daily roll ----------------------------------------------------------
@@ -595,19 +616,39 @@ class PregameLiveExecutor:
         total = lo.matched_seen + float(count)               # DELTA -> cumulative high-water mark
         self._on_fill_detected(key, total, lo.price, store, now, now_ts)
 
-    def set_kalshi_feed_ok(self, ok: bool, now: Any = None) -> None:
-        """Kalshi WS health (rest-kalshi FILL signal). On a DOWN transition: halt rest-kalshi placement +
-        cancel open KALSHI quotes (a fill we cannot observe cannot be hedged). Pre/poly quotes unaffected."""
-        was = self.kalshi_feed_ok
-        self.kalshi_feed_ok = bool(ok)
-        if was and not ok:
-            from .state import utcnow
-            self._alert("[MAKER_RT][LIVE] Kalshi WS DOWN -- cancelling open rest-kalshi quotes (fills unobservable).")
-            for k, lo in list(self.open_orders.items()):
-                if lo.rest_venue == "kalshi":
-                    self._cancel(k, now or utcnow(), "kalshi_feed_down")
-        elif ok and not was and self.log:
-            self.log.info("[MAKER_RT][LIVE] Kalshi WS UP -- rest-kalshi placement enabled.")
+    def set_kalshi_feed_ok(self, ok: bool, now: Any = None, now_ts: Optional[float] = None) -> None:
+        """Kalshi WS health (rest-kalshi FILL signal), DEBOUNCED. The socket drops `connected` on every
+        reconnect (incl. the quiet-market ping probe), so acting on the raw flag cancelled our resting
+        quotes on every blip and destroyed queue position. Because REST is the WS-INDEPENDENT fill
+        authority, a brief outage is safe: we only declare the feed DOWN (cancel open rest-kalshi quotes)
+        once it has been CONTINUOUSLY down for ``kalshi_feed_grace_s``. A reconnect inside the grace is a
+        no-op (queue preserved). ``kalshi_feed_ok`` (gating placement) mirrors the debounced state."""
+        import time as _time
+        ts = now_ts if now_ts is not None else _time.time()
+        if ok:
+            self._kalshi_down_since = None
+            if not self.kalshi_feed_ok:
+                self.kalshi_feed_ok = True
+                if self._kalshi_declared_down and self.log:
+                    self.log.info("[MAKER_RT][LIVE] Kalshi WS UP -- rest-kalshi placement re-enabled.")
+                self._kalshi_declared_down = False
+            return
+        # ok is False (socket currently shows down). Start / continue the grace timer.
+        if self._kalshi_down_since is None:
+            self._kalshi_down_since = ts
+        down_for = ts - self._kalshi_down_since
+        if down_for < self.kalshi_feed_grace_s:
+            return                                            # brief blip within grace -> keep resting
+        if self._kalshi_declared_down:
+            return                                            # already handled this outage
+        self._kalshi_declared_down = True
+        self.kalshi_feed_ok = False
+        from .state import utcnow
+        self._alert(f"[MAKER_RT][LIVE] Kalshi WS DOWN {down_for:.0f}s (> {self.kalshi_feed_grace_s:.0f}s "
+                    f"grace) -- cancelling open rest-kalshi quotes (fills unobservable).")
+        for k, lo in list(self.open_orders.items()):
+            if lo.rest_venue == "kalshi":
+                self._cancel(k, now or utcnow(), "kalshi_feed_down")
 
     def needs_fill_poll(self) -> bool:
         """True when something (a cancel that failed because the order FILLED) demands the fill poll run
@@ -753,6 +794,9 @@ class PregameLiveExecutor:
         dur = max(0.0, now_ts - t0)
         self.flaps[venue] = self.flaps.get(venue, 0) + 1
         self.flap_secs[venue] = self.flap_secs.get(venue, 0.0) + dur
+        if venue == "kalshi":                                # surface WS flakiness in the routine digest
+            self._digest["kalshi_flaps"] = self._digest.get("kalshi_flaps", 0) + 1
+            self._digest["kalshi_down_s"] = self._digest.get("kalshi_down_s", 0.0) + dur
         if self.log:
             self.log.warning("[MAKER_RT] %s flap #%d — down %.1fs (cumulative %.0fs).",
                              venue, self.flaps[venue], dur, self.flap_secs[venue])
@@ -853,22 +897,93 @@ class PregameLiveExecutor:
         hedge_oid = ((_detail.get("kalshi") or _detail.get("poly") or {}) or {}).get("order_id") \
             if isinstance(_detail, dict) else None
         if status == "locked":
-            self.caps.commit_stake(hedged * float(hedge_avg or 0.0))
             pnl = float(getattr(res, "locked_pnl", 0.0) or 0.0)
-            self.caps.on_fill(pnl)
-            self._record_lo(lo, "hedge_locked", now, price=fill_price, size=matched, locked_net=locked,
-                            locked_pnl=pnl, hedge_avg=hedge_avg, hedge_order_id=hedge_oid)
-            self._emit_event("locked", lo, instant=True, pnl=pnl,
-                             net_pct=(locked * 100.0 if locked is not None else None),
-                             hedge_price=hedge_avg, hedge_venue=hedge_venue)
-            return {"outcome": "hedge_locked", "locked_net": locked, "pnl": pnl, "hedge_order_id": hedge_oid,
-                    "chain": self._chain(lo, matched, fill_price, "locked", locked, pnl, hedge_oid)}
-        # MISS / PARTIAL / ERROR -> unwind the UNHEDGED remainder (verified). A partial hedge locks its part.
+            return self._record_hedge_locked(lo, matched, fill_price, hedged, hedge_avg, hedge_oid,
+                                             locked, hedge_venue, now, pnl=pnl)
+        # NOT reported-locked. Before unwinding ANYTHING, prove the naked exposure against VENUE TRUTH: a
+        # venue's own fill count can UNDER-report (a Poly BUY response reports USDC, not shares -> a FULL
+        # hedge masquerades as a partial). Read the COMPLEMENT position we actually hold; the truly naked
+        # amount is (rest held) - (complement held). If that is ~0 the fill IS hedged and the unwind is
+        # UNREACHABLE — a successful hedge must never fall through to an unwind + phantom orphan (TBTOR).
+        complement = self._complement_shares(hedge_venue, hl, lo.matched_seen)
+        if complement is not None:
+            naked = max(0.0, lo.matched_seen - complement)
+            if naked <= HEDGE_SHARE_TOL:                       # venue confirms fully hedged -> LOCKED
+                true_hedged = min(lo.matched_seen, max(hedged, complement))
+                pnl = float(locked) * true_hedged if locked is not None else 0.0
+                return self._record_hedge_locked(lo, matched, fill_price, true_hedged, hedge_avg,
+                                                 hedge_oid, locked, hedge_venue, now, pnl=pnl,
+                                                 verified=True)
+            hedged = max(hedged, complement)                   # never unwind shares we actually hold hedged
+        # MISS / PARTIAL / ERROR -> unwind the genuinely UNHEDGED remainder (verified). A partial hedge
+        # locks its part.
         if hedged > 0:
-            self.caps.commit_stake(hedged * float(hedge_avg or 0.0))
+            self.caps.commit_stake(min(hedged, matched) * float(hedge_avg or 0.0))
         remainder = max(0.0, matched - hedged)
         return self._unwind_and_record(lo, remainder, fill_price, locked, "hedge_unwound", now,
                                        hedge_oid=hedge_oid)
+
+    def _record_hedge_locked(self, lo: _LiveOrder, matched: float, fill_price: float, hedged: float,
+                             hedge_avg: Any, hedge_oid: Any, locked: Optional[float], hedge_venue: str,
+                             now: Any, *, pnl: float, verified: bool = False) -> dict:
+        """Book a LOCKED hedge (reported OR position-verified): commit the hedge stake, count the fill,
+        ledger the hedge_locked chain row + instant alert. ``verified`` marks the path where the venue's
+        fill count under-reported but the COMPLEMENT position proves fully hedged (unwind suppressed)."""
+        self.caps.commit_stake(float(hedged) * float(hedge_avg or 0.0))
+        self.caps.on_fill(pnl)
+        self._record_lo(lo, "hedge_locked", now, price=fill_price, size=matched, locked_net=locked,
+                        locked_pnl=pnl, hedge_avg=hedge_avg, hedge_order_id=hedge_oid)
+        self._emit_event("locked", lo, instant=True, pnl=pnl,
+                         net_pct=(locked * 100.0 if locked is not None else None),
+                         hedge_price=hedge_avg, hedge_venue=hedge_venue)
+        self._note_pair_legs(lo, matched, fill_price, hedged, hedge_avg)   # cost basis for settled-pnl
+        if verified and self.log:
+            self.log.warning("[MAKER_RT][LIVE] hedge reported non-locked but the COMPLEMENT position "
+                             "confirms FULLY HEDGED (%.2f sh) — booked LOCKED, unwind suppressed (no "
+                             "phantom orphan). %s", float(hedged), self._name_for(lo))
+        return {"outcome": "hedge_locked", "locked_net": locked, "pnl": pnl, "hedge_order_id": hedge_oid,
+                "chain": self._chain(lo, matched, fill_price, "locked", locked, pnl, hedge_oid)}
+
+    def _complement_shares(self, hedge_venue: str, hl: dict, target: float) -> Optional[float]:
+        """VENUE-TRUTH shares of the hedge COMPLEMENT we currently hold (Poly token balance / Kalshi
+        position). Proves a fill is actually hedged even when the order response under-reports its own
+        fill. Polls briefly so a just-filled BUY's balance settles before we read it. Returns None when
+        the read is impossible (no client / error) so the caller FAILS SAFE (unwinds the reported
+        remainder) — this guard can only ever PREVENT an unwind, never cause a naked position."""
+        try:
+            if hedge_venue == "polymarket":
+                tok = hl.get("token")
+                poly = getattr(self.hedger, "poly", None) or self.poly
+                if not tok or poly is None:
+                    return None
+                if hasattr(poly, "settle_conditional_balance"):
+                    bal = poly.settle_conditional_balance(
+                        tok, lambda b: b is not None and b >= float(target) - HEDGE_SHARE_TOL)
+                else:
+                    bal = poly.conditional_balance(tok)
+                return None if bal is None else float(bal)
+            if self.kalshi is None:
+                return None
+            return self._poll_kalshi_position(hl.get("ticker"), float(target))
+        except Exception:  # noqa: BLE001 - unknown -> fail safe (caller unwinds the reported remainder)
+            return None
+
+    def _poll_kalshi_position(self, ticker: Any, target: float, *, tries: int = 4,
+                              poll_s: float = 0.5) -> Optional[float]:
+        """Poll the Kalshi position until it reaches ``target`` (a just-lifted hedge may settle late) or
+        ``tries`` exhausted. Returns the last read (None if every read failed)."""
+        import time as _time
+        last: Optional[float] = None
+        for i in range(max(1, tries)):
+            try:
+                last = self._kalshi_position(ticker)
+            except Exception:  # noqa: BLE001
+                last = None
+            if last is not None and last >= float(target) - HEDGE_SHARE_TOL:
+                return last
+            if i < tries - 1:
+                _time.sleep(poll_s)
+        return last
 
     def _unwind_and_record(self, lo: _LiveOrder, shares: float, fill_price: float, locked: Optional[float],
                            ok_outcome: str, now: Any, hedge_oid: Any = None) -> dict:
@@ -935,51 +1050,89 @@ class PregameLiveExecutor:
         return self._verified_unwind_poly(lo, shares, fill_price)
 
     def _verified_unwind_poly(self, lo: _LiveOrder, shares: float, fill_price: float) -> dict:
+        """FAK-sell the naked Poly position, RE-READ the balance, and RECONCILE-TO-FLAT: if a thin book
+        only partly filled, RE-SELL the remainder (up to UNWIND_MAX_ATTEMPTS) rather than leave a
+        mismatched leg. ok is True ONLY when the balance read confirms flat (fail-closed on read error)."""
         poly = getattr(self.hedger, "poly", None) or self.poly
-        sell_res = None
-        try:
-            sell_res = poly.place_market_sell(lo.token, shares)
-        except Exception as exc:  # noqa: BLE001
-            sell_res = {"status": "error", "error": str(exc)}
-        sold = float((sell_res or {}).get("shares") or 0.0) if isinstance(sell_res, dict) else 0.0
-        sell_px = (sell_res or {}).get("avg_price") if isinstance(sell_res, dict) else None
-        remaining = None
-        try:                                                     # SOURCE OF TRUTH (not the sell response);
-            # settlement is NOT instant -- poll (forcing a re-sync) so a stale PRE-sell balance can't
-            # falsely read non-flat and scream unwind_FAILED. Stops as soon as it reads <= 0.5.
-            if hasattr(poly, "settle_conditional_balance"):
-                remaining = poly.settle_conditional_balance(lo.token, lambda b: b <= 0.5)
-            else:                                                # test doubles: plain read
-                remaining = poly.conditional_balance(lo.token)
-        except Exception as exc:  # noqa: BLE001 - read failed -> UNKNOWN -> fail closed
-            if self.log:
-                self.log.warning("[MAKER_RT][LIVE] position read failed for %s: %s", lo.token[:12], exc)
-            remaining = None
-        flat = remaining is not None and remaining <= 0.5
-        cost = round((float(fill_price) - float(sell_px)) * sold, 4) if (sell_px is not None and sold > 0) else None
-        return {"ok": bool(flat), "sold": sold, "sell_px": sell_px, "cost": cost,
+        total_sold, px_num, px_den = 0.0, 0.0, 0.0
+        to_sell, prev_remaining, remaining, sell_res = float(shares), None, None, None
+        for _ in range(UNWIND_MAX_ATTEMPTS):
+            if to_sell <= HEDGE_SHARE_TOL:
+                break
+            try:
+                sell_res = poly.place_market_sell(lo.token, to_sell)
+            except Exception as exc:  # noqa: BLE001
+                sell_res = {"status": "error", "error": str(exc)}
+            got = float((sell_res or {}).get("shares") or 0.0) if isinstance(sell_res, dict) else 0.0
+            spx = (sell_res or {}).get("avg_price") if isinstance(sell_res, dict) else None
+            total_sold += got
+            if spx is not None and got > 0:
+                px_num += float(spx) * got
+                px_den += got
+            try:                                                 # SOURCE OF TRUTH (not the sell response);
+                # settlement is NOT instant -- poll (forcing a re-sync) so a stale PRE-sell balance can't
+                # falsely read non-flat and scream unwind_FAILED. Stops as soon as it reads <= 0.5.
+                if hasattr(poly, "settle_conditional_balance"):
+                    remaining = poly.settle_conditional_balance(lo.token, lambda b: b <= 0.5)
+                else:                                            # test doubles: plain read
+                    remaining = poly.conditional_balance(lo.token)
+            except Exception as exc:  # noqa: BLE001 - read failed -> UNKNOWN -> fail closed
+                if self.log:
+                    self.log.warning("[MAKER_RT][LIVE] position read failed for %s: %s", lo.token[:12], exc)
+                remaining = None
+            if remaining is None or remaining <= HEDGE_SHARE_TOL:
+                break
+            if prev_remaining is not None and remaining >= prev_remaining - HEDGE_SHARE_TOL:
+                break                                            # a re-sell made NO progress -> stop hammering
+            prev_remaining, to_sell = remaining, float(remaining)
+        sell_px = (px_num / px_den) if px_den else None
+        flat = remaining is not None and remaining <= HEDGE_SHARE_TOL
+        if not flat and total_sold > 0 and self.log:
+            self.log.error("[MAKER_RT][LIVE] partial unwind NOT reconciled to flat on %s: sold %.2f, "
+                           "remaining %s.", lo.token[:12], total_sold, remaining)
+        cost = round((float(fill_price) - float(sell_px)) * total_sold, 4) \
+            if (sell_px is not None and total_sold > 0) else None
+        return {"ok": bool(flat), "sold": total_sold, "sell_px": sell_px, "cost": cost,
                 "remaining": remaining, "sell_res": sell_res}
 
     def _verified_unwind_kalshi(self, lo: _LiveOrder, shares: float, fill_price: float) -> dict:
-        """IOC-sell the naked Kalshi position, then REST-verify FLAT via the portfolio positions endpoint."""
-        n = int(round(float(shares)))
-        sell_res = None
-        try:
-            sell_res = self.kalshi.place_market_sell(lo.token, lo.kalshi_side, n)
-        except Exception as exc:  # noqa: BLE001
-            sell_res = {"status": "error", "error": str(exc)}
-        sold = float((sell_res or {}).get("fill_count") or 0.0) if isinstance(sell_res, dict) else 0.0
-        sell_px = (sell_res or {}).get("avg_price") if isinstance(sell_res, dict) else None
-        remaining = None
-        try:
-            remaining = self._settle_kalshi_flat(lo.token)      # SOURCE OF TRUTH — portfolio positions
-        except Exception as exc:  # noqa: BLE001 - read failed -> UNKNOWN -> fail closed
-            if self.log:
-                self.log.warning("[MAKER_RT][LIVE] kalshi position read failed for %s: %s", lo.token, exc)
-            remaining = None
-        flat = remaining is not None and abs(remaining) <= 0.5
-        cost = round((float(fill_price) - float(sell_px)) * sold, 4) if (sell_px is not None and sold > 0) else None
-        return {"ok": bool(flat), "sold": sold, "sell_px": sell_px, "cost": cost,
+        """IOC-sell the naked Kalshi position, REST-verify FLAT via the portfolio positions endpoint, and
+        RECONCILE-TO-FLAT: re-sell the remainder (up to UNWIND_MAX_ATTEMPTS) rather than leave a
+        mismatched leg on a thin/moving book."""
+        total_sold, px_num, px_den = 0.0, 0.0, 0.0
+        to_sell, prev_remaining, remaining, sell_res = int(round(float(shares))), None, None, None
+        for _ in range(UNWIND_MAX_ATTEMPTS):
+            if to_sell <= 0:
+                break
+            try:
+                sell_res = self.kalshi.place_market_sell(lo.token, lo.kalshi_side, to_sell)
+            except Exception as exc:  # noqa: BLE001
+                sell_res = {"status": "error", "error": str(exc)}
+            got = float((sell_res or {}).get("fill_count") or 0.0) if isinstance(sell_res, dict) else 0.0
+            spx = (sell_res or {}).get("avg_price") if isinstance(sell_res, dict) else None
+            total_sold += got
+            if spx is not None and got > 0:
+                px_num += float(spx) * got
+                px_den += got
+            try:
+                remaining = self._settle_kalshi_flat(lo.token)   # SOURCE OF TRUTH — portfolio positions
+            except Exception as exc:  # noqa: BLE001 - read failed -> UNKNOWN -> fail closed
+                if self.log:
+                    self.log.warning("[MAKER_RT][LIVE] kalshi position read failed for %s: %s", lo.token, exc)
+                remaining = None
+            if remaining is None or abs(remaining) <= HEDGE_SHARE_TOL:
+                break
+            if prev_remaining is not None and abs(remaining) >= abs(prev_remaining) - HEDGE_SHARE_TOL:
+                break                                            # a re-sell made NO progress -> stop hammering
+            prev_remaining, to_sell = remaining, int(round(abs(remaining)))
+        sell_px = (px_num / px_den) if px_den else None
+        flat = remaining is not None and abs(remaining) <= HEDGE_SHARE_TOL
+        if not flat and total_sold > 0 and self.log:
+            self.log.error("[MAKER_RT][LIVE] partial kalshi unwind NOT reconciled to flat on %s: sold "
+                           "%.0f, remaining %s.", lo.token, total_sold, remaining)
+        cost = round((float(fill_price) - float(sell_px)) * total_sold, 4) \
+            if (sell_px is not None and total_sold > 0) else None
+        return {"ok": bool(flat), "sold": total_sold, "sell_px": sell_px, "cost": cost,
                 "remaining": remaining, "sell_res": sell_res}
 
     def _kalshi_position(self, ticker: str) -> Optional[float]:
@@ -1117,6 +1270,89 @@ class PregameLiveExecutor:
                 json.dump({"tokens": sorted(self._traded_tokens),
                            "tickers": sorted(self._traded_tickers)}, fh)
             os.replace(tmp, self._traded_path)
+        except Exception:  # noqa: BLE001
+            pass
+
+    # -- settled-P&L cost basis + reconciliation -----------------------------
+    _LEG_SEP = "\x1f"                                    # (game, market_key) -> one JSON string key
+
+    def _note_pair_legs(self, lo: _LiveOrder, rest_shares: float, rest_price: float,
+                        hedge_shares: Any, hedge_avg: Any) -> None:
+        """Accumulate the COST BASIS of a hedged pair (rest leg + hedge leg), keyed by (game, market_key),
+        for the settled-pnl reconciler. Multi-fill markets accumulate. Best-effort — never blocks the
+        hedge path."""
+        try:
+            hl = lo.hedge_lookup or {}
+            rest_cost = float(rest_shares) * float(rest_price)
+            hedge_cost = float(hedge_shares or 0.0) * float(hedge_avg or 0.0)
+            if lo.rest_venue == "kalshi":
+                k_ticker, k_side, k_sh, k_cost = lo.token, (lo.kalshi_side or "yes"), float(rest_shares), rest_cost
+                p_token, p_sh, p_cost = hl.get("token"), float(hedge_shares or 0.0), hedge_cost
+            else:
+                k_ticker, k_side = hl.get("ticker"), str(hl.get("side") or "yes")
+                k_sh, k_cost = float(hedge_shares or 0.0), hedge_cost
+                p_token, p_sh, p_cost = lo.token, float(rest_shares), rest_cost
+            key = f"{lo.game}{self._LEG_SEP}{lo.market_key}"
+            rec = self._market_legs.get(key)
+            if rec is None:
+                rec = {"sport": lo.sport, "game": lo.game, "market_key": lo.market_key,
+                       "kalshi": {"ticker": k_ticker, "side": k_side, "shares": 0.0, "cost": 0.0},
+                       "poly": {"token": p_token, "shares": 0.0, "cost": 0.0}}
+                self._market_legs[key] = rec
+            rec["kalshi"].update(ticker=k_ticker, side=k_side)
+            rec["kalshi"]["shares"] = round(rec["kalshi"]["shares"] + k_sh, 4)
+            rec["kalshi"]["cost"] = round(rec["kalshi"]["cost"] + k_cost, 4)
+            rec["poly"]["token"] = p_token
+            rec["poly"]["shares"] = round(rec["poly"]["shares"] + p_sh, 4)
+            rec["poly"]["cost"] = round(rec["poly"]["cost"] + p_cost, 4)
+            self._persist_settled_ledger()
+        except Exception:  # noqa: BLE001 — cost-basis bookkeeping must never crash the hedge
+            pass
+
+    def reconcile_settlements(self, now: Any) -> list:
+        """Pull BOTH venues' settlement for our booked hedged pairs and write the venue-truth
+        ``trade_settled`` rows (net + ROI, both legs). Idempotent; prunes reconciled markets from the
+        local ledger + alerts each settled trade. Best-effort — never raises into the loop."""
+        if not self._market_legs:
+            return []
+        try:
+            emitted = self._settle_reconciler.reconcile(list(self._market_legs.values()), now)
+        except Exception as exc:  # noqa: BLE001
+            if self.log:
+                self.log.warning("[MAKER_RT][SETTLE] reconcile pass failed: %s", exc)
+            return []
+        if emitted:
+            for key in list(self._market_legs):
+                game, _, mk = key.partition(self._LEG_SEP)
+                if self._settle_reconciler.already_settled(game, mk):
+                    self._market_legs.pop(key, None)
+            self._persist_settled_ledger()
+            for row in emitted:
+                self._instant(f"[MAKER_RT][SETTLE] {row.get('reason')}")
+        return emitted
+
+    def _persist_settled_ledger(self) -> None:
+        import json
+        if not self._settled_path:
+            return
+        try:
+            mrt_config.assert_writable(self._settled_path)
+            tmp = self._settled_path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as fh:
+                json.dump(self._market_legs, fh)
+            os.replace(tmp, self._settled_path)
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _load_settled_ledger(self) -> None:
+        import json
+        if not self._settled_path or not os.path.exists(self._settled_path):
+            return
+        try:
+            with open(self._settled_path, "r", encoding="utf-8") as fh:
+                data = json.load(fh)
+            if isinstance(data, dict):
+                self._market_legs.update(data)
         except Exception:  # noqa: BLE001
             pass
 
@@ -1353,12 +1589,14 @@ class PregameLiveExecutor:
             return
         d = self._digest
         cancelled = sum(d["cancels"].values())
-        if d["quotes"] or cancelled or d["fills"]:
+        kflaps = int(d.get("kalshi_flaps", 0) or 0)
+        if d["quotes"] or cancelled or d["fills"] or kflaps:
             best = d.get("best_edge", 0.0)
             line = alerts.digest_line(self.digest_min, placed=d["quotes"], cancelled=cancelled,
                                       fills=d["fills"], open_now=len(self.open_orders),
                                       max_open=self.caps.max_open_quotes,
-                                      best_edge_pct=(best if best else None))
+                                      best_edge_pct=(best if best else None),
+                                      kalshi_flaps=kflaps, kalshi_down_s=float(d.get("kalshi_down_s", 0.0)))
             self._send_telegram(line)
             if self.log:
                 self.log.warning(line)
@@ -1366,7 +1604,8 @@ class PregameLiveExecutor:
         self._digest_since = now_ts
 
     def _reset_digest(self) -> None:
-        self._digest = {"quotes": 0, "cancels": {}, "fills": 0, "refuse_suppressed": 0, "best_edge": 0.0}
+        self._digest = {"quotes": 0, "cancels": {}, "fills": 0, "refuse_suppressed": 0, "best_edge": 0.0,
+                        "kalshi_flaps": 0, "kalshi_down_s": 0.0}
 
     def sample_metrics(self, store: Any, now_ts: float) -> None:
         """Each loop: sample whether each LIVE quote is currently AT BEST (our price >= live best bid)."""

@@ -250,7 +250,7 @@ class PolyExec:
         signed = self.client.create_order(args, options)
         ot = getattr(OrderType, order_type, order_type)
         raw = self.client.post_order(signed, ot)
-        return self._normalize(raw, price=price, requested_shares=size)
+        return self._normalize(raw, price=price, requested_shares=size, side=side)
 
     def place_market_sell(self, token_id: str, shares: float, *, price: Optional[float] = None,
                           order_type: str = "FAK") -> dict[str, Any]:
@@ -277,7 +277,7 @@ class PolyExec:
         signed = self.client.create_order(args, options)
         ot = getattr(OrderType, order_type, order_type)                # FAK by default
         raw = self.client.post_order(signed, ot)
-        return self._normalize(raw, price=price, requested_shares=shares)
+        return self._normalize(raw, price=price, requested_shares=shares, side="SELL")
 
     def place_market_buy(self, token_id: str, shares: float, *, price: Optional[float] = None,
                          order_type: str = "FAK") -> dict[str, Any]:
@@ -302,7 +302,7 @@ class PolyExec:
         signed = self.client.create_order(args, options)
         ot = getattr(OrderType, order_type, order_type)                # FAK by default
         raw = self.client.post_order(signed, ot)
-        return self._normalize(raw, price=price, requested_shares=shares)
+        return self._normalize(raw, price=price, requested_shares=shares, side="BUY")
 
     # -- position + approval (SELL side; the source of truth for verification/reconciliation) ---------
     def conditional_balance(self, token_id: str) -> float:
@@ -390,33 +390,30 @@ class PolyExec:
             asset_type=AssetType.CONDITIONAL, token_id=token_id,
             signature_type=self._resolved_signature_type()))
 
-    def _normalize(self, raw: Any, *, price: float, requested_shares: float) -> dict[str, Any]:
+    def _normalize(self, raw: Any, *, price: float, requested_shares: float,
+                   side: str = "BUY") -> dict[str, Any]:
         """Map a post_order response to {status, shares, usd, avg_price, order_id, raw}.
 
         A FOK either fully fills or is killed; a GTC that is ACCEPTED simply RESTS (nothing matched
         yet) — that is NOT a fill. We classify by the MATCHED amount (never the order ``size``, which is
         the requested quantity, not a fill) plus the response ``status``: 0 matched + a live/open status
         -> "resting"; 0 matched otherwise -> "none"; >= requested -> "filled"; else "partial". (Treating
-        an accepted rest as "filled" would make a maker fire a phantom hedge on every quote.)"""
+        an accepted rest as "filled" would make a maker fire a phantom hedge on every quote.)
+
+        ``shares`` MUST be counted in SHARES, and making/taking amounts are SIDE-dependent base/quote
+        legs — NOT interchangeable:
+            BUY  -> makingAmount = USDC paid,   takingAmount = SHARES received
+            SELL -> makingAmount = SHARES sold, takingAmount = USDC received
+        Reading ``makingAmount`` as "shares" is correct for a SELL (why the sell-side smoke passed) but
+        for a BUY it counts DOLLARS as shares and UNDER-reports the fill: a $16.21 buy of ~17.4 shares
+        reads as 16.2, so a FULL hedge masquerades as a partial and the executor unwinds a phantom
+        remainder — the 2026-07-23 TBTOR double-unwind + false orphan. Pick the SHARE leg by side; if
+        only the dollar leg is present, derive shares = dollars / avg fill price."""
         d = raw if isinstance(raw, dict) else {}
         resp_status = str(d.get("status") or "").lower()
         resting_states = ("live", "open", "resting", "delayed", "new")
-        filled = None
-        for k in ("size_matched", "filled_size", "matched_size", "makingAmount"):
-            if d.get(k) is not None:
-                try:
-                    filled = float(d[k])
-                    break
-                except (TypeError, ValueError):
-                    continue
         success = d.get("success")
-        if filled is None:                                     # no matched field -> infer from status
-            if resp_status in resting_states:
-                filled = 0.0
-            elif resp_status == "matched":
-                filled = float(requested_shares)
-            else:
-                filled = float(requested_shares) if success else 0.0
+        is_buy = str(side).upper() == "BUY"
         avg = None
         for k in ("price", "avg_price", "average_price"):
             if d.get(k) is not None:
@@ -427,6 +424,37 @@ class PolyExec:
                     continue
         if avg is None:
             avg = float(price)
+        filled = None
+        for k in ("size_matched", "filled_size", "matched_size"):   # explicit SHARE fields (side-agnostic)
+            if d.get(k) is not None:
+                try:
+                    filled = float(d[k])
+                    break
+                except (TypeError, ValueError):
+                    continue
+        if filled is None:                                     # the SIDE's SHARE leg of making/taking
+            for k in (("takingAmount", "taking_amount") if is_buy else ("makingAmount", "making_amount")):
+                if d.get(k) is not None:
+                    try:
+                        filled = float(d[k])
+                        break
+                    except (TypeError, ValueError):
+                        continue
+        if filled is None and avg > 0:                         # only the DOLLAR leg present -> $ / price
+            for k in (("makingAmount", "making_amount") if is_buy else ("takingAmount", "taking_amount")):
+                if d.get(k) is not None:
+                    try:
+                        filled = float(d[k]) / avg
+                        break
+                    except (TypeError, ValueError):
+                        continue
+        if filled is None:                                     # no matched field -> infer from status
+            if resp_status in resting_states:
+                filled = 0.0
+            elif resp_status == "matched":
+                filled = float(requested_shares)
+            else:
+                filled = float(requested_shares) if success else 0.0
         if filled <= 0:
             status = "resting" if resp_status in resting_states else "none"
         elif filled >= float(requested_shares) - 1e-9:

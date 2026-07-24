@@ -186,11 +186,15 @@ def format_event(kind: str, *, sport: Any = None, game: Any = None, market_key: 
 
 
 def digest_line(minutes: float, *, placed: int, cancelled: int, fills: int, open_now: int,
-                max_open: int, best_edge_pct: Optional[float] = None) -> str:
-    """The periodic roll-up. Shows 'open X/Y' and the best edge SEEN — no internal slot-refuse jargon.
+                max_open: int, best_edge_pct: Optional[float] = None,
+                kalshi_flaps: int = 0, kalshi_down_s: float = 0.0) -> str:
+    """The periodic roll-up. Shows 'open X/Y', the best edge SEEN, and (when non-zero) Kalshi WS flap
+    count + downtime this window — so a flaky fill socket is visible rather than inferred from the log.
 
-        📊 15m · 12 placed · 9 cancelled · 0 fills · open 1/2 · best edge seen 0.9%
+        📊 15m · 12 placed · 9 cancelled · 0 fills · open 1/2 · best edge seen 0.9% · ⚠️ kalshi ws 3 flaps (12s down)
     """
     edge = f" · best edge seen {best_edge_pct:.1f}%" if best_edge_pct is not None else ""
+    flap = (f" · ⚠️ kalshi ws {int(kalshi_flaps)} flap{'s' if int(kalshi_flaps) != 1 else ''} "
+            f"({kalshi_down_s:.0f}s down)") if kalshi_flaps else ""
     return (f"📊 {int(minutes)}m · {placed} placed · {cancelled} cancelled · {fills} fills · "
-            f"open {open_now}/{max_open}{edge}")
+            f"open {open_now}/{max_open}{edge}{flap}")

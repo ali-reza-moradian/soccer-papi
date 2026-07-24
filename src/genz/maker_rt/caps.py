@@ -55,6 +55,11 @@ class LiveCaps:
         self.max_fills_per_day = int(getattr(live_cfg, "max_fills_per_day", 10))
         self.max_daily_loss_usd = float(getattr(live_cfg, "max_daily_loss_usd", 25.0))
         self.max_daily_stake_usd = float(getattr(live_cfg, "max_daily_stake_usd", 100.0))
+        # PER-PAIR cap: ``quote_usd_max`` bounds the REST leg only, but a cheap rest leg's HEDGE can dwarf
+        # it (TBTOR: rest leg $1.02, hedge $16.21 — 16x). This bounds the WHOLE pair (rest + worst-case
+        # hedge) for ONE bet, so a single low-priced quote can't commit an outsized hedge. A breach
+        # REFUSES that one quote (it's a sizing limit, not a daily breach — no day-halt).
+        self.max_pair_stake_usd = float(getattr(live_cfg, "max_pair_stake_usd", 25.0))
         self.telegram = telegram
         self.log = log
         # running day state
@@ -98,10 +103,11 @@ class LiveCaps:
 
     # -- pre-place decision --------------------------------------------------
     def can_place(self, projected_pair_stake: float) -> tuple[bool, str]:
-        """Decide whether a NEW quote may rest, given the $ its pair would commit if it fills. Refuses
-        (and HALTS for the day, alerting) when the projected stake would breach ``max_daily_stake_usd``.
-        Also refuses on the open-quote cap, the fills-per-day cap, or an existing halt. Returns
-        (ok, reason)."""
+        """Decide whether a NEW quote may rest, given the $ its pair (rest + worst-case hedge) would
+        commit if it fills. Refuses (and HALTS for the day, alerting) when the projected stake would
+        breach ``max_daily_stake_usd``; refuses this ONE quote (no day-halt) when the pair alone breaches
+        ``max_pair_stake_usd``. Also refuses on the open-quote cap, the fills-per-day cap, or an existing
+        halt. Returns (ok, reason)."""
         if self.halted:
             return False, f"halted:{self.halt_reason}"
         if self.pnl_today <= -self.max_daily_loss_usd:
@@ -111,6 +117,9 @@ class LiveCaps:
             return False, "max_open_quotes"
         if self.fills_today >= self.max_fills_per_day:
             return False, "max_fills_per_day"
+        # PER-PAIR sizing cap FIRST (a single oversized pair is refused, not day-halted).
+        if float(projected_pair_stake) > self.max_pair_stake_usd + 1e-9:
+            return False, "max_pair_stake_usd"
         if self.stake_today + float(projected_pair_stake) > self.max_daily_stake_usd + 1e-9:
             self._halt("max_daily_stake_usd")
             return False, "max_daily_stake_usd"

@@ -148,6 +148,7 @@ class KalshiFeed(_BaseFeed):
             return
         ws = await _connect(mrt_config.KALSHI_WS, headers=self._auth_headers())
         self.connected = True
+        missed_pongs = 0
         try:
             await self._subscribe(ws)
             while not self._stop:
@@ -155,12 +156,23 @@ class KalshiFeed(_BaseFeed):
                     raw = await asyncio.wait_for(ws.recv(), timeout=10)
                 except asyncio.TimeoutError:
                     # QUIET market (Kalshi has no app-ping): actively PROBE the socket so a quiet-but-alive
-                    # connection stays FRESH; if the pong doesn't come, the exception -> reconnect.
-                    await asyncio.wait_for(await ws.ping(), timeout=5)
+                    # connection stays FRESH. TOLERATE a single slow/missed pong (count it) — one hiccup on
+                    # a healthy-but-quiet socket must NOT tear the connection down and shred our queue
+                    # position (the rest-kalshi flap); only a SECOND consecutive miss (socket really dead)
+                    # escalates to the reconnect via the raised TimeoutError.
+                    try:
+                        await asyncio.wait_for(await ws.ping(), timeout=8)
+                    except asyncio.TimeoutError:
+                        missed_pongs += 1
+                        if missed_pongs >= 2:
+                            raise
+                        continue
+                    missed_pongs = 0
                     self.store.mark_activity("kalshi", time.time())
                     if self.store.need_resync():
                         await self._subscribe(ws)
                     continue
+                missed_pongs = 0
                 self.store.mark_activity("kalshi", time.time())   # ANY frame = socket alive
                 self._handle(raw)
                 if self.store.need_resync():                # a seq gap dropped the books -> full resub

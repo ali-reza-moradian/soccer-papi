@@ -184,6 +184,13 @@ class MakerState:
     #     so on its own it cannot show fills that paid the exit toll instead.
     lifetime_quotes: int = 0
     recent_locked_nets: Any = field(default_factory=lambda: deque(maxlen=_TUNING_WINDOW))
+    # SETTLED-P&L (VENUE TRUTH). The fill-time locked_pnl is an ESTIMATE; the real number is known only
+    # after BOTH legs settle/redeem. A ``trade_settled`` row (written by the settlement reconciler) nets
+    # both venues; these lifetime counters are the AUTHORITATIVE realized pnl the panel/summary report
+    # (vs the fill-time estimate in pnl_today). They survive the daily roll + persist across restarts.
+    settled_pnl_lifetime: float = 0.0                  # sum of true net across settled trades ($)
+    settled_cost_lifetime: float = 0.0                 # sum of cost basis across settled trades ($; ROI denom)
+    settled_trades: int = 0                            # count of settled hedged trades
     _tuning_saved_ts: float = 0.0                      # last persist (see maybe_persist_tuning)
     gates: dict = field(default_factory=dict)          # {"pre": bool, "inplay": bool} — armed states, set at startup
     live: dict = field(default_factory=dict)           # PRE-GAME live snapshot (open_quotes/stake/fills/pnl/halt/feed_ok)
@@ -195,11 +202,13 @@ class MakerState:
         if day != self.day:
             keep = (self.log, self.restarts_today, self.gates, self.live,   # survive the daily reset
                     self.lifetime_fills, self.lifetime_unwinds, self.recent_outcomes,
-                    self.lifetime_quotes, self.recent_locked_nets)
+                    self.lifetime_quotes, self.recent_locked_nets,
+                    self.settled_pnl_lifetime, self.settled_cost_lifetime, self.settled_trades)
             self.__init__(day=day)  # type: ignore[misc]
             (self.log, self.restarts_today, self.gates, self.live,
              self.lifetime_fills, self.lifetime_unwinds, self.recent_outcomes,
-             self.lifetime_quotes, self.recent_locked_nets) = keep
+             self.lifetime_quotes, self.recent_locked_nets,
+             self.settled_pnl_lifetime, self.settled_cost_lifetime, self.settled_trades) = keep
 
     def _bucket(self, sport: str, phase: str) -> _Bucket:
         return self.buckets.setdefault((str(sport or "?"), str(phase or "pre")), _Bucket())
@@ -218,6 +227,9 @@ class MakerState:
                                      maxlen=_TUNING_WINDOW)
         self.recent_locked_nets = deque((float(v) for v in (obj.get("recent_locked_nets") or [])),
                                         maxlen=_TUNING_WINDOW)
+        self.settled_pnl_lifetime = float(obj.get("settled_pnl_lifetime", 0.0) or 0.0)
+        self.settled_cost_lifetime = float(obj.get("settled_cost_lifetime", 0.0) or 0.0)
+        self.settled_trades = int(obj.get("settled_trades", 0) or 0)
 
     def persist_tuning(self) -> None:
         """Write the cross-restart counters (atomic, best-effort — never blocks trading)."""
@@ -227,6 +239,9 @@ class MakerState:
             "lifetime_unwinds": self.lifetime_unwinds,
             "recent_outcomes": list(self.recent_outcomes),
             "recent_locked_nets": list(self.recent_locked_nets),
+            "settled_pnl_lifetime": round(self.settled_pnl_lifetime, 4),
+            "settled_cost_lifetime": round(self.settled_cost_lifetime, 4),
+            "settled_trades": self.settled_trades,
         })
 
     def maybe_persist_tuning(self, now_ts: float) -> None:
@@ -286,6 +301,18 @@ class MakerState:
                                          (row.get("drift_30"), self.drift30, b.drift30)):
                 if src is not None and src != "":
                     dst_flat.append(float(src)); dst_b.append(float(src))
+        elif ev == "trade_settled":
+            # VENUE-TRUTH realized pnl (both legs netted, incl. settlement/redemption). This — NOT the
+            # fill-time locked_pnl estimate — is the authoritative lifetime realized number the panel
+            # reports. ``settled_cost_usd`` rides on the row for the ROI denominator but is NOT a CSV
+            # column (like unwind_cost/locked_pnl — read here, then dropped by _append_csv); the human
+            # cost/ROI is carried in ``reason``. Idempotency is the reconciler's job (keyed by market).
+            if row.get("realized_pnl_usd") not in (None, ""):
+                self.settled_pnl_lifetime += float(row["realized_pnl_usd"])
+                self.settled_trades += 1
+                if row.get("settled_cost_usd") not in (None, ""):
+                    self.settled_cost_lifetime += float(row["settled_cost_usd"])
+                self.persist_tuning()                           # settled truth is precious — persist NOW
         self._append_csv(row, now)
 
     def record_achievable(self, sport: str, phase: str, value: Optional[float], now: datetime,
@@ -344,6 +371,12 @@ class MakerState:
             "drift_median_1": _median(self.drift1), "drift_median_5": _median(self.drift5),
             "drift_median_30": _median(self.drift30),
             "pnl_today": round(self.pnl_today, 4), "restarts_today": self.restarts_today,
+            # SETTLED (VENUE-TRUTH) realized pnl — the authoritative lifetime number (both legs netted),
+            # distinct from pnl_today (the fill-time locked estimate).
+            "settled_pnl_lifetime": round(self.settled_pnl_lifetime, 4),
+            "settled_trades": self.settled_trades,
+            "settled_roi": (round(self.settled_pnl_lifetime / self.settled_cost_lifetime, 4)
+                            if self.settled_cost_lifetime else 0.0),
             "unwind_count_today": self.n_unwinds,
             "unwind_cost_today_usd": round(self.unwind_cost_today, 4),
             "unwind_rate": round(self.lifetime_unwinds / self.lifetime_fills, 4) if self.lifetime_fills else 0.0,
@@ -369,6 +402,8 @@ class MakerState:
         hb = {"ts": now.strftime("%Y-%m-%dT%H:%M:%SZ"), "schema": SCHEMA, "mode": mode,
               "sockets": dict(sockets), "open_quotes": open_quotes,
               "fills_today": self.n_fills, "pnl_today": round(self.pnl_today, 4),
+              "settled_pnl_lifetime": round(self.settled_pnl_lifetime, 4),
+              "settled_trades": self.settled_trades,
               "restarts_today": self.restarts_today, "gates": dict(self.gates),
               "live": dict(self.live)}
         # TOP-LEVEL ORPHAN + FLAP banner: a naked position must be visible in the heartbeat itself, not

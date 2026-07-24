@@ -32,6 +32,7 @@ HEARTBEAT_EVERY_S = 2.5
 # (fill-poll cadence now lives in cfg.live.fill_poll_s — the REST poll is the fill authority of record,
 #  not a "backup", so it is a tunable config value rather than a module constant.)
 RECONCILE_EVERY_S = 300.0                     # position reconciliation cadence while armed (5 min)
+SETTLE_EVERY_S = 900.0                         # settled-pnl reconciliation cadence (15 min; markets settle slowly)
 # STOP_ALL is read-only, but it resolves through the one resolver like every other runtime path.
 # It MUST stay a function: a module-level constant would resolve at IMPORT time, which both defeats
 # monkeypatching of OPS_DIR and (under pytest) would trip the live-write guard during collection.
@@ -275,6 +276,7 @@ async def _run(cfg: Any, log: Any) -> int:
     last_achv_log = 0.0
     last_fill_poll = 0.0
     last_reconcile = 0.0
+    last_settle = 0.0
     feed_up = {"kalshi": False, "poly_user": False}   # DOWN->UP edge detector for the reconnect poll
     try:
         while True:
@@ -304,7 +306,7 @@ async def _run(cfg: Any, log: Any) -> int:
                             pregame_exec.on_feed_reconnect(_venue, store, now, now_ts)
                         feed_up[_venue] = _up
                 pregame_exec.set_feed_ok(pu_up, now)
-                pregame_exec.set_kalshi_feed_ok(ks_up, now)       # rest-kalshi FILL-signal health
+                pregame_exec.set_kalshi_feed_ok(ks_up, now, now_ts)   # rest-kalshi FILL-signal health (debounced)
                 pregame_exec.sample_metrics(store, now_ts)        # at-best sampler for the lifetime metrics
                 pregame_exec.sample_slot_wait(now_ts)             # slot-wait gauge (starvation early warning)
                 pregame_exec.maybe_flush_digest(now_ts)           # routine-event Telegram digest (15 min)
@@ -320,6 +322,12 @@ async def _run(cfg: Any, log: Any) -> int:
                         pregame_exec.reconcile_positions(now)
                     except Exception as exc:  # noqa: BLE001
                         log.warning("[MAKER_RT][LIVE] reconciliation failed: %s", exc)
+                if now_ts - last_settle >= SETTLE_EVERY_S:           # SETTLED-P&L (venue-truth realized pnl)
+                    last_settle = now_ts
+                    try:
+                        pregame_exec.reconcile_settlements(now)
+                    except Exception as exc:  # noqa: BLE001
+                        log.warning("[MAKER_RT][LIVE] settlement reconcile failed: %s", exc)
                 state.live = pregame_exec.snapshot(now_ts)
             poly_user_up = bool(pm_user is not None and pm_user.connected)
             sockets = {"poly_market": pm.connected, "poly_user": poly_user_up, "kalshi": ks.connected}

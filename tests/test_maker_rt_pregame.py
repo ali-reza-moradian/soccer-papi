@@ -1087,3 +1087,149 @@ def test_driver_hedge_thin_persistence_prefilter():
     assert key not in drv.viable_since                        # thin -> timer reset
     viable_book(bs, 112.0, 3); drv.refresh_quotes(bs, now, now_ts=112.0)
     assert not fake.placed                                    # only 4s since depth returned (< 10s) -> not armed yet
+
+
+# --------------------------------------------------------------------------- #
+# BUG 1: a FULLY-hedged fill whose hedge response UNDER-reports must NOT unwind #
+# (the 2026-07-23 TBTOR double-unwind + false orphan)                          #
+# --------------------------------------------------------------------------- #
+def test_kalshi_fill_poly_hedge_underreports_but_position_confirms_hedged_no_unwind(tmp_path):
+    """TBTOR regression. The Poly hedge FULLY fills (17.4 sh held) but its response under-reports the
+    fill (16/17 -> status 'partial'). The executor must READ THE COMPLEMENT POSITION, see it fully
+    hedged, book LOCKED, and NEVER unwind -> no phantom 1-of-17 Kalshi sell, no false orphan, no halt.
+    A successful hedge makes the unwind UNREACHABLE."""
+    koc = _KalshiOC()
+    kex = _KalshiExec()
+    poly = _Poly()
+    poly.position = 17.4                              # VENUE TRUTH: the Poly hedge complement is fully held
+    hedger = _Hedger(SimpleNamespace(status="partial", hedged_shares=16, hedge_avg_price=0.933,
+                                     locked_pnl=None, unwind_cost=None,
+                                     detail={"poly": {"order_id": "0x39f8"}}), poly=poly)
+    ex, _ = _exec_kalshi(tmp_path, kalshi_oc=koc, kalshi=kex, poly=poly, hedger=hedger)
+    ex.roll_day(_DT)
+    store = _Store(poly_best_ask=0.93, kalshi_ask=0.50)   # rest on Kalshi @6c, hedge on Poly ~93c
+    c = _cand_kalshi(ticker="KX-TB", htoken="TOKTOR")
+    ex.place_or_reprice(c, _dec(0.06, hedge_ask=0.93), None, store, _DT, 100.0, "inplay")
+    oid = koc.rests[0]["oid"]
+    ex.on_kalshi_fill({"kind": "kalshi_fill", "order_id": oid, "count": 17}, store, _DT, 101.0)
+    rows = [r["event"] for r in ex.state.rows]
+    assert "hedge_locked" in rows                            # booked LOCKED off the VERIFIED complement
+    assert "unwind_FAILED" not in rows and "hedge_unwound" not in rows
+    assert kex.market_sells == []                           # NO phantom Kalshi unwind sell
+    assert ex.orphan is None and ex.caps.halted is False    # no false orphan, no halt
+    assert ex.caps.fills_today == 1
+    # cost basis recorded for the settled-pnl reconciler (both legs)
+    rec = next(iter(ex._market_legs.values()))
+    assert rec["kalshi"]["ticker"] == "KX-TB" and rec["poly"]["token"] == "TOKTOR"
+
+
+# --------------------------------------------------------------------------- #
+# BUG 3: max_pair_stake_usd bounds rest + worst-case hedge (TBTOR asymmetry)   #
+# --------------------------------------------------------------------------- #
+def test_pair_stake_cap_bounds_rest_plus_hedge_with_tbtor_numbers(tmp_path):
+    """quote_usd_max caps the REST leg only; a cheap rest leg's hedge can dwarf it. TBTOR: rest 17@0.06
+    ($1.02) + hedge 17@0.93 ($15.81) = $16.83 pair. A $25 pair cap allows it; a $15 cap refuses THAT ONE
+    quote (no day-halt)."""
+    pair = LiveCaps.projected_pair_stake(0.06, 17, 0.93, 17)
+    assert pair == pytest.approx(16.83)
+    ok_caps = LiveCaps(mrt_config.LiveConfig(quote_usd_max=5, max_pair_stake_usd=25, max_daily_stake_usd=100))
+    assert ok_caps.can_place(pair) == (True, "ok")
+    tight = LiveCaps(mrt_config.LiveConfig(quote_usd_max=5, max_pair_stake_usd=15, max_daily_stake_usd=100))
+    ok, reason = tight.can_place(pair)
+    assert ok is False and reason == "max_pair_stake_usd"
+    assert tight.halted is False                             # a per-pair sizing refusal is NOT a day-halt
+
+
+def test_place_refuses_when_pair_exceeds_cap(tmp_path):
+    """End-to-end: a rest-kalshi quote whose projected pair exceeds max_pair_stake_usd never rests."""
+    koc = _KalshiOC()
+    ex, _ = _exec_kalshi(tmp_path, kalshi_oc=koc)
+    ex.caps.max_pair_stake_usd = 10.0                        # below TBTOR's ~$16.8 pair
+    ex.roll_day(_DT)
+    store = _Store(kalshi_ask=0.50, poly_best_ask=0.93)
+    c = _cand_kalshi()
+    ex.place_or_reprice(c, _dec(0.06, hedge_ask=0.93), None, store, _DT, 100.0, "inplay")
+    assert koc.rests == [] and ex.open_count() == 0          # refused: pair over cap
+    assert any(r.get("reason") == "max_pair_stake_usd" for r in ex.state.rows)
+
+
+# --------------------------------------------------------------------------- #
+# BUG 4: a partial unwind reconciles to FLAT over retries (never left mismatched)
+# --------------------------------------------------------------------------- #
+def test_partial_unwind_reconciles_to_flat_over_retries(tmp_path):
+    """A thin book fills only PART of the unwind on the first sell; the reconcile-to-flat step re-sells
+    the remainder until the position reads flat -> 'hedge_unwound', NOT left mismatched or orphaned."""
+    class _PolyThin(_Poly):
+        def __init__(self):
+            super().__init__(order_status="CANCELED", sell_price=0.44)
+            self.position = 5.0
+            self.sell_calls = 0
+
+        def place_market_sell(self, token, shares):
+            self.sell_calls += 1
+            self.market_sells.append({"token": token, "shares": shares})
+            got = 2.0 if self.sell_calls == 1 else self.position     # first sell clears 2 of 5
+            self.position = 3.0 if self.sell_calls == 1 else 0.0
+            return {"status": "filled", "avg_price": self.sell_price, "shares": got}
+
+    oc = _OrderClient()
+    poly = _PolyThin()
+    ex, _ = _exec(tmp_path, order_client=oc, hedger=_hedger_missed(), poly=poly)
+    store = _Store(poly_best_ask=0.60, kalshi_ask=0.50)
+    ex.place_or_reprice(_cand(), _dec(0.46, hedge_ask=0.50), None, store, None, 1.0, "pre")
+    ex.on_order_update({"order_id": oc.rests[0]["oid"], "size_matched": 5, "price": 0.46}, store, None, 2.0)
+    rows = [r["event"] for r in ex.state.rows]
+    assert "hedge_unwound" in rows and "unwind_FAILED" not in rows   # reconciled to flat
+    assert ex.orphan is None and ex.caps.halted is False
+    assert poly.sell_calls >= 2 and poly.position == 0.0            # took a retry to fully unwind
+
+
+# --------------------------------------------------------------------------- #
+# BUG 5: Kalshi WS flap debounce — a brief blip must NOT cancel resting quotes  #
+# --------------------------------------------------------------------------- #
+def test_kalshi_feed_blip_within_grace_preserves_queue(tmp_path):
+    koc = _KalshiOC()
+    ex, _ = _exec_kalshi(tmp_path, kalshi_oc=koc)
+    ex.kalshi_feed_grace_s = 20.0
+    ex.roll_day(_DT)
+    store = _Store(kalshi_ask=0.60, poly_best_ask=0.55)
+    c = _cand_kalshi()
+    ex.place_or_reprice(c, _dec(0.46, hedge_ask=0.55), None, store, _DT, 100.0, "pre")
+    assert ex.open_count() == 1
+    ex.set_kalshi_feed_ok(True, _DT, 100.0)
+    ex.set_kalshi_feed_ok(False, _DT, 105.0)                 # blip begins
+    ex.set_kalshi_feed_ok(False, _DT, 110.0)                 # still down, only 5s (< 20s grace)
+    assert ex.open_count() == 1 and koc.cancels == []        # queue position preserved
+    assert ex.kalshi_feed_ok is True                         # NOT declared down within the grace
+    ex.set_kalshi_feed_ok(True, _DT, 111.0)                  # reconnected within grace -> no-op
+    assert ex.open_count() == 1 and koc.cancels == []
+
+
+def test_kalshi_feed_sustained_down_cancels_after_grace(tmp_path):
+    koc = _KalshiOC()
+    ex, _ = _exec_kalshi(tmp_path, kalshi_oc=koc)
+    ex.kalshi_feed_grace_s = 20.0
+    ex.roll_day(_DT)
+    store = _Store(kalshi_ask=0.60, poly_best_ask=0.55)
+    c = _cand_kalshi()
+    ex.place_or_reprice(c, _dec(0.46, hedge_ask=0.55), None, store, _DT, 100.0, "pre")
+    oid = ex.open_orders[c.key].order_id
+    ex.set_kalshi_feed_ok(True, _DT, 100.0)
+    ex.set_kalshi_feed_ok(False, _DT, 105.0)                 # down begins
+    ex.set_kalshi_feed_ok(False, _DT, 130.0)                 # 25s > 20s grace -> DOWN + cancel
+    assert ex.kalshi_feed_ok is False
+    assert koc.cancels == [oid] and ex.open_count() == 0
+
+
+def test_digest_line_includes_kalshi_flaps(tmp_path):
+    ex, _ = _exec(tmp_path)
+    sent = []
+    ex.telegram = sent.append
+    ex.digest_min = 15.0
+    ex.maybe_flush_digest(1.0)                               # primes _digest_since
+    ex.note_flap("kalshi", False, 10.0)
+    ex.note_flap("kalshi", True, 13.0)                       # flap #1, down 3s
+    ex.note_flap("kalshi", False, 20.0)
+    ex.note_flap("kalshi", True, 29.0)                       # flap #2, down 9s
+    ex.maybe_flush_digest(1.0 + 15 * 60 + 1)                 # window elapsed -> flush
+    assert sent and "kalshi ws 2 flaps" in sent[0] and "12s down" in sent[0]

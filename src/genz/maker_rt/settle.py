@@ -1,0 +1,178 @@
+"""SETTLED-P&L reconciliation — the venue-truth realized number for a hedged pair.
+
+The fill-time ``locked_pnl`` written on a ``hedge_locked`` row is an ESTIMATE (the walked hedge net at
+fill time). The REAL pnl of a hedged bet is known only once BOTH legs settle/redeem, and it must net
+BOTH venues — the rest leg AND the hedge leg — including settlement/redemption, not just the rest leg.
+
+This module is PURE + I/O-free at its core:
+
+  * ``net_pnl(legs)``   — sum costs + settlement values across the two legs -> {cost, revenue, net, roi}.
+  * ``settled_row(...)``— build the ``trade_settled`` ledger row (true net + ROI, human ``reason``).
+  * ``SettledPnlReconciler`` — given the maker's per-market cost basis (its own recorded legs) and the
+    venues' settlement reads, emit one ``trade_settled`` row per market, ONCE (idempotent). It never
+    raises into the caller; a venue read that fails just leaves that market un-reconciled (retried next
+    pass). The panel/summary lifetime pnl reads the aggregated settled rows, NOT the fill-time estimate.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any, Callable, Optional
+
+
+@dataclass
+class SettledLeg:
+    """One venue leg of a settled hedged pair, in VENUE-TRUTH dollars."""
+    venue: str                    # "kalshi" | "polymarket"
+    instrument: str               # kalshi ticker | poly token
+    side: str
+    shares: float
+    cost_usd: float               # what we PAID to acquire the leg (fills incl. fees)
+    settle_value_usd: float       # what we GOT BACK at settlement/redemption ($1/contract if it won)
+
+
+def net_pnl(legs: list) -> dict:
+    """Net realized pnl + ROI across BOTH legs: revenue (settlement/redemption) minus cost (fills)."""
+    cost = sum(max(0.0, float(l.cost_usd)) for l in legs)
+    revenue = sum(float(l.settle_value_usd) for l in legs)
+    net = revenue - cost
+    return {"cost": round(cost, 4), "revenue": round(revenue, 4), "net": round(net, 4),
+            "roi": round(net / cost, 6) if cost > 1e-9 else 0.0}
+
+
+def settled_row(*, sport: str, game: str, market_key: str, legs: list, settled_ts: str,
+                market_id: Optional[str] = None, extra_reason: str = "") -> dict:
+    """The ``trade_settled`` event row: VENUE-TRUTH net + ROI, with an auditable per-leg ``reason``.
+    ``settled_cost_usd`` rides on the row for the ROI denominator (read by state.record, dropped by the
+    CSV writer — it is not a column, like unwind_cost)."""
+    n = net_pnl(legs)
+    legdesc = "; ".join(
+        f"{l.venue} {l.side} {float(l.shares):g}sh cost ${float(l.cost_usd):.2f} -> ${float(l.settle_value_usd):.2f}"
+        for l in legs)
+    reason = (f"{market_id or game} SETTLED net ${n['net']:+.4f} ROI {n['roi'] * 100:+.2f}% "
+              f"on ${n['cost']:.2f} [{legdesc}]")
+    if extra_reason:
+        reason = f"{reason} {extra_reason}"
+    return {"event": "trade_settled", "mode": "live", "sport": sport, "phase": "settled",
+            "game": game, "market_key": market_key, "realized_pnl_usd": n["net"],
+            "settled_cost_usd": n["cost"], "fill_ts": settled_ts, "reason": reason}
+
+
+class SettledPnlReconciler:
+    """Pull BOTH venues' settlement/redemption for the maker's traded hedged pairs and emit a
+    ``trade_settled`` row (true net + ROI) per market — ONCE. Best-effort + idempotent."""
+
+    def __init__(self, *, kalshi: Any = None, poly: Any = None,
+                 record: Optional[Callable] = None, log: Any = None) -> None:
+        self.kalshi = kalshi                       # KalshiExec (get_settlements)
+        self.poly = poly                           # PolyExec (redemption inference / balance)
+        self.record = record or (lambda row, now: None)
+        self.log = log
+        self._settled_keys: set = set()            # (game, market_key) already reconciled
+
+    def reconcile(self, pairs: list, now: Any) -> list:
+        """``pairs``: the maker's traded hedged markets with per-leg COST BASIS, each:
+              {sport, game, market_key, settled_ts?,
+               kalshi:{ticker, side, shares, cost}, poly:{token, shares, cost}}
+        Returns the rows emitted this pass (also handed to ``record``)."""
+        if not pairs:
+            return []
+        settlements = self._kalshi_settlements_by_ticker()
+        emitted: list = []
+        for p in pairs:
+            key = (p.get("game"), p.get("market_key"))
+            if key in self._settled_keys:
+                continue
+            try:
+                row = self._reconcile_pair(p, settlements, now)
+            except Exception as exc:  # noqa: BLE001 — one bad market must not stop the sweep
+                if self.log:
+                    self.log.warning("[MAKER_RT][SETTLE] reconcile failed for %s: %s", key, exc)
+                row = None
+            if row is not None:
+                self._settled_keys.add(key)
+                self.record(row, now)
+                emitted.append(row)
+        return emitted
+
+    def already_settled(self, game: str, market_key: str) -> bool:
+        return (game, market_key) in self._settled_keys
+
+    def mark_settled(self, game: str, market_key: str) -> None:
+        """Seed a key as already-reconciled (e.g. a row backfilled offline) so we never double-count it."""
+        self._settled_keys.add((game, market_key))
+
+    # -- internals -----------------------------------------------------------
+    def _kalshi_settlements_by_ticker(self) -> dict:
+        """{ticker -> settlement dict} from GET /portfolio/settlements (best-effort; {} on any error)."""
+        if self.kalshi is None or not hasattr(self.kalshi, "get_settlements"):
+            return {}
+        try:
+            resp = self.kalshi.get_settlements()
+        except Exception as exc:  # noqa: BLE001
+            if self.log:
+                self.log.warning("[MAKER_RT][SETTLE] kalshi settlements read failed: %s", exc)
+            return {}
+        rows = resp.get("settlements") if isinstance(resp, dict) else resp
+        rows = rows or (resp.get("data") if isinstance(resp, dict) else None) or []
+        out: dict = {}
+        for s in rows:
+            if isinstance(s, dict) and (s.get("ticker") or s.get("market_ticker")):
+                out[s.get("ticker") or s.get("market_ticker")] = s
+        return out
+
+    def _reconcile_pair(self, p: dict, settlements: dict, now: Any) -> Optional[dict]:
+        """Net both legs once the Kalshi leg has settled. The Poly complement (the OPPOSITE outcome of the
+        same event) redeems 1:1 iff the Kalshi leg LOST — so one settlement read resolves both legs."""
+        k = p.get("kalshi") or {}
+        pl = p.get("poly") or {}
+        st = settlements.get(k.get("ticker"))
+        if st is None:                              # Kalshi leg not settled yet -> retry next pass
+            return None
+        result = str(st.get("market_result") or st.get("result") or "").lower()   # 'yes' | 'no'
+        k_shares = float(k.get("shares") or 0.0)
+        k_side = str(k.get("side") or "yes").lower()
+        k_won = (result == k_side) if result in ("yes", "no") else None
+        # Prefer the venue's own revenue figure; else $1/contract if the leg won.
+        rev = st.get("revenue")
+        if rev is None:
+            rev = st.get("settled_value") or st.get("payout")
+        if rev is not None:
+            k_settle = _to_dollars(rev)
+        elif k_won is not None:
+            k_settle = k_shares if k_won else 0.0
+        else:
+            return None                             # can't determine the result -> don't guess, retry
+        poly_shares = float(pl.get("shares") or 0.0)
+        if k_won is None:                           # revenue known but result unknown -> infer won from revenue
+            k_won = k_settle >= k_shares - 0.5
+        poly_settle = poly_shares if not k_won else 0.0   # complement wins iff the Kalshi leg lost
+        settled_ts = p.get("settled_ts") or _settle_ts(st, now)
+        legs = [
+            SettledLeg("kalshi", k.get("ticker") or "", k_side, k_shares,
+                       float(k.get("cost") or 0.0), k_settle),
+            SettledLeg("polymarket", pl.get("token") or "", "buy", poly_shares,
+                       float(pl.get("cost") or 0.0), poly_settle),
+        ]
+        return settled_row(sport=p.get("sport") or "", game=p.get("game") or "",
+                           market_key=p.get("market_key") or "", legs=legs, settled_ts=settled_ts,
+                           market_id=k.get("ticker"))
+
+
+def _to_dollars(v: Any) -> float:
+    """Kalshi settlement revenue is CENTS (integer) on some payloads, dollars on others. Values above a
+    few hundred are almost certainly cents for our sub-$100 pilot; scale them down."""
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return 0.0
+    return f / 100.0 if abs(f) >= 1000.0 else f
+
+
+def _settle_ts(st: dict, now: Any) -> str:
+    for k in ("settled_time", "settled_ts", "ts", "updated_ts"):
+        if st.get(k):
+            return str(st[k])
+    try:
+        return now.strftime("%Y-%m-%dT%H:%M:%SZ")
+    except Exception:  # noqa: BLE001
+        return ""
