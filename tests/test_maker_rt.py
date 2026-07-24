@@ -859,3 +859,61 @@ def test_churn_disarms_quotes_for_dropped_fight_on_reload():
     assert any(r["event"] == "expire" and r["reason"] == "churn_gone" for r in st.rows)
     # A print at the old level can no longer fill it (it's gone).
     assert drv.fills.consume_print(ref, 0.45, 999, ts=1.0) == []
+
+
+# --------------------------------------------------------------------------- #
+# SANITY CEILING: a computed edge above the plausible bound is a pricing/pairing bug
+# --------------------------------------------------------------------------- #
+def test_driver_sanity_ceiling_rejects_implausible_edge():
+    """An impossible pairing (both legs cheap -> ~89% net) is REJECTED as a probable pricing/pairing bug,
+    never quoted, and recorded as 'implausible_edge'. Mirrors the detector's max_plausible_roi_pct guard."""
+    from datetime import datetime, timezone
+    from src.genz.maker_rt.driver import QuoteDriver
+    from src.genz.maker_rt.universe import build_universe
+    future = "2027-01-01T00:00:00Z"
+    n = lambda side, tok, kt, ks: {"market_type": "ml2", "market_key": "ml2", "side": side,  # noqa: E731
+        "line": None, "kind": "2way", "poly_token_id": tok, "poly_side": side.title(),
+        "poly_fee_rate": 0.05, "kalshi_ticker": kt, "kalshi_side": ks}
+    tree = {"games": {"G1": {"away": "A", "home": "B", "kickoff_utc": future, "nodes": [
+        n("away", "TOK_A", "KX-1", "YES"), n("home", "TOK_B", "KX-1", "NO")]}}}
+    uni = build_universe({"mlb": tree}, now_ts=0.0, max_games=20, expire_before_kickoff_s=120)
+    st = _RecState()
+    drv = QuoteDriver(_cfg(), st)
+    drv.set_universe(uni)
+    bs = BookStore()
+    # IMPOSSIBLE pairing: rest joins ~0.06 AND the hedge NO ask is ~0.05 -> net ~89% (a real 2-way pays
+    # ~1%). yes_dollars 0.95 -> NO ask = 1-0.95 = 0.05 (the hedge complement).
+    bs.apply_poly(parsing.parse_poly_market({"event_type": "book", "asset_id": "TOK_A",
+        "bids": [{"price": "0.05", "size": "300"}], "asks": [{"price": "0.10", "size": "300"}]}))
+    bs.apply_kalshi(parsing.parse_kalshi({"type": "orderbook_snapshot", "sid": 1, "seq": 1,
+        "msg": {"market_ticker": "KX-1", "yes_dollars_fp": [["0.9500", "5000"]],
+                "no_dollars_fp": [["0.0400", "5000"]]}}))
+    now = datetime(2026, 7, 16, 18, 0, 0, tzinfo=timezone.utc)
+    drv.refresh_quotes(bs, now, now_ts=100.0)
+    assert not any(r["event"] == "quote" for r in st.rows)          # NEVER quoted
+    imp = [r for r in st.rows if r["event"] == "implausible_edge"]
+    assert len(imp) == 1 and float(imp[0]["net_at_quote"]) > 5.0    # rejected, edge well over the 5% ceiling
+
+
+def test_caps_and_ceiling_load_from_yaml(tmp_path):
+    """The raised caps + the sanity ceiling load at runtime, and the LiveCaps object picks up the per-pair
+    cap (proving the runtime object -- not just cfg -- governs)."""
+    from src.genz.maker_rt.caps import LiveCaps
+    y = tmp_path / "c.yaml"
+    y.write_text(
+        "maker_rt:\n"
+        "  max_plausible_edge_pct: 5.0\n"
+        "  live:\n"
+        "    quote_usd_max: 20\n"
+        "    max_daily_stake_usd: 300\n"
+        "    max_pair_stake_usd: 100\n"
+        "    max_daily_loss_usd: 50\n"
+        "    max_open_quotes: 2\n"
+        "    max_fills_per_day: 10\n")
+    cfg = mrt_config.load_maker_rt_config(config_path=str(y))
+    assert cfg.max_plausible_edge_pct == 5.0
+    assert cfg.live.quote_usd_max == 20.0 and cfg.live.max_daily_stake_usd == 300.0
+    assert cfg.live.max_pair_stake_usd == 100.0 and cfg.live.max_daily_loss_usd == 50.0
+    caps = LiveCaps(cfg.live)
+    assert caps.quote_usd_max == 20.0 and caps.max_pair_stake_usd == 100.0
+    assert caps.max_daily_stake_usd == 300.0 and caps.max_daily_loss_usd == 50.0

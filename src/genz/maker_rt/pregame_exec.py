@@ -108,6 +108,7 @@ class PregameLiveExecutor:
         self._stale_grace_s = 5.0                # don't release a just-placed order the venue hasn't indexed
         self._slot_released = 0                  # tracked orders released as stale (venue no longer resting)
         self._aged_out = 0                       # tracked orders cancelled by the age-out
+        self._implausible_refused = 0            # quotes rejected by the sanity ceiling (probable pricing bug)
         self._slot_wait_since: dict = {}         # candidate key -> ts it FIRST got a slot refusal (reset on place)
         self.slot_wait_max_s = 0.0               # longest any candidate is currently waiting for a slot (panel)
         self._refuse_log_at: dict = {}           # (candidate key, reason) -> last log ts (throttles slot-refusal spam)
@@ -1430,6 +1431,11 @@ class PregameLiveExecutor:
                 return key
         return None
 
+    def note_implausible(self) -> None:
+        """The driver rejected a quote whose computed edge exceeded the sanity ceiling (probable
+        pricing/pairing bug). Count it for the panel — a rising counter means the pairing needs review."""
+        self._implausible_refused += 1
+
     def open_count(self) -> int:
         return len(self.open_orders)
 
@@ -1463,6 +1469,7 @@ class PregameLiveExecutor:
                 # slot, and how many stale/aged slots we've reclaimed (the slot-starvation guards at work).
                 "max_open": self.caps.max_open_quotes, "slot_wait_max_s": round(self.slot_wait_max_s, 1),
                 "slot_released": self._slot_released, "aged_out": self._aged_out,
+                "implausible_refused": self._implausible_refused,
                 "viable_directions": sorted(self._viable_directions),
                 "max_quote_age_s": self.max_quote_age_s,
                 "median_quote_age_s": med, "time_at_best_share": atbest, "quotes": quotes}

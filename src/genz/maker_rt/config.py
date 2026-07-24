@@ -215,6 +215,11 @@ class MakerRtConfig:
     max_games: int = 20                    # nearest-by-kickoff games to quote across both sports
     quote_usd: float = 100.0               # shadow quote notional per node/direction
     target_net: float = 0.010              # min net edge the maker combo must clear at the quote price
+    # SANITY CEILING: a computed edge above this (%) is almost certainly a PRICING/PAIRING bug (wrong
+    # markets paired, a stale/one-sided book), NOT a real opportunity — the quote is REJECTED and logged
+    # loudly, never placed. Same doctrine as the detector's max_plausible_roi_pct (8%); the maker's own
+    # edges are ~1%, so 5% is a wide bug-catcher, not a live constraint.
+    max_plausible_edge_pct: float = 5.0
     debounce_ms: int = 250                 # quote-engine debounce
     expire_before_kickoff_s: int = 120     # cancel/expire all quotes at kickoff - this
     poly_fee_rate: float = 0.05            # Polymarket sports taker rate (hedge-fee model)
@@ -278,9 +283,11 @@ def load_maker_rt_config(config_path: Optional[str] = None,
     cfg = MakerRtConfig()
     for name in ("max_games", "quote_usd", "target_net", "debounce_ms", "expire_before_kickoff_s",
                  "poly_fee_rate", "head_poll_s", "ping_s", "reprice_min_ticks", "min_rest_s",
-                 "hedge_persist_s", "telegram_digest_min", "reserve_per_direction"):
+                 "hedge_persist_s", "telegram_digest_min", "reserve_per_direction",
+                 "max_plausible_edge_pct"):
         if blk.get(name) is not None:
             setattr(cfg, name, blk[name])
+    cfg.max_plausible_edge_pct = float(cfg.max_plausible_edge_pct)
     cfg.reserve_per_direction = int(cfg.reserve_per_direction)
     cfg.max_games = int(cfg.max_games)
     cfg.quote_usd = float(cfg.quote_usd)

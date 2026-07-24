@@ -137,17 +137,22 @@ def _startup_stray_cancel_armed(poly_oc: Any, kalshi_oc: Any, log: Any) -> int:
 
 
 def _armed_startup_alert(cfg: Any, pre_armed: bool, inplay_armed: bool, telegram: Any, swept: int,
-                         log: Any) -> None:
+                         log: Any, caps: Any = None) -> None:
     phases = "+".join(p for p, on in (("pre", pre_armed), ("inplay", inplay_armed)) if on) or "none"
     # Name the ACTUALLY-enabled directions (this used to hardcode "rest-poly" and kept saying so after
     # rest_kalshi went live) and the per-direction slot reserve, so the banner states the real posture.
     dirs = ",".join(sorted(str(d).replace("_", "-") for d in getattr(cfg, "directions", ("rest_poly",))))
+    # Print the caps from the LIVE LiveCaps OBJECT (not cfg) so the banner proves what actually loaded +
+    # governs — incl. the per-pair cap and the sanity ceiling. Falls back to cfg if no caps passed.
+    c = caps or cfg.live
     msg = ("[MAKER_RT][LIVE] LIVE ARMED (%s; phases: %s). stray-cancel=%d. SHARED caps: "
-           "quote<=$%.0f, daily_stake<=$%.0f, open<=%d (reserve/direction %d), fills/day<=%d, loss<=$%.0f. "
+           "quote<=$%.0f, pair<=$%.0f, daily_stake<=$%.0f, open<=%d (reserve/direction %d), "
+           "fills/day<=%d, loss<=$%.0f, sanity_ceiling %.1f%%. "
            "in-play circuit: first-fill pause %.0fs, day-halt at locked_net %.1f%%."
-           % (dirs or "none", phases, swept, cfg.live.quote_usd_max, cfg.live.max_daily_stake_usd,
-              cfg.live.max_open_quotes, int(getattr(cfg, "reserve_per_direction", 0)),
-              cfg.live.max_fills_per_day, cfg.live.max_daily_loss_usd,
+           % (dirs or "none", phases, swept, c.quote_usd_max,
+              getattr(c, "max_pair_stake_usd", cfg.live.max_pair_stake_usd), c.max_daily_stake_usd,
+              c.max_open_quotes, int(getattr(cfg, "reserve_per_direction", 0)),
+              c.max_fills_per_day, c.max_daily_loss_usd, getattr(cfg, "max_plausible_edge_pct", 5.0),
               cfg.live_inplay.first_fill_pause_s, cfg.live_inplay.halt_locked_net * 100))
     log.warning(msg)
     if telegram is None:
@@ -233,7 +238,7 @@ async def _run(cfg: Any, log: Any) -> int:
                                        poly_oc, in_flight, telegram, state, log)
     if pregame_exec is not None:
         swept = _startup_stray_cancel_armed(poly_oc, kalshi_oc, log)
-        _armed_startup_alert(cfg, gate.armed, inplay_gate.armed, telegram, swept, log)
+        _armed_startup_alert(cfg, gate.armed, inplay_gate.armed, telegram, swept, log, pregame_exec.caps)
         _ensure_ctf_approval(poly_oc, log)                # SELL side needs CTF approval; set once if missing
         try:
             orph = pregame_exec.reconcile_positions(now0)  # STARTUP reconciliation: catch a prior-run orphan

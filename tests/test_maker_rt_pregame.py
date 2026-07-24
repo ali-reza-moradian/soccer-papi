@@ -520,6 +520,9 @@ class _FakePregame:
         self.open_orders.pop(key, None)
         return True
 
+    def note_implausible(self):
+        self.implausible = getattr(self, "implausible", 0) + 1
+
 
 class _DriverState:
     def __init__(self):
@@ -1043,11 +1046,12 @@ def test_driver_hedge_thin_persistence_prefilter():
     node3 = ("mlb", "G1", "ml2")
     now = datetime(2026, 7, 16, 18, tzinfo=timezone.utc)
 
-    # Deep on BOTH sides (bid 0.40 / ask 0.60, hedge NO 0.50) -> away rest-poly quote 0.41 viable & not-behind,
-    # and no sibling direction refuses hedge_too_thin (which would trip the node's cooldown and mask this test).
+    # Deep on BOTH sides (bid 0.44 / ask 0.60, hedge NO 0.50) -> away rest-poly quote 0.45 viable & not-behind
+    # with a REALISTIC ~3.25% net (below the 5% sanity ceiling), and no sibling direction refuses
+    # hedge_too_thin (which would trip the node's cooldown and mask this test).
     def viable_book(bs, ts, seq):
         bs.apply_poly(parsing.parse_poly_market({"event_type": "book", "asset_id": "TOK_A",
-            "bids": [{"price": "0.40", "size": "5000"}], "asks": [{"price": "0.60", "size": "5000"}]}), ts)
+            "bids": [{"price": "0.44", "size": "5000"}], "asks": [{"price": "0.60", "size": "5000"}]}), ts)
         bs.apply_kalshi(parsing.parse_kalshi({"type": "orderbook_snapshot", "sid": 1, "seq": seq,
             "msg": {"market_ticker": "KX-1", "yes_dollars_fp": [["0.5000", "5000"]],
                     "no_dollars_fp": [["0.5000", "5000"]]}}), ts)
@@ -1233,3 +1237,26 @@ def test_digest_line_includes_kalshi_flaps(tmp_path):
     ex.note_flap("kalshi", True, 29.0)                       # flap #2, down 9s
     ex.maybe_flush_digest(1.0 + 15 * 60 + 1)                 # window elapsed -> flush
     assert sent and "kalshi ws 2 flaps" in sent[0] and "12s down" in sent[0]
+
+
+# --------------------------------------------------------------------------- #
+# SANITY CEILING panel counter + raised per-pair cap ($100)                     #
+# --------------------------------------------------------------------------- #
+def test_snapshot_reports_implausible_refused(tmp_path):
+    ex, _ = _exec(tmp_path)
+    assert ex.snapshot().get("implausible_refused") == 0
+    ex.note_implausible()
+    ex.note_implausible()
+    assert ex.snapshot()["implausible_refused"] == 2      # panel counter for the sanity-ceiling rejections
+
+
+def test_pair_cap_100_refuses_pair_over_100():
+    """With max_pair_stake_usd raised to $100, a $20 rest leg + ~$95 hedge ($115 pair) is refused; a
+    smaller pair is allowed. Refusal is a per-quote sizing block, not a day-halt."""
+    caps = LiveCaps(mrt_config.LiveConfig(quote_usd_max=20, max_pair_stake_usd=100, max_daily_stake_usd=300))
+    over = LiveCaps.projected_pair_stake(0.20, 100, 0.95, 100)     # $20 + $95 = $115
+    assert over == pytest.approx(115.0)
+    ok, reason = caps.can_place(over)
+    assert ok is False and reason == "max_pair_stake_usd" and caps.halted is False
+    under = LiveCaps.projected_pair_stake(0.10, 100, 0.30, 100)    # $10 + $30 = $40
+    assert caps.can_place(under) == (True, "ok")

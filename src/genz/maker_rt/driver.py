@@ -80,6 +80,9 @@ class QuoteDriver:
         self.thin_cooldown_until: dict = {}  # node3 -> ts a hedge-thin cooldown expires (after 3 in 10 min)
         self.hedge_persist_s = float(getattr(cfg, "hedge_persist_s", 10.0))  # continuous-depth pre-filter window
         self._achv_sample_ts: dict = {}      # node3 -> last achievable_sample CSV ts (1/min throttle)
+        # SANITY CEILING (%): a computed edge above this is a probable pricing/pairing bug, not an
+        # opportunity -> REJECT + loud log, never quote/place (mirrors the detector's plausible-ROI guard).
+        self.max_plausible_edge_pct = float(getattr(cfg, "max_plausible_edge_pct", 5.0))
 
     # -- universe ----------------------------------------------------------
     def set_universe(self, universe: list, now: Any = None) -> None:
@@ -265,6 +268,25 @@ class QuoteDriver:
                                 poly_rate=c.poly_rate, hedge_tick=hedge_tick)
             prev = self.prev.get(c.key)
             self.prev[c.key] = dec
+            # SANITY CEILING: a computed edge above the plausible bound is almost certainly a PRICING/
+            # PAIRING bug (wrong markets paired, a stale/one-sided book), NOT a real opportunity. REJECT +
+            # log loudly, never quote/place — same doctrine as the detector's max_plausible_roi_pct guard.
+            # Counted for the panel; logged/recorded ONCE per transition (a mispriced node ticks ~4x/s).
+            if dec.net_at_quote is not None and dec.net_at_quote * 100.0 > self.max_plausible_edge_pct + 1e-9:
+                self._expire_if_open(c, now, "implausible_edge", phase)
+                if self.last_event.get(c.key) != "implausible_edge":
+                    if self.log:
+                        self.log.warning("[MAKER_RT] REJECTED implausible edge %s %s %s [%s]: net %.2f%% > "
+                                         "%.1f%% ceiling @ %.4f (hedge_ask %.4f) — probable pricing/pairing "
+                                         "bug, NOT quoted.", c.game, c.market_key, c.direction, phase,
+                                         dec.net_at_quote * 100.0, self.max_plausible_edge_pct,
+                                         dec.quote_price, dec.hedge_best_ask if dec.hedge_best_ask else -1.0)
+                    self.state.record(self._row("implausible_edge", c, now, dec, phase, tick=tick), now)
+                    if self.pregame_exec is not None:
+                        self.pregame_exec.note_implausible()
+                self.last_event[c.key] = "implausible_edge"
+                self.viable_since.pop(c.key, None)
+                continue
             # PER-SPORT poly-leg cap: skip a direction whose Polymarket leg prices above the cap.
             if poly_leg_exceeds_cap(c.rest_venue, dec.quote_price, dec.hedge_best_ask, c.poly_leg_cap):
                 self._expire_if_open(c, now, "poly_leg_cap", phase)

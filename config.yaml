@@ -486,6 +486,10 @@ maker_rt:
   # realized locked-net distribution) together with unwind_rate_recent. If p10 is negative or the recent
   # unwind rate climbs, 0.6% was too thin.
   target_net: 0.006
+  # SANITY CEILING (%): a computed edge above this is almost certainly a PRICING/PAIRING bug, not an
+  # opportunity -> the quote is REJECTED + logged loudly, never placed (same doctrine as the detector's
+  # max_plausible_roi_pct 8% guard). The maker's real edges are ~1%, so 5% is a wide bug-catcher.
+  max_plausible_edge_pct: 5.0
   directions: [rest_poly, rest_kalshi]   # LIVE rest directions (both SMOKE-proven); shared caps + one-in-flight span them
   reserve_per_direction: 1          # of live.max_open_quotes, GUARANTEE 1 slot to EACH enabled direction (rest_kalshi can't monopolize both)
   debounce_ms: 250                  # quote-engine debounce
@@ -522,11 +526,12 @@ maker_rt:
   live:
     enabled: true
     arm_file: data/ops/ARM_MAKER
-    quote_usd_max: 5                # PILOT: rest-leg notional cap; hedged pair ~ $10 total (the per-bet limit)
-    max_daily_stake_usd: 100        # PILOT: sum of ALL legs committed today (fills+hedges+unwinds); breach -> halt+Telegram
+    quote_usd_max: 20               # rest-leg notional cap (raised from $5 pilot)
+    max_daily_stake_usd: 300        # sum of ALL legs committed today (fills+hedges+unwinds); breach -> halt+Telegram (raised from $100)
+    max_pair_stake_usd: 100         # PER-PAIR cap: rest + worst-case hedge for ONE bet (must scale with quote_usd_max -- a $20 rest leg pairs to far above $25; TBTOR was $1.02 rest + $15.81 hedge)
     max_open_quotes: 2
     max_fills_per_day: 10
-    max_daily_loss_usd: 25
+    max_daily_loss_usd: 50          # realized-loss auto-halt (raised from $25: 4x-larger bets mean one bad unwind could otherwise halt the day)
     hedge_timeout_ms: 3000          # miss/partial after this -> market-unwind the fill + freeze market
     unwind_on_hedge_fail: true
     # WS-INDEPENDENT FILL AUTHORITY. While ANY live order is open we poll its REST order status AND sweep
