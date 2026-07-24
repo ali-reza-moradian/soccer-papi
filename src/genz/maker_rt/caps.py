@@ -46,44 +46,48 @@ def direction_slot_ok(direction: str, open_by_direction: dict, enabled_direction
     return mine < max_open - reserved_for_others
 
 
-#: the constraint names the binding-constraint diagnostic can emit (the panel/digest keys).
-BINDING_CONSTRAINTS = ("quote_usd_max", "pair_cap", "hedge_depth", "book_depth", "venue_minimum")
+#: the SIZE-limiting constraints, in tie-break priority (caps before depth), plus the refusal marker.
+BINDING_CONSTRAINTS = ("quote_usd_max", "pair_cap", "daily_stake", "hedge_depth", "book_depth")
+_BINDING_ORDER = {n: i for i, n in enumerate(BINDING_CONSTRAINTS)}
 
 
-def binding_constraint(price: float, *, quote_usd_max: float, max_pair_stake_usd: float,
-                       hedge_ask: Optional[float], hedge_depth: Optional[float],
-                       book_depth: Optional[float], min_floor: int) -> tuple[str, float]:
-    """WHAT actually limits the rest-leg SIZE, so we can tell whether raising caps would grow fills or
-    whether depth (or the pilot minimum) is the ceiling.
+def plan_size(price: float, hedge_ask: Optional[float], *, quote_usd_max: float,
+              max_pair_stake_usd: float, daily_stake_headroom: float, hedge_depth: Optional[float],
+              book_depth: Optional[float], venue_minimum: int) -> dict:
+    """The LARGEST whole-share rest-leg size that fits EVERY constraint — the venue minimum is a FLOOR,
+    NEVER a ceiling. (The old ``min(floor_min, cap)`` clamped every quote DOWN to 5 shares, so a $2.80
+    fill rested against a $20 cap.) Take the smallest of the resource allowances:
 
-    The maker rests the pilot MINIMUM (``min_floor`` shares) by design — ``LiveCaps.size_shares`` never
-    scales up to the notional cap. So compute the largest whole-share count each resource would allow
-    and take the smallest:
+      * ``quote_usd_max`` — rest-leg notional cap:            quote_usd_max / price
+      * ``pair_cap``      — whole-pair stake cap:             max_pair_stake_usd / (price + hedge_ask)
+      * ``daily_stake``   — remaining daily budget:           daily_stake_headroom / (price + hedge_ask)
+      * ``hedge_depth``   — resting hedge shares at the ask:  hedge_depth
+      * ``book_depth``    — rest-book liquidity:              book_depth
 
-      * ``quote_usd_max`` — the rest-leg notional cap:            floor(quote_usd_max / price)
-      * ``pair_cap``      — the whole-pair stake cap:             floor(max_pair_stake_usd /(price+hedge))
-      * ``hedge_depth``   — resting hedge shares available:       floor(hedge_depth)
-      * ``book_depth``    — rest-book liquidity that could fill:  floor(book_depth)
-
-    If EVERY resource would allow >= ``min_floor``, the size is set by the pilot minimum -> return
-    ``('venue_minimum', min_floor)`` (raising caps/finding more depth would NOT grow the fill). Otherwise
-    return the single smallest resource and its share ceiling (raising THAT one would help). PURE."""
+    ``pair_cap``/``daily_stake`` divide by the PAIR notional (both legs count toward those caps), so the
+    resulting size can never breach them. floor() to whole shares. If that largest size is BELOW the
+    venue minimum, the quote is REFUSED (``binding='below_venue_minimum'``) — we never clamp DOWN to the
+    minimum. Returns {size, binding, refused, limiter}. PURE."""
     px = max(float(price), 1e-9)
-    allow: dict = {"quote_usd_max": int(float(quote_usd_max) / px + 1e-9)}
-    if hedge_ask:
-        denom = px + float(hedge_ask)
-        if denom > 1e-9:
-            allow["pair_cap"] = int(float(max_pair_stake_usd) / denom + 1e-9)
-    if hedge_depth is not None:
-        allow["hedge_depth"] = int(float(hedge_depth) + 1e-9)
-    if book_depth is not None:
-        allow["book_depth"] = int(float(book_depth) + 1e-9)
-    # Smallest allowance wins; ties break by the BINDING_CONSTRAINTS order (caps before depth).
-    order = {n: i for i, n in enumerate(BINDING_CONSTRAINTS)}
-    name, ceiling = min(allow.items(), key=lambda kv: (kv[1], order.get(kv[0], 99)))
-    if ceiling >= int(min_floor):
-        return "venue_minimum", float(min_floor)
-    return name, float(ceiling)
+    ha = max(float(hedge_ask or 0.0), 0.0)
+    pair_px = px + ha if (px + ha) > 1e-9 else px
+    inf = float("inf")
+    allow = {
+        "quote_usd_max": float(quote_usd_max) / px,
+        "pair_cap": float(max_pair_stake_usd) / pair_px,
+        "daily_stake": max(0.0, float(daily_stake_headroom)) / pair_px,
+        "hedge_depth": float(hedge_depth) if hedge_depth is not None else inf,
+        "book_depth": float(book_depth) if book_depth is not None else inf,
+    }
+    limiter = min(allow, key=lambda k: (allow[k], _BINDING_ORDER.get(k, 99)))
+    size = int(math.floor(min(allow.values()) + 1e-9))
+    vmin = int(max(1, venue_minimum))
+    if size < vmin:
+        # The market/caps can't even support the venue minimum -> REFUSE the quote (never clamp down).
+        return {"size": 0, "binding": "below_venue_minimum", "refused": True, "limiter": limiter,
+                "max_fit": size, "venue_minimum": vmin}
+    return {"size": size, "binding": limiter, "refused": False, "limiter": limiter,
+            "max_fit": size, "venue_minimum": vmin}
 
 
 class LiveCaps:
@@ -194,13 +198,20 @@ class LiveCaps:
             return
         self.halted = True
         self.halt_reason = reason
-        msg = (f"[MAKER_RT][LIVE] AUTO-HALT ({reason}): stake_today=${self.stake_today:.2f} "
-               f"pnl_today=${self.pnl_today:.2f} -- pre-game quoting stopped for the day.")
+        # LOG the technical reason; send a PLAIN, self-explanatory STOPPED alert to Telegram.
         if self.log:
-            self.log.warning(msg)
+            self.log.warning("[MAKER_RT][LIVE] AUTO-HALT (%s): stake_today=$%.2f pnl_today=$%.2f — "
+                             "quoting stopped for the day.", reason, self.stake_today, self.pnl_today)
+        human = {
+            "max_daily_loss_usd": (f"I hit today's loss limit (down ${abs(self.pnl_today):.2f}) — I've "
+                                   f"stopped placing new bets for the day."),
+            "max_daily_stake_usd": (f"I've used today's full budget (${self.stake_today:.2f} of "
+                                    f"${self.max_daily_stake_usd:.0f}) — no new bets today."),
+        }.get(reason, "I've stopped placing new bets for the day (a daily safety limit was reached).")
         if self.telegram:
             try:
-                self.telegram(msg)
+                self.telegram(f"🔴 STOPPED · {human} Anything already placed stays fully hedged; "
+                              f"I resume automatically tomorrow.")
             except Exception as exc:  # noqa: BLE001 — a telegram failure never blocks the halt
                 if self.log:
                     self.log.warning("[MAKER_RT][LIVE] telegram halt-alert failed: %s", exc)

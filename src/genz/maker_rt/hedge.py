@@ -16,7 +16,33 @@ from dataclasses import dataclass, field
 from typing import Any, Optional
 
 from ... import bookmath
+from ...executor.fees_sizing import kalshi_fee_usd, poly_fee_usd
 from .quotes import hedge_taker_fee
+
+
+def kalshi_actual_fee(res: Any, filled: int, price: float) -> float:
+    """ACTUAL Kalshi taker fee in DOLLARS for a hedge fill. Prefer the venue's reported fee when it is
+    present AND agrees with the official formula (a guard against a cents/dollars unit slip — the same
+    class of bug as the $500-for-$5 settlement), else the exact official ``ceil_to_cent(0.07·C·P·(1-P))``
+    which EQUALS ``average_fee_paid`` for a taker fill by construction. Computed from the ACTUAL fill
+    count + fill price (venue truth), never the pre-fire quoted ask."""
+    formula = kalshi_fee_usd(int(filled), float(price))
+    sources = [res, (res or {}).get("raw") if isinstance(res, dict) else None]
+    for src in sources:
+        if not isinstance(src, dict):
+            continue
+        for k in ("average_fee_paid", "fee_paid", "fees_paid", "fee"):
+            v = src.get(k)
+            if v is None:
+                continue
+            try:
+                rep = abs(float(v))
+            except (TypeError, ValueError):
+                continue
+            for cand in (rep, rep / 100.0):                    # accept dollars or cents, if it matches
+                if abs(cand - formula) <= max(0.02, formula * 0.5):
+                    return round(cand, 6)
+    return round(formula, 6)
 
 
 def mark_hedge(ask_ladder: list, size: float, hedge_venue: str,
@@ -57,6 +83,7 @@ class HedgeResult:
     status: str                      # "locked" | "unwound" | "partial_unwound" | "error"
     hedged_shares: float = 0.0
     hedge_avg_price: Optional[float] = None
+    hedge_fee: Optional[float] = None    # ACTUAL taker fee paid on the hedge leg ($) — fee-honest pnl/net
     locked_pnl: Optional[float] = None
     unwind_cost: Optional[float] = None
     freeze_market: bool = False
@@ -96,13 +123,14 @@ class LiveHedger:
         filled = int(res.get("fill_count", 0) or 0)
         avg = res.get("avg_price")
         if filled >= size:
-            fee = hedge_taker_fee("kalshi", avg or limit, self.poly_rate) * filled
-            pnl = (1.0 - float(fill.get("price") or 0) - (avg or limit)) * filled - fee
+            px = float(avg if avg is not None else limit)
+            fee = kalshi_actual_fee(res, filled, px)           # ACTUAL fee (venue/official), not the model
+            pnl = (1.0 - float(fill.get("price") or 0) - px) * filled - fee
             if self.log:
-                self.log.info("[MAKER_RT][LIVE] hedge LOCKED %s x%d @ %.4f -> pnl $%.2f",
-                              ticker, filled, avg or limit, pnl)
-            return HedgeResult("locked", hedged_shares=filled, hedge_avg_price=avg or limit,
-                               locked_pnl=round(pnl, 4), detail={"kalshi": res})
+                self.log.info("[MAKER_RT][LIVE] hedge LOCKED %s x%d @ %.4f (fee $%.3f) -> pnl $%.2f",
+                              ticker, filled, px, fee, pnl)
+            return HedgeResult("locked", hedged_shares=filled, hedge_avg_price=px,
+                               hedge_fee=fee, locked_pnl=round(pnl, 4), detail={"kalshi": res})
         # MISS / PARTIAL -> report the shortfall; the executor does the VERIFIED unwind + freezes.
         status = "partial" if filled > 0 else "missed"
         if self.log:
@@ -128,14 +156,14 @@ class LiveHedger:
         filled = float((res or {}).get("shares") or 0.0) if isinstance(res, dict) else 0.0
         avg = res.get("avg_price") if isinstance(res, dict) else None
         if filled >= size - 1e-9:
-            px = avg if avg is not None else (best_ask or 0.0)
-            fee = hedge_taker_fee("polymarket", px, self.poly_rate) * filled
+            px = float(avg if avg is not None else (best_ask or 0.0))
+            fee = poly_fee_usd(filled, px, self.poly_rate)     # ACTUAL Poly taker fee (maker rest = 0)
             pnl = (1.0 - float(fill.get("price") or 0) - px) * filled - fee
             if self.log:
-                self.log.info("[MAKER_RT][LIVE] poly hedge LOCKED %s x%.0f @ %.4f -> pnl $%.2f",
-                              str(token)[:12], filled, px, pnl)
-            return HedgeResult("locked", hedged_shares=filled, hedge_avg_price=avg,
-                               locked_pnl=round(pnl, 4), detail={"poly": res})
+                self.log.info("[MAKER_RT][LIVE] poly hedge LOCKED %s x%.0f @ %.4f (fee $%.3f) -> pnl $%.2f",
+                              str(token)[:12], filled, px, fee, pnl)
+            return HedgeResult("locked", hedged_shares=filled, hedge_avg_price=px,
+                               hedge_fee=round(fee, 6), locked_pnl=round(pnl, 4), detail={"poly": res})
         status = "partial" if filled > 0 else "missed"
         if self.log:
             self.log.warning("[MAKER_RT][LIVE] poly hedge %s %s (got %.0f/%.0f) -> caller must unwind.",

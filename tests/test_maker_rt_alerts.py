@@ -1,113 +1,117 @@
-"""The human-readable alert formatter (src/genz/maker_rt/alerts.py)."""
+"""Plain-language Telegram alerts (src/genz/maker_rt/alerts.py): every alert is self-explanatory to a
+non-technical reader — real names, $ + cents-price + shares + venue + phase, and always the WHY. Never
+a ticker or a UUID."""
 from __future__ import annotations
 
 from src.genz.maker_rt import alerts
 
 
 # --------------------------------------------------------------------------- #
-# subject: real team/player name, never the ticker                              #
+# names: real team/player, never a ticker                                       #
 # --------------------------------------------------------------------------- #
-def test_subject_tennis_and_ufc_use_the_player_name():
-    assert alerts.subject("tennis", "KXWTAMATCH-26JUL24KORKAL", "match_winner", "kalinina") == "Kalinina ML"
-    assert alerts.subject("ufc", "KXUFCFIGHT-26JUL25GIBHUS", "fight_winner", "gibson") == "Gibson ML"
+def test_bet_name_and_matchup_use_real_names():
+    assert alerts.bet_name("tennis", "KXATP-...", "match_winner", "hanfmann") == "Hanfmann"
+    assert alerts.matchup("tennis", "G", "match_winner", "hanfmann", "Hanfmann vs Halys") == "Hanfmann vs Halys"
+    assert alerts.other_name("Hanfmann", "Hanfmann vs Halys") == "Halys"
+    assert alerts.bet_name("mlb", "G", "ml2", "away", "Blue Jays vs Red Sox") == "Blue Jays"
+    assert alerts.bet_name("soccer", "G", "team_total|portland|0.5", "over") == "Portland O0.5"
 
 
-def test_subject_mlb_moneyline_resolves_home_away_via_teams():
-    assert alerts.subject("mlb", "26JUL241915TORBOS", "ml2", "away", "Blue Jays vs Red Sox") == "Blue Jays ML"
-    assert alerts.subject("mlb", "26JUL241915TORBOS", "ml2", "home", "Blue Jays vs Red Sox") == "Red Sox ML"
-
-
-def test_subject_team_total():
-    assert alerts.subject("soccer", "G", "team_total|portland|0.5", "over") == "Portland O0.5"
-    assert alerts.subject("soccer", "G", "team_total|kansas city|2.5", "under") == "Kansas City U2.5"
-
-
-def test_subject_game_total():
-    assert alerts.subject("soccer", "G", "total_goals|5.5", "over") == "Total O5.5"
-
-
-def test_subject_never_returns_the_bare_ticker():
-    # an unrecognised market still yields a titled side, not the raw game ticker
-    out = alerts.subject("mlb", "KXWEIRD-TICKER", "some_new_market", "yankees")
-    assert "KXWEIRD" not in out and out == "Yankees"
-
-
-def test_head_has_sport_emoji_and_league():
-    assert alerts.head("mlb", "G", "ml2", "away", "Yankees vs Sox") == "⚾ MLB · Yankees ML"
-    assert alerts.head("tennis", "G", "match_winner", "sinner").startswith("🎾 Tennis · Sinner")
+def test_no_ticker_or_uuid_ever_leaks():
+    out = alerts.format_event("placed", sport="ufc", game="KXUFCFIGHT-26JUL25GIBHUS", market_key="fight_winner",
+                              side="gibson", venue="polymarket", phase="pre", price=0.16, size=100,
+                              hedge_venue="kalshi", hedge_price=0.82)
+    assert "KXUFC" not in out and "Gibson" in out
 
 
 # --------------------------------------------------------------------------- #
-# format_event: one line, emoji-led, all the facts                              #
+# each alert type renders the required facts                                     #
 # --------------------------------------------------------------------------- #
-def test_placed_line():
-    out = alerts.format_event("placed", sport="soccer", game="G", market_key="team_total|portland|0.5",
-                              side="over", venue="kalshi", phase="pre", price=0.86, size=5)
-    assert out == "🟢 PLACED ⚽ Soccer · Portland O0.5 · $4.30 @ 86c · Kalshi · pre"
+def test_placed_is_self_explanatory():
+    out = alerts.format_event("placed", sport="tennis", game="G", market_key="match_winner", side="hanfmann",
+                              teams="Hanfmann vs Halys", venue="polymarket", phase="inplay", price=0.56,
+                              size=22, hedge_venue="kalshi", hedge_price=0.41, exp_net_usd=0.31,
+                              exp_net_pct=1.3, open_now=2, max_open=2, fills_today=3, stake_today=47.0,
+                              stake_cap=300.0)
+    assert out.startswith("🟢 PLACED · 🎾 Tennis · Hanfmann vs Halys")
+    assert "Offering $12.32 on Hanfmann to win @ 56¢ (22 shares) on Polymarket · in-play" in out
+    assert "hedge on Kalshi @ 41¢" in out and "locks +$0.31" in out
+    assert "open 2/2" in out and "3 fills, $47.00 of $300.00 used" in out
 
 
-def test_repriced_line():
-    out = alerts.format_event("repriced", sport="mlb", game="G", market_key="ml2", side="away",
-                              teams="Yankees vs Sox", venue="polymarket", phase="inplay",
-                              old_price=0.62, new_price=0.64)
-    assert out == "🔵 REPRICED ⚾ MLB · Yankees ML · 62c → 64c · Poly · in-play"
+def test_filled_names_the_bet_and_says_hedging():
+    out = alerts.format_event("filled", sport="tennis", game="G", market_key="match_winner", side="hanfmann",
+                              teams="Hanfmann vs Halys", price=0.56, size=22)
+    assert out.startswith("💰 FILLED! · 🎾 Tennis · Hanfmann vs Halys")
+    assert "Someone took $12.32 of Hanfmann @ 56¢ (22 sh) · buying the hedge now…" in out
 
 
-def test_cancelled_line_humanizes_reason():
-    out = alerts.format_event("cancelled", sport="mlb", game="G", market_key="ml2", side="away",
-                              teams="Yankees vs Sox", reason="reprice_cross")
-    assert out == "⚪ CANCELLED ⚾ MLB · Yankees ML · reason: price moved"
-    aged = alerts.format_event("cancelled", sport="mlb", game="G", market_key="ml2", side="home",
-                               teams="Yankees vs Sox", reason="age_out")
-    assert "held too long (aged out)" in aged
+def test_locked_shows_both_legs_risk_payout_and_running_totals():
+    out = alerts.format_event("locked", sport="tennis", game="G", market_key="match_winner", side="hanfmann",
+                              teams="Hanfmann vs Halys", venue="polymarket", hedge_venue="kalshi",
+                              rest_price=0.56, rest_shares=22, hedge_price=0.41, hedge_shares=22,
+                              hedge_fee=0.08, pnl=0.31, net_pct=1.45, fills_today=4, today_pnl=1.12,
+                              lifetime_pnl=1.37)
+    assert "profit is GUARANTEED either way" in out
+    assert "Bought: Hanfmann $12.32 @ 56¢ (Poly) + Halys $9.02 @ 41¢ (Kalshi)" in out
+    assert "Total risked $21.42 → pays $22.00 · 💵 net +$0.31 after fees (+1.45% ROI)" in out
+    assert "📈 Today: 4 fills · +$1.12 · Lifetime: +$1.37" in out
 
 
-def test_filled_line():
-    out = alerts.format_event("filled", sport="tennis", game="G", market_key="match_winner",
-                              side="sinner", price=0.95, size=5)
-    assert out == "💰 FILLED 🎾 Tennis · Sinner ML · $4.75 @ 95c · hedging…"
+def test_settled_names_the_winner_and_lifetime():
+    out = alerts.format_event("settled", sport="tennis", game="G", market_key="match_winner", side="hanfmann",
+                              teams="Hanfmann vs Halys", winner="Halys", payout=22.00, cost=21.42,
+                              pnl=0.31, roi_pct=1.45, lifetime_pnl=1.37)
+    assert out.startswith("🏁 SETTLED · 🎾 Tennis · Hanfmann vs Halys · Halys won")
+    assert "Collected $22.00 on $21.42 · 💵 +$0.31 (+1.45%) · Lifetime +$1.37" in out
 
 
-def test_locked_line():
-    out = alerts.format_event("locked", sport="tennis", game="G", market_key="match_winner",
-                              side="sinner", pnl=0.06, net_pct=1.3, hedge_price=0.04, hedge_venue="polymarket")
-    assert out == "✅ LOCKED 🎾 Tennis · Sinner ML · +$0.06 net (+1.3%) · hedge 4c Poly"
-
-
-def test_unwound_line():
+def test_unwound_explains_the_safety_net():
     out = alerts.format_event("unwound", sport="mlb", game="G", market_key="ml2", side="away",
-                              teams="Yankees vs Sox", size=5, price=0.61, reason="hedge missed")
-    assert out == "🟠 UNWOUND ⚾ MLB · Yankees ML · sold 5 @ 61c · hedge missed"
+                              teams="Rays vs Jays", size=5, price=0.61, cost=0.18)
+    assert out.startswith("🟠 UNWOUND · ⚾ MLB · Rays vs Jays · couldn't hedge in time, sold back")
+    assert "Cost me $0.18 (that's the safety net working — no open risk)" in out
 
 
-def test_halted_and_problem_lines_spell_out_the_reason():
-    assert alerts.format_event("halted", detail="day loss cap hit (-$25.10)") == \
-        "🔴 HALTED day loss cap hit (-$25.10)"
-    assert alerts.format_event("problem", detail="place failed — Portland O0.5 · market closed") == \
-        "⚠️ PROBLEM place failed — Portland O0.5 · market closed"
+def test_cancelled_gives_duration_and_plain_reason():
+    out = alerts.format_event("cancelled", sport="tennis", game="G", market_key="match_winner", side="hanfmann",
+                              teams="Hanfmann vs Halys", reason="now_behind", age_s=252)
+    assert "offer pulled after 4m 12s" in out
+    assert "Reason: someone outbid me — my price is no longer best" in out
 
 
-def test_missing_facts_degrade_gracefully():
-    out = alerts.format_event("placed", sport="mlb", game="G", market_key="ml2", side="away",
-                              teams="Yankees vs Sox", venue="kalshi", phase="pre")   # no price/size
-    assert "$—" in out and "@ —" in out and out.startswith("🟢 PLACED ⚾ MLB · Yankees ML")
+def test_stopped_and_problem_are_plain_and_actionable():
+    stop = alerts.format_event("halted", detail="Trading is PAUSED — check both venues are flat.")
+    assert stop == "🔴 STOPPED · Trading is PAUSED — check both venues are flat."
+    prob = alerts.format_event("problem", detail="Couldn't place my offer on Gibson — the market has closed.")
+    assert prob.startswith("⚠️ PROBLEM · Couldn't place my offer on Gibson")
 
 
 # --------------------------------------------------------------------------- #
-# digest line: open X/Y, best edge seen, no jargon                              #
+# digest: plain roll-up with the WHY                                            #
 # --------------------------------------------------------------------------- #
-def test_digest_line_matches_spec():
-    out = alerts.digest_line(15, placed=12, cancelled=9, fills=0, open_now=1, max_open=2, best_edge_pct=0.9)
-    assert out == "📊 15m · 12 placed · 9 cancelled · 0 fills · open 1/2 · best edge seen 0.9%"
+def test_digest_is_plain_with_usage_and_why():
+    out = alerts.digest_line(15, placed=42, cancelled=9, fills=0, open_now=2, max_open=2, best_edge_pct=1.1,
+                             stake_today=47.0, stake_cap=300.0, today_pnl=1.12,
+                             why_no_fills="nobody crossed our price yet")
+    assert out.startswith("📊 15m summary · 42 offers placed · 0 taken · best edge seen 1.1%")
+    assert "Currently offering 2/2 · today $47.00/$300.00 used · 0 fills · +$1.12" in out
+    assert "Why no fills: nobody crossed our price yet" in out
 
 
-def test_digest_line_omits_edge_when_none_and_has_no_slot_jargon():
-    out = alerts.digest_line(15, placed=3, cancelled=1, fills=0, open_now=2, max_open=2)
-    assert "best edge" not in out and "slot-refuse" not in out and "open 2/2" in out
+def test_digest_flap_warning_is_plain():
+    out = alerts.digest_line(15, placed=3, cancelled=1, fills=1, open_now=2, max_open=2,
+                             kalshi_flaps=3, kalshi_down_s=12.0)
+    assert "Kalshi feed was flaky: 3 drops (12s)" in out
+    assert "Why no fills" not in out                         # there WERE fills
 
 
+# --------------------------------------------------------------------------- #
+# small helpers                                                                 #
+# --------------------------------------------------------------------------- #
 def test_helpers():
-    assert alerts.cents(0.86) == "86c" and alerts.cents(None) == "—"
-    assert alerts.money(4.3) == "$4.30"
-    assert alerts.venue_label("polymarket") == "Poly" and alerts.venue_label("kalshi") == "Kalshi"
-    assert alerts.phase_label("inplay") == "in-play" and alerts.phase_label("pre") == "pre"
+    assert alerts.cents(0.56) == "56¢" and alerts.cents(None) == "—"
+    assert alerts.money(4.3) == "$4.30" and alerts.signed_money(-0.18) == "-$0.18"
+    assert alerts.dur(252) == "4m 12s" and alerts.dur(9) == "9s" and alerts.dur(4562) == "1h 16m"
+    assert alerts.venue_full("polymarket") == "Polymarket" and alerts.venue_label("kalshi") == "Kalshi"
+    assert alerts.phase_label("inplay") == "in-play" and alerts.phase_label("pre") == "pre-game"

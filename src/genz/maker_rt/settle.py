@@ -60,9 +60,11 @@ def settled_row(*, sport: str, game: str, market_key: str, legs: list, settled_t
               f"on ${n['cost']:.2f} [{legdesc}]")
     if extra_reason:
         reason = f"{reason} {extra_reason}"
+    winner_venue = next((l.venue for l in legs if float(l.settle_value_usd) > 1e-9), None)
     return {"event": "trade_settled", "mode": "live", "sport": sport, "phase": "settled",
             "game": game, "market_key": market_key, "realized_pnl_usd": n["net"],
-            "settled_cost_usd": n["cost"], "fill_ts": settled_ts, "reason": reason}
+            "settled_cost_usd": n["cost"], "settled_revenue_usd": n["revenue"], "roi": n["roi"],
+            "winner_venue": winner_venue, "fill_ts": settled_ts, "reason": reason}
 
 
 class SettledPnlReconciler:

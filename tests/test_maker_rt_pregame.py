@@ -176,6 +176,12 @@ class _Log:
     def warning(self, msg, *a):
         self.warns.append(msg % a if a else msg)
 
+    def error(self, msg, *a):
+        self.warns.append(msg % a if a else msg)
+
+    def critical(self, msg, *a):
+        self.warns.append(msg % a if a else msg)
+
 
 class _Guard:
     def __init__(self):
@@ -334,6 +340,7 @@ def test_fill_routes_to_hedge_locked(tmp_path):
     hedger = _Hedger(SimpleNamespace(status="locked", hedged_shares=5, hedge_avg_price=0.50,
                                      locked_pnl=0.11, unwind_cost=None))
     ex, _ = _exec(tmp_path, order_client=oc, hedger=hedger)
+    ex.caps.quote_usd_max = 2.5                         # pin size to 5 (floor(2.5/0.46)) — this tests ROUTING
     store = _Store(poly_best_ask=0.60, kalshi_ask=0.50)
     ex.place_or_reprice(_cand(), _dec(price=0.46), None, store, now=None, now_ts=1.0)
     oid = oc.rests[0]["oid"]
@@ -362,6 +369,7 @@ def test_partial_fill_hedges_each_delta(tmp_path):
     hedger = _Hedger(SimpleNamespace(status="locked", hedged_shares=3, hedge_avg_price=0.50,
                                      locked_pnl=0.05, unwind_cost=None))
     ex, _ = _exec(tmp_path, order_client=oc, hedger=hedger)
+    ex.caps.quote_usd_max = 2.5                         # pin size to 5 so a 3-then-2 partial is meaningful
     store = _Store(poly_best_ask=0.60, kalshi_ask=0.50)
     ex.place_or_reprice(_cand(), _dec(price=0.46), None, store, now=None, now_ts=1.0)
     oid = oc.rests[0]["oid"]
@@ -375,17 +383,28 @@ def test_partial_fill_hedges_each_delta(tmp_path):
 # --------------------------------------------------------------------------- #
 # caps refusals (incl. projected daily-stake)                                   #
 # --------------------------------------------------------------------------- #
-def test_cap_refuses_on_projected_daily_stake_and_halts(tmp_path):
-    caps = LiveCaps(mrt_config.LiveConfig(quote_usd_max=5, max_daily_stake_usd=100,
+def test_daily_stake_headroom_sizes_down_then_refuses_below_minimum(tmp_path):
+    """The remaining daily budget is a SIZING constraint: near the cap the quote is sized DOWN to fit;
+    once even the venue minimum won't fit, it is REFUSED (below_venue_minimum), never oversized."""
+    # $10 of $100 left, pair ~$0.96/sh -> ~10 shares (the quote cap of $50 isn't binding here).
+    caps = LiveCaps(mrt_config.LiveConfig(quote_usd_max=50, max_daily_stake_usd=100,
                                           max_open_quotes=9, max_fills_per_day=9))
-    caps.commit_stake(98.0)
+    caps.commit_stake(90.0)
     oc = _OrderClient()
     ex, _ = _exec(tmp_path, order_client=oc, caps=caps)
-    # projected pair for 5@0.46 + hedge 5@0.50 ~ $4.80 -> 98 + 4.8 > 100 -> refuse + HALT
-    ex.place_or_reprice(_cand(), _dec(price=0.46, hedge_ask=0.50), None, _Store(poly_best_ask=0.60),
-                        now=None, now_ts=1.0)
-    assert oc.rests == [] and caps.halted is True
-    assert ex.eligible(_cand("rest-poly"), "pre") is False    # halted -> no longer eligible
+    ex.place_or_reprice(_cand(), _dec(price=0.46, hedge_ask=0.50), None,
+                        _Store(poly_best_ask=0.60, kalshi_ask=0.50), now=None, now_ts=1.0)
+    assert oc.rests and oc.rests[0]["size"] == 10          # sized DOWN to fit the $10 budget, not refused
+    assert caps.stake_today + caps.projected_pair_stake(0.46, 10, 0.50, 10) <= 100 + 1e-9
+    # Now only ~$2 left -> can't fit the 5-share minimum -> REFUSED (below_venue_minimum), no oversize.
+    caps.commit_stake(8.0)                                 # 90 + ~4.6 committed already ~ leave <$2
+    oc2 = _OrderClient()
+    ex2, _ = _exec(tmp_path, order_client=oc2,
+                   caps=LiveCaps(mrt_config.LiveConfig(quote_usd_max=50, max_daily_stake_usd=100)))
+    ex2.caps.commit_stake(99.0)
+    ex2.place_or_reprice(_cand(), _dec(price=0.46, hedge_ask=0.50), None,
+                         _Store(poly_best_ask=0.60, kalshi_ask=0.50), now=None, now_ts=1.0)
+    assert oc2.rests == [] and ex2._binding_counts.get("below_venue_minimum") == 1
 
 
 def test_cap_refuses_on_max_open(tmp_path):
@@ -407,7 +426,8 @@ def test_reserve_per_direction_protects_each_direction(tmp_path):
     rest-poly still can claim its guaranteed slot; and vice-versa is covered by the pure test."""
     ex, _ = _exec_kalshi(tmp_path)                            # both directions enabled, max_open_quotes=2
     ex.reserve_per_direction = 1
-    store = _Store(poly_best_ask=0.60, kalshi_ask=0.55)
+    # hedge asks must match dec.hedge_ask (0.50) so hedge-depth is found and each candidate can size >= min.
+    store = _Store(poly_best_ask=0.50, kalshi_ask=0.50)
     ck1 = _cand_kalshi(ticker="KX-1")
     ex.place_or_reprice(ck1, _dec(0.46, hedge_ask=0.50), None, store, None, 1.0, "pre")
     assert ex.open_count() == 1 and len(ex.kalshi_order_client.rests) == 1
@@ -461,7 +481,7 @@ def test_slot_refuse_throttled_once_per_window_and_counted(tmp_path):
     ex.maybe_flush_digest(10_000.0)                           # init the window
     ex.maybe_flush_digest(10_000.0 + ex.digest_min * 60 + 1)  # elapse -> one digest line
     digest = next(m for m in sent if m.startswith("📊"))
-    assert "slot-refuse" not in digest and "open 1/1" in digest
+    assert "slot-refuse" not in digest and "offering 1/1" in digest
 
 
 # --------------------------------------------------------------------------- #
@@ -743,7 +763,7 @@ def test_telegram_digest_batches_routine_and_passes_instant(tmp_path):
     ex.maybe_flush_digest(1000.0)                              # init the digest window
     ex.maybe_flush_digest(1000.0 + 15 * 60 + 1)                # window elapsed -> ONE digest line
     digest = next(m for m in sent if m.startswith("📊"))       # the human roll-up
-    assert "placed" in digest and "fills" in digest and "open" in digest
+    assert "placed" in digest and "fills" in digest and "offering" in digest
 
 
 def test_digest_off_sends_routine_instantly(tmp_path):
@@ -867,7 +887,7 @@ def test_decline_branch_full_chain_and_circuit(tmp_path):
     ex.on_order_update({"order_id": oc.rests[0]["oid"], "size_matched": 5, "price": 0.46}, store, _DT, 101.0)
     rows = [r["event"] for r in ex.state.rows]
     assert "hedge_declined" in rows and poly.market_sells      # decline -> verified unwind sold
-    assert any("FILL" in m for m in sent) and any("HEDGE_DECLINED" in m.upper() for m in sent)
+    assert any("FILLED" in m for m in sent) and any("UNWOUND" in m and "sold back" in m for m in sent)
     assert ex.inplay_fills_today == 1 and ex.inplay_pause_until > 0    # first-fill circuit fired on decline
 
 
@@ -1144,17 +1164,20 @@ def test_pair_stake_cap_bounds_rest_plus_hedge_with_tbtor_numbers(tmp_path):
     assert tight.halted is False                             # a per-pair sizing refusal is NOT a day-halt
 
 
-def test_place_refuses_when_pair_exceeds_cap(tmp_path):
-    """End-to-end: a rest-kalshi quote whose projected pair exceeds max_pair_stake_usd never rests."""
+def test_place_sizes_down_to_pair_cap(tmp_path):
+    """End-to-end: a quote whose FULL size would exceed max_pair_stake_usd is SIZED DOWN to fit the pair
+    cap (both legs), then rests — never oversized, and only refused if even the minimum won't fit."""
     koc = _KalshiOC()
     ex, _ = _exec_kalshi(tmp_path, kalshi_oc=koc)
-    ex.caps.max_pair_stake_usd = 10.0                        # below TBTOR's ~$16.8 pair
+    ex.caps.max_pair_stake_usd = 10.0                        # pair (rest+hedge) budget per bet
     ex.roll_day(_DT)
     store = _Store(kalshi_ask=0.50, poly_best_ask=0.93)
     c = _cand_kalshi()
     ex.place_or_reprice(c, _dec(0.06, hedge_ask=0.93), None, store, _DT, 100.0, "inplay")
-    assert koc.rests == [] and ex.open_count() == 0          # refused: pair over cap
-    assert any(r.get("reason") == "max_pair_stake_usd" for r in ex.state.rows)
+    assert ex.open_count() == 1 and koc.rests[0]["count"] == 10       # floor(10 / (0.06+0.93)) = 10
+    pair = ex.caps.projected_pair_stake(0.06, 10, 0.93, 10)
+    assert pair <= 10.0 + 1e-9                                        # the placed pair respects the cap
+    assert ex._binding_counts.get("pair_cap") == 1
 
 
 # --------------------------------------------------------------------------- #
@@ -1236,7 +1259,7 @@ def test_digest_line_includes_kalshi_flaps(tmp_path):
     ex.note_flap("kalshi", False, 20.0)
     ex.note_flap("kalshi", True, 29.0)                       # flap #2, down 9s
     ex.maybe_flush_digest(1.0 + 15 * 60 + 1)                 # window elapsed -> flush
-    assert sent and "kalshi ws 2 flaps" in sent[0] and "12s down" in sent[0]
+    assert sent and "Kalshi feed was flaky: 2 drops" in sent[0] and "12s" in sent[0]
 
 
 # --------------------------------------------------------------------------- #

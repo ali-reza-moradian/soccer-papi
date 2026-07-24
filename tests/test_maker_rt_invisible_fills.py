@@ -71,6 +71,7 @@ def _rest_kalshi_order(tmp_path, *, koc=None, kalshi=None, hedger=None, state=No
     koc = koc or _KalshiOC()
     state = state or _State()
     ex, _ = _exec_kalshi(tmp_path, kalshi_oc=koc, kalshi=kalshi, hedger=hedger, state=state)
+    ex.caps.quote_usd_max = 2.5                     # pin size to 5 (these tests validate FILL DETECTION)
     ex.roll_day(NOW)
     c = _cand_kalshi()
     ex.place_or_reprice(c, _dec(0.46, hedge_ask=0.55), None, _Store(kalshi_ask=0.60), NOW, 1000.0, "pre")
@@ -340,7 +341,7 @@ def test_closed_market_place_failure_backs_off_and_alerts_once(tmp_path):
     for i in range(5):                                  # five loop passes over the same dead candidate
         ex.place_or_reprice(c, _dec(0.46, hedge_ask=0.55), None, store, NOW, 1000.0 + i, "pre")
     assert len(sent) == 1, f"must scream ONCE, not once per retry (got {len(sent)})"
-    assert "PROBLEM" in sent[0] and "market gone" in sent[0] and "backing off for the day" in sent[0]
+    assert "PROBLEM" in sent[0] and "market has closed" in sent[0] and "stop trying this one today" in sent[0]
     # And it stops hitting the venue at all until the backoff expires: exactly ONE refusal happened
     # (one instant alert, above), so there are zero "suppressed repeat" log lines.
     assert not [w for w in ex.log.warns if "suppressed repeat" in w], \

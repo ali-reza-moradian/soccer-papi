@@ -35,6 +35,7 @@ from . import config as mrt_config
 from . import hedge as hedge_mod
 from .caps import direction_slot_ok
 from .live import assert_live_allowed
+from .quotes import POLY_MIN_SHARES
 
 HEDGE_DECLINE_FLOOR = -0.010     # re-verify at fill: walked locked-net below this -> decline+unwind (both phases)
 HEDGE_SHARE_TOL = 0.5            # share tolerance for "fully hedged"/"flat" position reads (< 1 contract)
@@ -376,8 +377,30 @@ class PregameLiveExecutor:
                     return
                 if not self._cancel(c.key, now, "reprice"):            # cancel not confirmed -> do NOT dup-place
                     return
-        size = self.caps.size_shares(price)
         hedge_ask = dec.hedge_best_ask if dec.hedge_best_ask is not None else price
+        hedge_depth, book_depth = self._depths_for(c, hedge_ask, store, live_rest)
+        vmin = self._venue_minimum(c.rest_venue, price)
+        # SIZE = the LARGEST whole-share count that fits every constraint (notional/pair/daily caps +
+        # hedge/book depth). The venue minimum is a FLOOR: if even the minimum doesn't fit, REFUSE — never
+        # clamp DOWN to the minimum (that bug pinned every quote at 5 shares against a $20 cap).
+        from .caps import plan_size
+        plan = plan_size(price, hedge_ask, quote_usd_max=self.caps.quote_usd_max,
+                         max_pair_stake_usd=self.caps.max_pair_stake_usd,
+                         daily_stake_headroom=self.caps.max_daily_stake_usd - self.caps.stake_today,
+                         hedge_depth=hedge_depth, book_depth=book_depth, venue_minimum=vmin)
+        if plan["refused"]:
+            self._note_binding_count("below_venue_minimum")
+            self._refuse(c, phase, price, "below_venue_minimum", 0.0, now_ts)
+            self._record(c, "expire", now, phase, price=price, size=vmin, hedge_ask=hedge_ask,
+                         reason="below_venue_minimum")
+            if self.log:
+                self.log.info("[MAKER_RT][LIVE] REFUSE %s [%s] @ %.4f — max fittable %d sh < venue min %d "
+                              "(limiter %s; hedgeDepth=%s bookDepth=%s)", self._name_for_c(c), phase, price,
+                              plan["max_fit"], vmin, plan["limiter"],
+                              (int(hedge_depth) if hedge_depth is not None else "n/a"),
+                              (int(book_depth) if book_depth is not None else "n/a"))
+            return
+        size = plan["size"]
         projected = self.caps.projected_pair_stake(price, size, hedge_ask, size)
         ok, reason = self.caps.can_place(projected)
         if ok and not self._reservation_ok(c.direction):     # per-direction slot fairness (global cap passed)
@@ -393,7 +416,8 @@ class PregameLiveExecutor:
             return
         oid = res.get("order_id")
         if not oid:
-            self._alert(f"[MAKER_RT][LIVE] place returned no order_id ({c.game}): {res}")
+            if self.log:                                 # raw response is LOG-ONLY (never Telegram)
+                self.log.warning("[MAKER_RT][LIVE] place returned no order_id (%s): %s", c.game, res)
             return
         lo = _LiveOrder(key=c.key, order_id=oid, token=token, price=price, size=float(size),
                         side=c.rest_side, direction=c.direction, sport=c.sport, game=c.game,
@@ -409,7 +433,7 @@ class PregameLiveExecutor:
         self.caps.on_open()
         kind = "reprice" if existing is not None else "quote"
         self._record(c, kind, now, phase, price=price, size=size, hedge_ask=hedge_ask, order_id=oid)
-        self._note_binding(c, price, size, hedge_ask, live_rest, store, phase)   # what limited the size
+        self._note_binding(c, price, size, hedge_ask, plan["binding"], hedge_depth, book_depth, phase)
         if getattr(dec, "net_at_quote", None) is not None:       # best edge SEEN this digest window (panel)
             self._digest["best_edge"] = max(self._digest.get("best_edge", 0.0),
                                             float(dec.net_at_quote) * 100.0)
@@ -417,7 +441,12 @@ class PregameLiveExecutor:
             self._emit_event("repriced", lo, instant=False, digest_kind="reprice",
                              old_price=existing.price, new_price=price)
         else:
-            self._emit_event("placed", lo, instant=False, digest_kind="quote", price=price, size=size)
+            net = getattr(dec, "net_at_quote", None)
+            self._emit_event("placed", lo, instant=False, digest_kind="quote", price=price, size=size,
+                             hedge_venue=c.hedge_venue, hedge_price=hedge_ask,
+                             exp_net_usd=(float(net) * size if net is not None else None),
+                             exp_net_pct=(float(net) * 100.0 if net is not None else None),
+                             **self._live_ctx())
         matched = float(res.get("shares") or 0)          # a maker shouldn't fill on POST, but the book can move
         if matched > 0:
             self._on_fill_detected(c.key, matched, float(res.get("avg_price") or price), store, now, now_ts)
@@ -441,16 +470,21 @@ class PregameLiveExecutor:
         wait = (self.place_backoff_terminal_s if terminal
                 else min(self.place_backoff_s * (2 ** (n - 1)), 3600.0))
         self._place_fail_until[c.key] = now_ts + wait
-        subj = alerts.subject(c.sport, c.game, c.market_key, c.rest_side, getattr(c, "teams", ""))
-        # Prefer the venue's error CODE ("market_closed", "too_many_requests") over the HTTP-line prefix.
+        subj = alerts.bet_name(c.sport, c.game, c.market_key, c.rest_side, getattr(c, "teams", ""))
+        # Prefer the venue's error CODE ("market_closed", "too_many_requests"); NEVER put the raw HTTP
+        # line / exception in the Telegram text (that goes to the log). Fall back to a plain generic.
         import re as _re
         m = _re.search(r'"code"\s*:\s*"([^"]+)"', msg)
-        code = (m.group(1) if m else msg.split(":")[0]).lower()   # normalise for the humanizer's map
-        why = "market gone" if terminal else alerts.humanize_reason(code)
-        detail = (f"place failed — {subj} · {why}"
-                  + (" (backing off for the day)" if terminal else f" (retry in {wait:.0f}s)"))
+        code = (m.group(1).lower() if m else "")
+        why = ("the market has closed or finished" if terminal
+               else (alerts.humanize_reason(code) if code else "the venue refused it"))
+        detail = (f"Couldn't place my offer on {subj} — {why}."
+                  + (" I'll stop trying this one today." if terminal
+                     else f" I'll retry automatically in {wait:.0f}s."))
         if n == 1:                                   # scream ONCE per candidate, then log-only
             self._emit_event("problem", instant=True, detail=detail)
+            if self.log:                             # the RAW error is log-only (has HTTP/UUID)
+                self.log.warning("[MAKER_RT][LIVE] PLACE FAILED %s: %s", subj, msg)
         elif self.log:
             self.log.warning("[MAKER_RT][LIVE] PLACE FAILED %s: %s (suppressed repeat #%d)", subj, msg, n)
 
@@ -497,13 +531,12 @@ class PregameLiveExecutor:
             self._refuse_log_at[k] = now_ts
         self._routine("refuse", text)
 
-    def _note_binding(self, c: Any, price: float, size: float, hedge_ask: Optional[float],
-                      live_rest: Any, store: Any, phase: str) -> None:
-        """DIAGNOSTIC: log + count the BINDING CONSTRAINT that set this quote's size. Best-effort — a
-        diagnostic must NEVER interfere with placement, so every read is guarded."""
+    def _depths_for(self, c: Any, hedge_ask: Optional[float], store: Any,
+                    live_rest: Any) -> tuple[Optional[float], Optional[float]]:
+        """(hedge_depth_at_ask, book_depth) from the live books, for sizing + the binding diagnostic.
+        hedge_depth = resting hedge shares within ~1 tick of the ask (what we can actually hedge);
+        book_depth = the rest-book's near liquidity. Guarded — a read failure just yields None (no cap)."""
         try:
-            import math
-            from .caps import binding_constraint
             hl = c.hedge_lookup or {}
             if str(hl.get("venue") or getattr(c, "hedge_venue", "")) == "polymarket":
                 hv = store.poly_view(hl.get("token"))
@@ -515,24 +548,48 @@ class PregameLiveExecutor:
             hedge_depth = sum(float(s) for p, s in ladder if float(p) <= band) if ladder else None
             rest_ladder = list(getattr(live_rest, "ask_ladder", None) or [])
             book_depth = sum(float(s) for _p, s in rest_ladder) if rest_ladder else None
-            min_floor = max(5, math.ceil(1.0 / max(float(price), 1e-9)))
-            name, limit = binding_constraint(
-                price, quote_usd_max=self.caps.quote_usd_max,
-                max_pair_stake_usd=self.caps.max_pair_stake_usd, hedge_ask=ha,
-                hedge_depth=hedge_depth, book_depth=book_depth, min_floor=min_floor)
-            self._binding_counts[name] = self._binding_counts.get(name, 0) + 1
-            self._digest.setdefault("binding", {})
-            self._digest["binding"][name] = self._digest["binding"].get(name, 0) + 1
+            return hedge_depth, book_depth
+        except Exception:  # noqa: BLE001
+            return None, None
+
+    @staticmethod
+    def _venue_minimum(rest_venue: str, price: float) -> int:
+        """Rest-leg venue MINIMUM (a floor): Kalshi = 1 contract (no notional minimum); Polymarket = 5
+        shares AND enough to clear the ~$1 notional minimum (ceil(1/price))."""
+        if rest_venue == "kalshi":
+            return 1
+        import math
+        return max(POLY_MIN_SHARES, int(math.ceil(1.0 / max(float(price), 1e-9))))
+
+    def _note_binding_count(self, name: str) -> None:
+        """Tally a binding-constraint outcome (incl. the below_venue_minimum refusal) for panel + digest."""
+        self._binding_counts[name] = self._binding_counts.get(name, 0) + 1
+        self._digest.setdefault("binding", {})
+        self._digest["binding"][name] = self._digest["binding"].get(name, 0) + 1
+
+    def _note_binding(self, c: Any, price: float, size: float, hedge_ask: Optional[float],
+                      binding: str, hedge_depth: Optional[float], book_depth: Optional[float],
+                      phase: str) -> None:
+        """DIAGNOSTIC: log + count the BINDING CONSTRAINT that set this quote's size (computed by
+        plan_size). Best-effort — never interferes with placement."""
+        try:
+            self._note_binding_count(binding)
             if self.log:
-                self.log.info("[MAKER_RT][LIVE] SIZE %g sh @ %.4f ($%.2f) [%s] binding=%s(%g) — "
+                ha = float(hedge_ask) if hedge_ask else None
+                self.log.info("[MAKER_RT][LIVE] SIZE %g sh @ %.4f ($%.2f) [%s] binding=%s — "
                               "cap<=%d pair<=%s hedgeDepth=%s bookDepth=%s min=%d", size, price,
-                              price * size, phase, name, limit,
+                              price * size, phase, binding,
                               int(self.caps.quote_usd_max / max(price, 1e-9)),
                               (int(self.caps.max_pair_stake_usd / (price + ha)) if ha else "n/a"),
                               (int(hedge_depth) if hedge_depth is not None else "n/a"),
-                              (int(book_depth) if book_depth is not None else "n/a"), min_floor)
+                              (int(book_depth) if book_depth is not None else "n/a"),
+                              self._venue_minimum(c.rest_venue, price))
         except Exception:  # noqa: BLE001 — the binding diagnostic must never block a real order
             pass
+
+    def _name_for_c(self, c: Any) -> str:
+        """Human name for a CANDIDATE (mirror of _name_for for an order)."""
+        return alerts.head(c.sport, c.game, c.market_key, getattr(c, "rest_side", ""), getattr(c, "teams", ""))
 
     # -- cancels -------------------------------------------------------------
     def cancel(self, c: Any, now: Any, reason: str) -> bool:
@@ -550,8 +607,9 @@ class PregameLiveExecutor:
         resp = None
         try:
             resp = self._venue_cancel(lo)
-        except Exception as exc:  # noqa: BLE001
-            self._alert(f"[MAKER_RT][LIVE] cancel raised for {lo.order_id}: {exc}")
+        except Exception as exc:  # noqa: BLE001 — order id + raw error are LOG-ONLY (never Telegram)
+            if self.log:
+                self.log.warning("[MAKER_RT][LIVE] cancel raised for %s: %s", lo.order_id, exc)
         if not self._cancel_confirmed(lo, resp):
             if self.log:
                 self.log.warning("[MAKER_RT][LIVE] cancel NOT confirmed %s (%s) — keeping tracked.",
@@ -561,7 +619,12 @@ class PregameLiveExecutor:
         self.caps.on_close()
         self._record_lifetime(lo, now)
         self._record_lo(lo, "expire", now, reason=reason)
-        self._emit_event("cancelled", lo, instant=False, digest_kind="cancel", reason=reason)
+        age_s = None
+        try:
+            age_s = (now.timestamp() - float(lo.placed_ts)) if now is not None else None
+        except Exception:  # noqa: BLE001
+            age_s = None
+        self._emit_event("cancelled", lo, instant=False, digest_kind="cancel", reason=reason, age_s=age_s)
         return True
 
     #: venue order statuses that mean "this order is gone because it TRADED", not because we cancelled it.
@@ -638,7 +701,11 @@ class PregameLiveExecutor:
         was = self.feed_ok
         self.feed_ok = bool(ok)
         if was and not ok:
-            self._alert("[MAKER_RT][LIVE] Poly USER socket DOWN -- halting placement + cancelling open quotes.")
+            if self.log:
+                self.log.warning("[MAKER_RT][LIVE] Poly USER socket DOWN — halting placement + cancelling opens.")
+            self._send_telegram(alerts.format_event("problem", detail=(
+                "My fill feed dropped — I've paused new offers and pulled the open ones so I can't miss a "
+                "fill. I'll resume automatically when it reconnects.")))
             self.cancel_all("poly_user_down", now)
         elif ok and not was and self.log:
             self.log.info("[MAKER_RT][LIVE] Poly USER socket UP -- placement enabled.")
@@ -699,8 +766,12 @@ class PregameLiveExecutor:
         self._kalshi_declared_down = True
         self.kalshi_feed_ok = False
         from .state import utcnow
-        self._alert(f"[MAKER_RT][LIVE] Kalshi WS DOWN {down_for:.0f}s (> {self.kalshi_feed_grace_s:.0f}s "
-                    f"grace) -- cancelling open rest-kalshi quotes (fills unobservable).")
+        if self.log:
+            self.log.warning("[MAKER_RT][LIVE] Kalshi WS DOWN %.0fs (> %.0fs grace) — cancelling rest-kalshi "
+                             "quotes (fills unobservable).", down_for, self.kalshi_feed_grace_s)
+        self._send_telegram(alerts.format_event("problem", detail=(
+            "The Kalshi feed dropped — I pulled my Kalshi offers so I can't miss a fill there. My other "
+            "offers keep running; I'll re-offer on Kalshi when it reconnects.")))
         for k, lo in list(self.open_orders.items()):
             if lo.rest_venue == "kalshi":
                 self._cancel(k, now or utcnow(), "kalshi_feed_down")
@@ -956,13 +1027,18 @@ class PregameLiveExecutor:
         status = getattr(res, "status", "error")
         hedged = float(getattr(res, "hedged_shares", 0.0) or 0.0)
         hedge_avg = getattr(res, "hedge_avg_price", None)
+        hedge_fee = getattr(res, "hedge_fee", None)          # ACTUAL taker fee on the hedge leg ($)
         _detail = getattr(res, "detail", None) or {}
         hedge_oid = ((_detail.get("kalshi") or _detail.get("poly") or {}) or {}).get("order_id") \
             if isinstance(_detail, dict) else None
         if status == "locked":
             pnl = float(getattr(res, "locked_pnl", 0.0) or 0.0)
+            # FEE-HONEST locked net: from the ACTUAL hedge fill price + actual fee, not the pre-fire
+            # quoted-ask estimate (``locked``). ~1 fee (Kalshi ceil-to-cent 0.07·C·P·(1-P)) is comparable
+            # to the whole edge at these sizes, so the estimate is not good enough to book.
+            locked_actual = self._actual_locked_net(fill_price, hedge_avg, hedge_fee, hedged, locked)
             return self._record_hedge_locked(lo, matched, fill_price, hedged, hedge_avg, hedge_oid,
-                                             locked, hedge_venue, now, pnl=pnl)
+                                             locked_actual, hedge_venue, now, pnl=pnl, hedge_fee=hedge_fee)
         # NOT reported-locked. Before unwinding ANYTHING, prove the naked exposure against VENUE TRUTH: a
         # venue's own fill count can UNDER-report (a Poly BUY response reports USDC, not shares -> a FULL
         # hedge masquerades as a partial). Read the COMPLEMENT position we actually hold; the truly naked
@@ -973,10 +1049,11 @@ class PregameLiveExecutor:
             naked = max(0.0, lo.matched_seen - complement)
             if naked <= HEDGE_SHARE_TOL:                       # venue confirms fully hedged -> LOCKED
                 true_hedged = min(lo.matched_seen, max(hedged, complement))
-                pnl = float(locked) * true_hedged if locked is not None else 0.0
+                locked_actual = self._actual_locked_net(fill_price, hedge_avg, hedge_fee, true_hedged, locked)
+                pnl = float(locked_actual) * true_hedged if locked_actual is not None else 0.0
                 return self._record_hedge_locked(lo, matched, fill_price, true_hedged, hedge_avg,
-                                                 hedge_oid, locked, hedge_venue, now, pnl=pnl,
-                                                 verified=True)
+                                                 hedge_oid, locked_actual, hedge_venue, now, pnl=pnl,
+                                                 hedge_fee=hedge_fee, verified=True)
             hedged = max(hedged, complement)                   # never unwind shares we actually hold hedged
         # MISS / PARTIAL / ERROR -> unwind the genuinely UNHEDGED remainder (verified). A partial hedge
         # locks its part.
@@ -986,20 +1063,34 @@ class PregameLiveExecutor:
         return self._unwind_and_record(lo, remainder, fill_price, locked, "hedge_unwound", now,
                                        hedge_oid=hedge_oid)
 
+    @staticmethod
+    def _actual_locked_net(fill_price: float, hedge_avg: Any, hedge_fee: Any, hedged: Any,
+                           fallback: Optional[float]) -> Optional[float]:
+        """Per-share locked net from the ACTUAL hedge fill: 1 − rest_fill_price − hedge_avg − fee/share.
+        Falls back to the pre-fire estimate only when the actual hedge price is unavailable (a
+        complement-verified fill that under-reported its own price)."""
+        if hedge_avg is None or hedged in (None, 0) or float(hedged) <= 0:
+            return fallback
+        fee_ps = (float(hedge_fee) / float(hedged)) if hedge_fee is not None else 0.0
+        return 1.0 - float(fill_price) - float(hedge_avg) - fee_ps
+
     def _record_hedge_locked(self, lo: _LiveOrder, matched: float, fill_price: float, hedged: float,
                              hedge_avg: Any, hedge_oid: Any, locked: Optional[float], hedge_venue: str,
-                             now: Any, *, pnl: float, verified: bool = False) -> dict:
+                             now: Any, *, pnl: float, hedge_fee: Any = None, verified: bool = False) -> dict:
         """Book a LOCKED hedge (reported OR position-verified): commit the hedge stake, count the fill,
-        ledger the hedge_locked chain row + instant alert. ``verified`` marks the path where the venue's
-        fill count under-reported but the COMPLEMENT position proves fully hedged (unwind suppressed)."""
-        self.caps.commit_stake(float(hedged) * float(hedge_avg or 0.0))
+        ledger the hedge_locked chain row + instant alert. ``locked`` is the FEE-HONEST net (actual hedge
+        price + actual fee). ``verified`` marks the path where the venue's fill count under-reported but
+        the COMPLEMENT position proves fully hedged (unwind suppressed)."""
+        self.caps.commit_stake(float(hedged) * float(hedge_avg or 0.0) + float(hedge_fee or 0.0))
         self.caps.on_fill(pnl)
         self._record_lo(lo, "hedge_locked", now, price=fill_price, size=matched, locked_net=locked,
                         locked_pnl=pnl, hedge_avg=hedge_avg, hedge_order_id=hedge_oid)
         self._emit_event("locked", lo, instant=True, pnl=pnl,
                          net_pct=(locked * 100.0 if locked is not None else None),
-                         hedge_price=hedge_avg, hedge_venue=hedge_venue)
-        self._note_pair_legs(lo, matched, fill_price, hedged, hedge_avg)   # cost basis for settled-pnl
+                         hedge_price=hedge_avg, hedge_venue=hedge_venue,
+                         rest_price=fill_price, rest_shares=matched, hedge_shares=hedged,
+                         hedge_fee=hedge_fee, **self._live_ctx())
+        self._note_pair_legs(lo, matched, fill_price, hedged, hedge_avg, hedge_fee)   # fee-honest cost basis
         self._note_expected_legs(lo, matched, hedged, hedge_venue, now)    # rest+hedge legs we now HOLD
         if verified and self.log:
             self.log.warning("[MAKER_RT][LIVE] hedge reported non-locked but the COMPLEMENT position "
@@ -1066,7 +1157,7 @@ class PregameLiveExecutor:
                 self.caps.commit_stake(float(u["sell_px"]) * float(u["sold"]))
             self._record_lo(lo, ok_outcome, now, price=fill_price, size=shares, locked_net=locked,
                             unwind_cost=cost)
-            self._emit_event("unwound", lo, instant=True, size=u["sold"], price=u["sell_px"],
+            self._emit_event("unwound", lo, instant=True, size=u["sold"], price=u["sell_px"], cost=cost,
                              reason=("hedge too dear" if ok_outcome == "hedge_declined" else "hedge missed"))
             return {"outcome": ok_outcome, "locked_net": locked, "pnl": -cost, "hedge_order_id": hedge_oid,
                     "chain": self._chain(lo, shares, fill_price, ok_outcome, locked, -cost, hedge_oid)}
@@ -1096,8 +1187,12 @@ class PregameLiveExecutor:
             self.cancel_inplay_open(now, "inplay_day_halt")
         if self.inplay_fills_today == 1:
             self.inplay_pause_until = now_ts + self.inplay_first_fill_pause_s
-            self._alert(f"[MAKER_RT][INPLAY] FIRST in-play fill of the day -- pausing in-play placement "
-                        f"{self.inplay_first_fill_pause_s:.0f}s (pre-game unaffected). CHAIN: {(result or {}).get('chain')}")
+            if self.log:                                 # the technical chain (order ids) is LOG-ONLY
+                self.log.warning("[MAKER_RT][INPLAY] first in-play fill — pausing in-play %.0fs. chain: %s",
+                                 self.inplay_first_fill_pause_s, (result or {}).get("chain"))
+            self._send_telegram(
+                f"ℹ️ First in-play fill of the day — pausing in-play offers for "
+                f"{self.inplay_first_fill_pause_s:.0f}s as a safety check. Pre-game offers keep running.")
 
     def _chain(self, lo: _LiveOrder, matched: float, fill_price: float, outcome: str,
                locked: Optional[float], pnl: float, hedge_oid: Any) -> str:
@@ -1274,10 +1369,14 @@ class PregameLiveExecutor:
         self.caps.halt_reason = "orphan_position"
         self._persist_orphan()                               # survives restart + drives the panel banner
         self.cancel_all("orphan_halt", now)
-        self._emit_event("halted", instant=True,
-                         detail=(f"ORPHAN POSITION {game} [{phase}] token {str(token)[:12]}… "
-                                 f"remaining={remaining} ({detail}). All live quoting HALTED + opens "
-                                 f"cancelled. MANUAL CHECK REQUIRED."))
+        # TECHNICAL detail (ticker/token/remaining) -> LOG ONLY. Telegram gets a PLAIN, actionable line.
+        if self.log:
+            self.log.error("[MAKER_RT][LIVE] ORPHAN POSITION %s [%s] token %s remaining=%s (%s) — HALTED.",
+                           game, phase, token, remaining, detail)
+        self._send_telegram(alerts.format_event(
+            "halted", detail=("Trading is PAUSED — one position needs a human to check. "
+                              "What to check: confirm both venues are flat or fully hedged, then delete "
+                              "data/ops/maker_rt_ORPHAN.json to resume.")))
 
     def _persist_orphan(self) -> None:
         """Write the latched orphan to disk (atomic). The panel reads this file, so the red ORPHAN banner
@@ -1351,14 +1450,15 @@ class PregameLiveExecutor:
     _LEG_SEP = "\x1f"                                    # (game, market_key) -> one JSON string key
 
     def _note_pair_legs(self, lo: _LiveOrder, rest_shares: float, rest_price: float,
-                        hedge_shares: Any, hedge_avg: Any) -> None:
-        """Accumulate the COST BASIS of a hedged pair (rest leg + hedge leg), keyed by (game, market_key),
-        for the settled-pnl reconciler. Multi-fill markets accumulate. Best-effort — never blocks the
-        hedge path."""
+                        hedge_shares: Any, hedge_avg: Any, hedge_fee: Any = 0.0) -> None:
+        """Accumulate the FEE-HONEST COST BASIS of a hedged pair (rest leg + hedge leg), keyed by
+        (game, market_key), for the settled-pnl reconciler. The rest leg is a MAKER order (fee 0 on both
+        venues for our series); the hedge is a TAKER lift whose ACTUAL fee is added here so settled net
+        is not ~1 fee optimistic. Multi-fill markets accumulate. Best-effort — never blocks the hedge."""
         try:
             hl = lo.hedge_lookup or {}
-            rest_cost = float(rest_shares) * float(rest_price)
-            hedge_cost = float(hedge_shares or 0.0) * float(hedge_avg or 0.0)
+            rest_cost = float(rest_shares) * float(rest_price)                       # maker leg: fee 0
+            hedge_cost = float(hedge_shares or 0.0) * float(hedge_avg or 0.0) + float(hedge_fee or 0.0)
             if lo.rest_venue == "kalshi":
                 k_ticker, k_side, k_sh, k_cost = lo.token, (lo.kalshi_side or "yes"), float(rest_shares), rest_cost
                 p_token, p_sh, p_cost = hl.get("token"), float(hedge_shares or 0.0), hedge_cost
@@ -1370,6 +1470,7 @@ class PregameLiveExecutor:
             rec = self._market_legs.get(key)
             if rec is None:
                 rec = {"sport": lo.sport, "game": lo.game, "market_key": lo.market_key,
+                       "side": lo.side, "teams": getattr(lo, "teams", ""), "rest_venue": lo.rest_venue,
                        "kalshi": {"ticker": k_ticker, "side": k_side, "shares": 0.0, "cost": 0.0},
                        "poly": {"token": p_token, "shares": 0.0, "cost": 0.0}}
                 self._market_legs[key] = rec
@@ -1541,16 +1642,51 @@ class PregameLiveExecutor:
                 self.log.warning("[MAKER_RT][SETTLE] reconcile pass failed: %s", exc)
             return []
         if emitted:
+            recs = {}
             for key in list(self._market_legs):
                 game, _, mk = key.partition(self._LEG_SEP)
                 if self._settle_reconciler.already_settled(game, mk):
                     rec = self._market_legs.pop(key, None)
+                    recs[(game, mk)] = rec
                     self._prune_expected(game, mk)            # legs redeemed to cash -> no longer held
                     self._forget_settled_instruments(rec)     # ...and stop watching them for nakedness
             self._persist_settled_ledger()
             for row in emitted:
-                self._instant(f"[MAKER_RT][SETTLE] {row.get('reason')}")
+                if self.log:                                  # keep the TECHNICAL reason in the log only
+                    self.log.warning("[MAKER_RT][SETTLE] %s", row.get("reason"))
+                self._send_telegram(self._settled_alert(row, recs.get((row.get("game"),
+                                                                       row.get("market_key")))))
         return emitted
+
+    def _settled_alert(self, row: dict, rec: Optional[dict]) -> str:
+        """Render the plain-language SETTLED alert (no ticker) from the settled row + booked leg meta."""
+        rec = rec or {}
+        sport = rec.get("sport") or row.get("sport")
+        side, teams, rest_venue = rec.get("side"), rec.get("teams", ""), rec.get("rest_venue")
+        our_bet = alerts.bet_name(sport, row.get("game"), rec.get("market_key") or row.get("market_key"),
+                                  side, teams)
+        winner_venue = row.get("winner_venue")
+        we_won = winner_venue is not None and winner_venue == rest_venue
+        winner = our_bet if we_won else alerts.other_name(our_bet, teams)
+        life = 0.0
+        if self.state is not None:
+            life = float(getattr(self.state, "settled_pnl_lifetime", 0.0) or 0.0)
+        return alerts.format_event("settled", sport=sport, game=row.get("game"),
+                                   market_key=rec.get("market_key") or row.get("market_key"),
+                                   side=side, teams=teams, winner=winner,
+                                   payout=row.get("settled_revenue_usd"), cost=row.get("settled_cost_usd"),
+                                   pnl=row.get("realized_pnl_usd"),
+                                   roi_pct=(float(row.get("roi") or 0.0) * 100.0),
+                                   lifetime_pnl=round(life, 4))
+
+    def _live_ctx(self) -> dict:
+        """Daily-usage + lifetime context for the rich PLACED/LOCKED alerts (open slots, fills, $ used,
+        today pnl, and lifetime = settled realized + today's locked estimate)."""
+        life = float(getattr(self.state, "settled_pnl_lifetime", 0.0) or 0.0) if self.state is not None else 0.0
+        return {"open_now": len(self.open_orders), "max_open": self.caps.max_open_quotes,
+                "fills_today": self.caps.fills_today, "stake_today": round(self.caps.stake_today, 2),
+                "stake_cap": self.caps.max_daily_stake_usd, "today_pnl": round(self.caps.pnl_today, 4),
+                "lifetime_pnl": round(life + self.caps.pnl_today, 4)}
 
     def _persist_settled_ledger(self) -> None:
         import json
@@ -1633,10 +1769,16 @@ class PregameLiveExecutor:
                 self.poly.place_market_sell(tok, bal)
                 bal2 = self.poly.conditional_balance(tok)
                 if bal2 is not None and bal2 <= 0.5:
-                    self._instant(f"[MAKER_RT][CRITICAL] reconciliation auto-flattened orphan {str(tok)[:12]}... "
-                                  f"({bal} sh); position now flat. HALTING for manual review anyway.")
+                    if self.log:                         # token id is LOG-ONLY
+                        self.log.error("[MAKER_RT][CRITICAL] auto-flattened orphan %s (%s sh) — now flat; "
+                                       "halting for review anyway.", tok, bal)
+                    self._send_telegram("🔴 STOPPED · I auto-closed a stray position (now flat) and paused "
+                                        "trading for a human to review.")
             except Exception as exc:  # noqa: BLE001
-                self._instant(f"[MAKER_RT][CRITICAL] reconciliation auto-flatten FAILED {str(tok)[:12]}...: {exc}")
+                if self.log:
+                    self.log.error("[MAKER_RT][CRITICAL] auto-flatten FAILED %s: %s", tok, exc)
+                self._send_telegram("🔴 STOPPED · I tried to auto-close a stray position and it FAILED — "
+                                    "it needs a human right now.")
         self._orphan_detected("reconciliation", tok, "?", bal,
                               f"{len(suspects)} orphan instrument(s); auto_flatten={self.auto_flatten}", now)
         return self.orphan
@@ -1837,12 +1979,19 @@ class PregameLiveExecutor:
             best = d.get("best_edge", 0.0)
             binding = d.get("binding") or {}
             top_binding = max(binding.items(), key=lambda kv: kv[1])[0] if binding else None
+            why = None
+            if d["fills"] == 0 and d["quotes"]:
+                why = ("sizes were limited by hedge/book depth" if top_binding in
+                       ("hedge_depth", "book_depth", "below_venue_minimum")
+                       else "nobody crossed our price yet")
             line = alerts.digest_line(self.digest_min, placed=d["quotes"], cancelled=cancelled,
                                       fills=d["fills"], open_now=len(self.open_orders),
                                       max_open=self.caps.max_open_quotes,
                                       best_edge_pct=(best if best else None),
                                       kalshi_flaps=kflaps, kalshi_down_s=float(d.get("kalshi_down_s", 0.0)),
-                                      binding=top_binding)
+                                      binding=top_binding, stake_today=round(self.caps.stake_today, 2),
+                                      stake_cap=self.caps.max_daily_stake_usd,
+                                      today_pnl=round(self.caps.pnl_today, 4), why_no_fills=why)
             self._send_telegram(line)
             if self.log:
                 self.log.warning(line)
