@@ -68,7 +68,10 @@ def test_hedge_fill_in_account_sweep_is_not_a_false_orphan(tmp_path):
     ex.poll_kalshi_fills(_Store(), NOW, 110.0)
     assert ex.orphan is None, "our own hedge must NOT latch a false orphan"
     assert ex.caps.halted is False, "the bot must stay ARMED"
-    assert any(r["event"] == "fill_untracked" for r in state.rows), "the fill is still ledgered"
+    # The hedge leg matches a REGISTERED expected position -> it is booked hedge_confirmed, NOT dumped in
+    # the untracked bucket (the ZHELAN/TORBOS mislabel fix). Only genuinely-naked fills are fill_untracked.
+    assert any(r["event"] == "hedge_confirmed" for r in state.rows), "the hedge is ledgered as confirmed"
+    assert not any(r["event"] == "fill_untracked" for r in state.rows), "an expected hedge is NOT untracked"
     assert any("EXPECTED" in i and "no orphan" in i for i in ex.log.infos), "explained-by-expected logged"
 
 

@@ -321,7 +321,8 @@ class MakerState:
                 # backfill / CSV replay / any other caller.
                 from .settle import sane_settled
                 ok, why = sane_settled(row["realized_pnl_usd"], row.get("settled_cost_usd", 0.0) or 0.0,
-                                       max_net_usd=self.settled_max_net_usd)
+                                       max_net_usd=self.settled_max_net_usd,
+                                       untracked=bool(row.get("untracked")))
                 if not ok:
                     if self.log:
                         crit = getattr(self.log, "critical", None) or self.log.error

@@ -48,23 +48,29 @@ def net_pnl(legs: list) -> dict:
 
 
 def settled_row(*, sport: str, game: str, market_key: str, legs: list, settled_ts: str,
-                market_id: Optional[str] = None, extra_reason: str = "") -> dict:
+                market_id: Optional[str] = None, extra_reason: str = "", untracked: bool = False) -> dict:
     """The ``trade_settled`` event row: VENUE-TRUTH net + ROI, with an auditable per-leg ``reason``.
     ``settled_cost_usd`` rides on the row for the ROI denominator (read by state.record, dropped by the
-    CSV writer — it is not a column, like unwind_cost)."""
+    CSV writer — it is not a column, like unwind_cost). ``untracked=True`` flags a NAKED (unhedged)
+    position — e.g. the 2026-07-25 UFC ghost stack — whose honest settled outcome is a full-stake
+    loss/win, not a ~1% hedged edge; the sanity guard loosens the ROI ceiling for those rows so the true
+    number reaches lifetime pnl (a plain refuse would have silently dropped a real -$98)."""
     n = net_pnl(legs)
     legdesc = "; ".join(
         f"{l.venue} {l.side} {float(l.shares):g}sh cost ${float(l.cost_usd):.2f} -> ${float(l.settle_value_usd):.2f}"
         for l in legs)
-    reason = (f"{market_id or game} SETTLED net ${n['net']:+.4f} ROI {n['roi'] * 100:+.2f}% "
-              f"on ${n['cost']:.2f} [{legdesc}]")
+    reason = (f"{market_id or game} SETTLED{' [UNTRACKED naked]' if untracked else ''} "
+              f"net ${n['net']:+.4f} ROI {n['roi'] * 100:+.2f}% on ${n['cost']:.2f} [{legdesc}]")
     if extra_reason:
         reason = f"{reason} {extra_reason}"
     winner_venue = next((l.venue for l in legs if float(l.settle_value_usd) > 1e-9), None)
-    return {"event": "trade_settled", "mode": "live", "sport": sport, "phase": "settled",
-            "game": game, "market_key": market_key, "realized_pnl_usd": n["net"],
-            "settled_cost_usd": n["cost"], "settled_revenue_usd": n["revenue"], "roi": n["roi"],
-            "winner_venue": winner_venue, "fill_ts": settled_ts, "reason": reason}
+    row = {"event": "trade_settled", "mode": "live", "sport": sport, "phase": "settled",
+           "game": game, "market_key": market_key, "realized_pnl_usd": n["net"],
+           "settled_cost_usd": n["cost"], "settled_revenue_usd": n["revenue"], "roi": n["roi"],
+           "winner_venue": winner_venue, "fill_ts": settled_ts, "reason": reason}
+    if untracked:
+        row["untracked"] = True
+    return row
 
 
 class SettledPnlReconciler:
@@ -198,15 +204,25 @@ def kalshi_settle_dollars(v: Any) -> float:
 
 
 def sane_settled(net: float, cost: float, *, max_net_usd: float = SETTLED_MAX_NET_USD_DEFAULT,
-                 roi_ceiling: float = SETTLED_ROI_CEILING) -> tuple[bool, str]:
+                 roi_ceiling: float = SETTLED_ROI_CEILING, untracked: bool = False) -> tuple[bool, str]:
     """Guard a ``trade_settled`` net/cost before it can touch lifetime pnl. Returns (ok, reason).
-    REFUSES when |net| exceeds one pair's stake cap OR |net/cost| exceeds ``roi_ceiling`` — either is a
-    unit/pairing bug for a hedged pair whose real edge is ~1%. PURE (no I/O) so both the reconciler and
-    the state aggregator can gate on the same rule."""
+    For a HEDGED pair (the default) REFUSES when |net| exceeds one pair's stake cap OR |net/cost| exceeds
+    ``roi_ceiling`` — either is a unit/pairing bug for a pair whose real edge is ~1%.
+
+    For an ``untracked`` NAKED position the ROI ceiling does NOT apply: its honest settled outcome is a
+    full-stake loss (ROI -100%) or a full-value win, so only the gross UNIT error is guarded — |net| may
+    not exceed a generous multiple of the position's own cost basis (this still catches the $500-for-$5
+    100x bug while letting a real -$98 UFC-stack loss through). PURE (no I/O) so both the reconciler and
+    the state aggregator gate on the same rule."""
     try:
         n, c = float(net), float(cost)
     except (TypeError, ValueError):
         return False, "unparseable net/cost"
+    if untracked:
+        limit = max(float(max_net_usd), 2.0 * abs(c))
+        if abs(n) > limit + 1e-9:
+            return False, f"untracked |net| ${abs(n):.2f} > bound ${limit:.2f} (unit-error guard)"
+        return True, "ok (untracked naked)"
     if abs(n) > float(max_net_usd) + 1e-9:
         return False, f"|net| ${abs(n):.2f} > max_pair_stake ${float(max_net_usd):.2f}"
     roi = (n / c) if abs(c) > 1e-9 else 0.0

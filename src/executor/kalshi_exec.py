@@ -319,7 +319,13 @@ class KalshiExec:
                                 client_order_id=client_order_id or f"unwind-{int(time.time()*1000)}")
 
     def cancel_order(self, order_id: str) -> Any:
-        return self._request("DELETE", f"/portfolio/events/orders/{order_id}")
+        """v2 CancelOrder is ``DELETE /portfolio/orders/{id}`` — the ``events/`` segment belongs ONLY to
+        the batch CREATE path (``POST /portfolio/events/orders``). Sending the DELETE to
+        ``/portfolio/events/orders/{id}`` returned ``404 not_found`` for EVERY cancel, and the caller
+        trusted that as "already gone" and stacked replacement orders that all filled (the 2026-07-25
+        ghost-order incident on KXUFCFIGHT-26JUL25ZAYRZE). The reads (get_order/get_orders) already used
+        ``/portfolio/orders``; the cancel now matches them."""
+        return self._request("DELETE", f"/portfolio/orders/{order_id}")
 
     def _normalize_order_response(self, raw: Any, requested: int) -> dict[str, Any]:
         order = (raw or {}).get("order", raw) if isinstance(raw, dict) else {}
@@ -369,6 +375,29 @@ class KalshiExec:
         sweep to find + cancel any of ours (client_order_id prefix) left resting by a previous run."""
         params = {k: v for k, v in (("status", status), ("ticker", ticker)) if v}
         return self._request("GET", "/portfolio/orders", params=params or None)
+
+    def list_resting(self, *, ticker: Optional[str] = None, limit: int = 200,
+                     max_pages: int = 5) -> list[dict[str, Any]]:
+        """Every RESTING order (optionally for one ``ticker``), cursor-paged. This is the AUTHORITATIVE
+        "is this order still live?" read used by the cancel re-resolve (after a DELETE, confirm the order
+        is actually terminal) and the pre-placement stack guard (adopt/cancel any of our orders resting on
+        a market before adding another). Raises on a read failure so the caller can FAIL CLOSED (treat an
+        unreadable venue as "still resting", never as "gone")."""
+        out: list[dict[str, Any]] = []
+        cursor = None
+        for _ in range(max(1, max_pages)):
+            params: dict[str, Any] = {"status": "resting", "limit": limit}
+            if ticker:
+                params["ticker"] = ticker
+            if cursor:
+                params["cursor"] = cursor
+            raw = self._request("GET", "/portfolio/orders", params=params)
+            page = (raw or {}).get("orders") if isinstance(raw, dict) else (raw or [])
+            out.extend(o for o in (page or []) if isinstance(o, dict))
+            cursor = (raw or {}).get("cursor") if isinstance(raw, dict) else None
+            if not cursor:
+                break
+        return out
 
     def get_order(self, order_id: str) -> dict[str, Any]:
         """Single-order read (GET /portfolio/orders/{id}) — the AUTHORITATIVE per-order status. Falls back

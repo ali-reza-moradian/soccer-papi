@@ -99,6 +99,10 @@ class KalshiOrderClient:
         oid = res.get("order_id")
         if oid:
             self._open[oid] = {"ticker": ticker, "side": side, "price": price, "count": n, "coid": coid}
+        # Surface the client_order_id so the caller (the executor) can re-resolve this order by coid in
+        # the resting list if a later single-order read comes back empty (the cancel verify-or-scream path).
+        if isinstance(res, dict) and "client_order_id" not in res:
+            res = dict(res, client_order_id=coid)
         return res
 
     def cancel(self, order_id: str) -> Any:
@@ -138,6 +142,31 @@ class KalshiOrderClient:
             if isinstance(o, dict) and (o.get("order_id") == order_id or o.get("id") == order_id):
                 return o
         return {}
+
+    def resting_orders(self, ticker: Optional[str] = None) -> list:
+        """OUR resting orders (client_order_id prefix ``mrt-``), optionally scoped to one ``ticker``.
+        Backs the cancel re-resolve + the pre-placement stack guard. Propagates a read error (the caller
+        FAILS CLOSED — an unreadable venue is treated as "still resting", never "gone")."""
+        if not hasattr(self.ex, "list_resting"):
+            return []
+        rows = self.ex.list_resting(ticker=ticker) or []
+        return [o for o in rows if isinstance(o, dict)
+                and str(o.get("client_order_id") or "").startswith(KALSHI_COID_PREFIX)]
+
+    def find_resting(self, *, order_id: Optional[str] = None, client_order_id: Optional[str] = None,
+                     ticker: Optional[str] = None) -> Optional[dict]:
+        """The resting order matching ``order_id`` OR ``client_order_id`` (None if positively absent from
+        the resting list). Raises on a read failure so the caller can fail closed."""
+        if not hasattr(self.ex, "list_resting"):
+            return None
+        for o in (self.ex.list_resting(ticker=ticker) or []):
+            if not isinstance(o, dict):
+                continue
+            if order_id and (o.get("order_id") == order_id or o.get("id") == order_id):
+                return o
+            if client_order_id and o.get("client_order_id") == client_order_id:
+                return o
+        return None
 
     def fills_since(self, min_ts: int) -> list:
         """WS-INDEPENDENT fill authority: every account fill since ``min_ts`` (one call covers all open

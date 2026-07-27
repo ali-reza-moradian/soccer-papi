@@ -37,6 +37,7 @@ from .caps import direction_slot_ok
 from .live import assert_live_allowed
 from .quotes import POLY_MIN_SHARES
 
+_UNREAD = object()               # sentinel: "_venue_order_state was not handed a pre-read order dict"
 HEDGE_DECLINE_FLOOR = -0.010     # re-verify at fill: walked locked-net below this -> decline+unwind (both phases)
 HEDGE_SHARE_TOL = 0.5            # share tolerance for "fully hedged"/"flat" position reads (< 1 contract)
 UNWIND_MAX_ATTEMPTS = 3         # reconcile-to-flat: re-sell the naked remainder up to this many times
@@ -68,6 +69,7 @@ class _LiveOrder:
     rest_venue: str = "polymarket"     # "polymarket" | "kalshi" — dispatches place/cancel/fill/unwind/verify
     kalshi_side: str = ""              # YES|NO when rest_venue == "kalshi" (rest_ref[2])
     teams: str = ""                   # 'AWAY vs HOME' — for the human alert name
+    client_order_id: str = ""          # our coid (Kalshi mrt-*) — re-resolves the order in the resting list
 
 
 class PregameLiveExecutor:
@@ -409,6 +411,13 @@ class PregameLiveExecutor:
             self._refuse(c, phase, price, reason, projected, now_ts)
             self._record(c, "expire", now, phase, price=price, size=size, hedge_ask=hedge_ask, reason=reason)
             return
+        # PRE-PLACEMENT STACK GUARD (belt): a NEW order (no tracked order for this key) must never rest on
+        # a market that already carries an untracked order of ours (a ghost a failed cancel left live).
+        # A reprice already cancel-confirmed its own order, so it is exempt.
+        if existing is None and not self._stack_guard_ok(c, now, now_ts):
+            self._record(c, "expire", now, phase, price=price, size=size, hedge_ask=hedge_ask,
+                         reason="stack_guard_untracked_resting")
+            return
         try:
             res = self._do_rest(c, price, size, tick, store)
         except Exception as exc:  # noqa: BLE001
@@ -425,7 +434,8 @@ class PregameLiveExecutor:
                         placed_ts=now_ts, phase=phase, best_bid=getattr(rest, "best_bid", None),
                         rest_venue=c.rest_venue,
                         kalshi_side=(c.rest_ref[2] if c.rest_venue == "kalshi" else ""),
-                        teams=getattr(c, "teams", ""))
+                        teams=getattr(c, "teams", ""),
+                        client_order_id=str(res.get("client_order_id") or ""))
         self.open_orders[c.key] = lo
         self._place_fail_n.pop(c.key, None)            # a successful place clears the refusal streak
         self._slot_wait_since.pop(c.key, None)         # got its slot -> no longer waiting
@@ -631,33 +641,168 @@ class PregameLiveExecutor:
     _FILLED_STATUSES = ("EXECUTED", "FILLED", "MATCHED", "COMPLETE", "COMPLETED")
 
     def _cancel_confirmed(self, lo: _LiveOrder, resp: Any) -> bool:
-        """True only when the order is confirmed CANCELLED (so a reprice never double-places).
+        """True ONLY when the cancel is VENUE-CONFIRMED terminal (canceled). A cancel that "succeeded"
+        with a 404/empty response is NOT proof the order is gone — the 2026-07-25 ghost orders came from
+        exactly that: DELETEs 404'd, the response/single-read looked empty, this returned True, the slot
+        was freed, and a replacement stacked on top of the STILL-LIVE order. Now:
 
-        A cancel that fails because the order already FILLED is the single most dangerous state in the
-        system: on 2026-07-23 two filled Kalshi orders 404'd on DELETE, read back status='executed',
-        and this returned False for 11.5h — "keeping tracked" while the position sat naked. A filled
-        order is now classified as such and FORCES an immediate fill poll instead of spinning."""
+          * the cancel response's own ``canceled`` list is honored (fast path);
+          * otherwise VENUE TRUTH decides — canceled -> True; FILLED -> route to fill detection + False
+            (a fill is not a cancel; the position must be hedged, not replaced); still RESTING or an
+            UNREADABLE/UNKNOWN state -> False (keep it tracked and retry, NEVER free the slot)."""
         if isinstance(resp, dict):
             canceled = resp.get("canceled") or resp.get("cancelled") or []
             if lo.order_id in canceled:
                 return True
-        try:
-            o = self._venue_get_order(lo)             # venue-dispatched status read
-        except Exception:  # noqa: BLE001 — a gone/404 order is no longer active
+        state, _matched = self._venue_order_state(lo)
+        if state == "canceled":
             return True
-        if not isinstance(o, dict) or not o:
-            return True
-        status = str(o.get("status") or "").upper()
-        if status in ("CANCELED", "CANCELLED"):
-            return True
-        if status in self._FILLED_STATUSES or (self._order_matched(lo, o) or 0) > lo.matched_seen + 1e-9:
-            # NOT a cancel — the venue filled us. Force the fill poll to run NOW, before the caller can
-            # re-place or keep spinning on a dead order id.
-            self._force_fill_poll = True
+        if state == "filled":
+            self._force_fill_poll = True          # NOT a cancel — the venue filled us; route to the hedge
             if self.log:
-                self.log.error("[MAKER_RT][LIVE] cancel of %s failed because it FILLED (status=%s) — "
-                               "routing to fill detection.", lo.order_id, status or "?")
+                self.log.error("[MAKER_RT][LIVE] cancel of %s did NOT cancel — the order FILLED; routing "
+                               "to fill detection (slot NOT released).", lo.order_id)
         return False
+
+    def _venue_order_state(self, lo: _LiveOrder, o: Any = _UNREAD) -> tuple:
+        """VENUE TRUTH for one open order: ('canceled' | 'filled' | 'resting' | 'unknown', matched|None).
+
+        Reads the order by id; if that single read is EMPTY (Kalshi's single-order GET can 404 while the
+        order is still RESTING — the exact hole the ghost-order stack fell through) it RE-RESOLVES the
+        order in the venue's RESTING list by (order_id, client_order_id). FAIL CLOSED: any unreadable step
+        yields 'unknown', so the caller keeps the order tracked and never frees its slot or places a
+        replacement on a possibly-live order. ``o`` may be a single-read the caller already did (avoids a
+        redundant GET)."""
+        if o is _UNREAD:
+            try:
+                o = self._venue_get_order(lo)
+            except Exception:  # noqa: BLE001 — a raised single-read is UNREADABLE; re-resolve below
+                o = None
+        if isinstance(o, dict) and o:
+            status = str(o.get("status") or "").upper()
+            matched = self._order_matched(lo, o)
+            if status in ("CANCELED", "CANCELLED"):
+                return "canceled", matched
+            if status in self._FILLED_STATUSES or (matched or 0) > lo.matched_seen + 1e-9:
+                return "filled", matched
+            return "resting", matched
+        # Empty/failed single-order read -> re-resolve in the venue's RESTING list (by id, then coid).
+        try:
+            resting = self._venue_find_resting(lo)
+        except Exception:  # noqa: BLE001 — could not read the resting list -> UNKNOWN -> fail closed
+            return "unknown", None
+        if resting is not None:
+            return "resting", self._order_matched(lo, resting)
+        # Positively ABSENT from the resting list == terminal (canceled, or filled + purged). A fill is
+        # independently caught by the account-wide fill sweep / the matched branch, so calling this
+        # 'canceled' only ever frees a slot whose order is genuinely no longer resting.
+        return "canceled", None
+
+    def _venue_find_resting(self, lo: _LiveOrder) -> Any:
+        """Venue-dispatched re-resolution of ``lo`` in the RESTING-orders list: the order dict if still
+        resting, None if positively absent. Raises on a read failure (caller fails closed). Kalshi matches
+        by order_id OR our client_order_id (ticker-scoped); Poly matches its account open-orders by id (a
+        client/fake without a lister degrades to None — Poly's single-order read is already reliable)."""
+        if lo.rest_venue == "kalshi":
+            if self.kalshi_order_client is None or not hasattr(self.kalshi_order_client, "find_resting"):
+                return None
+            return self.kalshi_order_client.find_resting(
+                order_id=lo.order_id, client_order_id=(lo.client_order_id or None), ticker=lo.token)
+        lister = getattr(self.poly, "open_orders", None)
+        if not callable(lister):
+            return None
+        oo = lister()
+        orders = oo if isinstance(oo, list) else ((oo or {}).get("data") or (oo or {}).get("orders") or [])
+        for o in orders or []:
+            if isinstance(o, dict) and lo.order_id in (o.get("id"), o.get("order_id"), o.get("orderID")):
+                return o
+        return None
+
+    # -- pre-placement stack guard (never add a 2nd order to a market with a live ghost) --------------
+    @staticmethod
+    def _same_market(lo: _LiveOrder, c: Any) -> bool:
+        return lo.rest_venue == c.rest_venue and lo.token == c.rest_ref[1]
+
+    @staticmethod
+    def _resting_order_id(o: Any) -> Any:
+        return (o.get("order_id") or o.get("id") or o.get("orderID")) if isinstance(o, dict) else None
+
+    def _our_resting_on_market(self, c: Any) -> Any:
+        """OUR resting venue orders on candidate ``c``'s market. Kalshi: client_order_id-prefixed orders
+        for the ticker. Poly: resting orders on THIS token only (strict match — never touch another
+        market's order). None when the venue isn't listable for this leg (no client). Raises on a read
+        failure (caller fails closed)."""
+        if c.rest_venue == "kalshi":
+            if self.kalshi_order_client is None or not hasattr(self.kalshi_order_client, "resting_orders"):
+                return None
+            return list(self.kalshi_order_client.resting_orders(ticker=c.rest_ref[1]) or [])
+        lister = getattr(self.poly, "open_orders", None)
+        if not callable(lister):
+            return None
+        oo = lister()
+        orders = oo if isinstance(oo, list) else ((oo or {}).get("data") or (oo or {}).get("orders") or [])
+        tok = c.rest_ref[1]
+        out = []
+        for o in orders or []:
+            if not isinstance(o, dict):
+                continue
+            asset = o.get("asset_id") or o.get("token_id") or o.get("tokenID")
+            if asset is not None and asset == tok:        # strict: only orders on THIS market's token
+                out.append(o)
+        return out
+
+    def _stack_guard_ok(self, c: Any, now: Any, now_ts: float) -> bool:
+        """PRE-PLACEMENT STACK GUARD (the belt behind the cancel fix). Before adding a NEW resting order
+        to a market, ensure we hold NO UNTRACKED order of ours already resting there — a ghost a prior
+        failed cancel left live. List our resting orders on this market; CANCEL-VERIFY any we are not
+        tracking; if any survives, REFUSE to place (never stack). A LIST-read failure also refuses (fail
+        closed). Returns True iff the market is clean enough to place."""
+        try:
+            ours = self._our_resting_on_market(c)
+        except Exception as exc:  # noqa: BLE001 — cannot list our resting orders -> fail closed
+            if self.log:
+                self.log.warning("[MAKER_RT][LIVE] STACK-GUARD list failed for %s — not placing this "
+                                 "cycle: %s", self._name_for_c(c), exc)
+            return False
+        if ours is None:                                  # venue not listable for this leg -> nothing to guard
+            return True
+        tracked_ids = {lo.order_id for lo in self.open_orders.values() if self._same_market(lo, c)}
+        extras = [o for o in ours if self._resting_order_id(o) and self._resting_order_id(o) not in tracked_ids]
+        if not extras:
+            return True
+        cleared = sum(1 for o in extras if self._cancel_ghost_order(c, self._resting_order_id(o), now))
+        clean = cleared == len(extras)
+        if self.log:
+            self.log.warning("[MAKER_RT][LIVE] STACK-GUARD %s: %d untracked resting order(s) on this "
+                             "market — cleared %d/%d%s.", self._name_for_c(c), len(extras), cleared,
+                             len(extras), "" if clean else " — some SURVIVED, refusing to place (no stack)")
+        return clean
+
+    def _cancel_ghost_order(self, c: Any, oid: Any, now: Any) -> bool:
+        """Cancel an UNTRACKED ghost order (not in open_orders) on ``c``'s market and confirm it is gone
+        from the resting book. Routes a ghost that FILLED to fill detection (a naked fill is the fill
+        sweep's / orphan system's problem, not a reason to stack more resting orders). Returns True iff
+        the order is venue-confirmed no longer resting (canceled or filled)."""
+        if not oid:
+            return False
+        ghost = _LiveOrder(key=c.key, order_id=oid, token=c.rest_ref[1], price=0.0, size=0.0,
+                           side=getattr(c, "rest_side", ""), direction=c.direction, sport=c.sport,
+                           game=c.game, market_key=c.market_key,
+                           hedge_lookup=dict(getattr(c, "hedge_lookup", {}) or {}),
+                           poly_rate=getattr(c, "poly_rate", 0.0), placed_ts=0.0, rest_venue=c.rest_venue,
+                           kalshi_side=(c.rest_ref[2] if c.rest_venue == "kalshi" else ""))
+        resp = None
+        try:
+            resp = self._venue_cancel(ghost)
+        except Exception as exc:  # noqa: BLE001 — order id + raw error are LOG-ONLY
+            if self.log:
+                self.log.warning("[MAKER_RT][LIVE] STACK-GUARD cancel raised for ghost %s: %s", oid, exc)
+        if isinstance(resp, dict) and oid in (resp.get("canceled") or resp.get("cancelled") or []):
+            return True
+        state, _m = self._venue_order_state(ghost)
+        if state == "filled":
+            self._force_fill_poll = True                  # a filled ghost is a naked fill -> route it
+        return state in ("canceled", "filled")
 
     def cancel_all(self, reason: str, now: Any = None) -> int:
         """Cancel EVERY open order (shutdown / halt / feed-down). Best-effort venue cancel-all + per-key
@@ -795,13 +940,19 @@ class PregameLiveExecutor:
             except Exception:  # noqa: BLE001
                 continue
             if not isinstance(o, dict) or not o:
-                # VENUE NO LONGER KNOWS THIS ORDER (cancelled + purged). It cannot have filled unhedged —
-                # the account-wide fill sweep (poll_kalshi_fills) and the matched branch below catch every
-                # fill first. Release the phantom slot so a stale bookkeeping entry never starves the book
-                # (the "open 1, 3,042 slot-refuses" digest). A short grace protects a just-placed order the
-                # venue hasn't indexed yet.
+                # The single-order read is EMPTY. That is NOT proof the order is gone: a still-RESTING
+                # Kalshi order reads empty when its single-order GET 404s — releasing the slot here (as the
+                # old code did unconditionally) is exactly what let a replacement stack on the live order
+                # (2026-07-25). Re-resolve against VENUE TRUTH before releasing; only a confirmed-terminal
+                # order frees its slot, an UNKNOWN/still-resting one stays tracked. A short grace still
+                # protects a just-placed order the venue hasn't indexed yet.
                 if lo.matched_seen <= 1e-9 and now_ts - lo.placed_ts >= self._stale_grace_s:
-                    self._release_stale(key, lo, now)
+                    state, matched = self._venue_order_state(lo, o)
+                    if state == "canceled":
+                        self._release_stale(key, lo, now)         # venue-confirmed gone -> free the slot
+                    elif state == "filled" or (matched is not None and matched > lo.matched_seen + 1e-9):
+                        self._force_fill_poll = True              # it FILLED (not cancelled) -> route to hedge
+                    # 'resting' / 'unknown' -> keep tracked (never free a slot on an unreadable venue)
                 continue
             matched = self._order_matched(lo, o)
             status = str(o.get("status") or "").upper()
@@ -943,23 +1094,33 @@ class PregameLiveExecutor:
         tk = f.get("ticker") or f.get("market_ticker") or "?"
         cnt = fp_num(f, "count") or 0.0
         px = f.get("yes_price_dollars") if str(f.get("side", "")).lower() == "yes" else f.get("no_price_dollars")
-        if self.state is not None:
-            self.state.record({"event": "fill_untracked", "mode": "live", "phase": "?", "game": tk,
-                               "market_key": tk, "side": str(f.get("side") or ""),
-                               "direction": "rest-kalshi", "rest_venue": "kalshi",
-                               "quote_price": px or "", "size": round(cnt, 2),
-                               "reason": f.get("order_id") or ""}, now)
         try:
             pos = self._kalshi_position(tk)
         except Exception:  # noqa: BLE001 — cannot read == cannot prove flat == treat as naked
             pos = None
         expected = self._expected_shares("kalshi", tk)
-        if pos is not None and abs(pos) - expected <= HEDGE_SHARE_TOL:
+        explained = pos is not None and abs(pos) - expected <= HEDGE_SHARE_TOL
+        # LEDGER LABEL. A fill that matches a REGISTERED expected hedge/rest leg is OUR OWN hedge
+        # confirming on the account sweep — it lands on an order id we never rested, but it is a leg we
+        # HOLD ON PURPOSE. Book it as ``hedge_confirmed``, NOT as an untracked surprise. Only a
+        # genuinely-unexplained fill is ``fill_untracked``. (Sunday's ZHELAN 26sh + TORBOS 21sh Kalshi
+        # hedges were logged fill_untracked despite matching expected-hedges because this row was written
+        # BEFORE the expected check — reordering it is the fix; the untracked bucket now holds only truly
+        # naked fills like the UFC ghost stack.)
+        is_expected_leg = explained and expected > HEDGE_SHARE_TOL
+        if self.state is not None:
+            self.state.record({"event": "hedge_confirmed" if is_expected_leg else "fill_untracked",
+                               "mode": "live", "phase": "?", "game": tk, "market_key": tk,
+                               "side": str(f.get("side") or ""), "direction": "rest-kalshi",
+                               "rest_venue": "kalshi", "quote_price": px or "", "size": round(cnt, 2),
+                               "reason": f.get("order_id") or ""}, now)
+        if explained:
             # Flat, or fully EXPLAINED by an expected hedge/rest leg we booked -> ledger, do NOT halt.
             if self.log:
-                how = "FLAT" if abs(pos) <= HEDGE_SHARE_TOL else f"EXPECTED (hold {expected:g})"
+                how = "FLAT" if abs(pos) <= HEDGE_SHARE_TOL else f"EXPECTED hedge/rest leg (hold {expected:g})"
                 self.log.info("[MAKER_RT][LIVE] untracked fill on %s (order %s, %.0f) — position %s "
-                              "(read=%.2f); ledgered, no orphan.", tk, f.get("order_id"), cnt, how, pos)
+                              "(read=%.2f); logged %s, no orphan.", tk, f.get("order_id"), cnt, how, pos,
+                              "hedge_confirmed" if is_expected_leg else "ledgered")
             return
         self._traded_tickers.add(tk)                    # make sure reconciliation keeps watching it
         self._persist_traded_tokens()
