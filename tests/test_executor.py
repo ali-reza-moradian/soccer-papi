@@ -171,15 +171,16 @@ def test_kalshi_place_market_sell_v2_unwind_sides():
 
 
 def test_kalshi_cancel_v2_endpoint():
-    """v2 CancelOrder is DELETE /portfolio/orders/{id}. The ``events/`` segment belongs ONLY to the batch
-    CREATE path; sending the DELETE there 404'd for every cancel and the caller trusted "already gone",
-    stacking replacements that all filled (the 2026-07-25 KXUFCFIGHT ghost-order incident)."""
-    sess = _FakeSession([_FakeResp(200, {"reduced_by": 1})])
+    """v2 CancelOrder is DELETE /portfolio/events/orders/{id} (the SAME v2 family as create). VENUE-VERIFIED
+    2026-07-27: that path returns 200 (reduced_by) for a live order and 404 for a terminal one, while
+    DELETE /portfolio/orders/{id} is the DEPRECATED v1 path (410). A 404 here means the order is already
+    GONE (canceled or FILLED) — the ghost-order fix is the caller's verify-or-scream, NOT changing this
+    endpoint (an earlier fix wrongly switched it to /portfolio/orders/{id} and 410'd every cancel)."""
+    sess = _FakeSession([_FakeResp(200, {"order_id": "oid123", "reduced_by": "1.00"})])
     k = kalshi_exec.KalshiExec(api_key_id="kid", signer=lambda m: "sig", session=sess)
     k.cancel_order("oid123")
     assert sess.calls[0]["method"] == "DELETE"
-    assert sess.calls[0]["url"].endswith("/portfolio/orders/oid123")
-    assert "/events/" not in sess.calls[0]["url"]                 # the exact bug: no events/ in the cancel path
+    assert sess.calls[0]["url"].endswith("/portfolio/events/orders/oid123")
 
 
 def test_kalshi_retries_on_429_then_succeeds():

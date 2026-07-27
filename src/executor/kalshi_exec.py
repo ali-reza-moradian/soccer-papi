@@ -319,13 +319,16 @@ class KalshiExec:
                                 client_order_id=client_order_id or f"unwind-{int(time.time()*1000)}")
 
     def cancel_order(self, order_id: str) -> Any:
-        """v2 CancelOrder is ``DELETE /portfolio/orders/{id}`` — the ``events/`` segment belongs ONLY to
-        the batch CREATE path (``POST /portfolio/events/orders``). Sending the DELETE to
-        ``/portfolio/events/orders/{id}`` returned ``404 not_found`` for EVERY cancel, and the caller
-        trusted that as "already gone" and stacked replacement orders that all filled (the 2026-07-25
-        ghost-order incident on KXUFCFIGHT-26JUL25ZAYRZE). The reads (get_order/get_orders) already used
-        ``/portfolio/orders``; the cancel now matches them."""
-        return self._request("DELETE", f"/portfolio/orders/{order_id}")
+        """v2 CancelOrder is ``DELETE /portfolio/events/orders/{id}`` — the SAME v2 family as create.
+        VENUE-VERIFIED 2026-07-27: ``DELETE /portfolio/events/orders/{id}`` returns 200 (``reduced_by``)
+        for a LIVE order and 404 ``not_found`` for an already-TERMINAL one; ``DELETE /portfolio/orders/{id}``
+        returns 410 ``deprecated_v1_order_endpoint``. So a 404 here means the order is ALREADY GONE
+        (canceled or FILLED) — NOT that the endpoint is wrong. The 2026-07-25 ghost-order stack came from
+        TRUSTING that 404 as a clean cancel and freeing the slot: the fix is the caller's verify-or-scream
+        (re-resolve the order — a filled one routes to the hedge, a canceled one releases, a still-resting
+        one is retried), NOT changing this endpoint. (An earlier fix wrongly switched it to the deprecated
+        ``/portfolio/orders/{id}`` V1 path, which 410'd EVERY Kalshi cancel.)"""
+        return self._request("DELETE", f"/portfolio/events/orders/{order_id}")
 
     def _normalize_order_response(self, raw: Any, requested: int) -> dict[str, Any]:
         order = (raw or {}).get("order", raw) if isinstance(raw, dict) else {}
