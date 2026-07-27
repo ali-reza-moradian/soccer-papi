@@ -245,6 +245,38 @@ def test_hedged_lifetime_reported_separately_from_untracked(tmp_path):
     assert hb["settled_pnl_untracked_lifetime"] == pytest.approx(42.0)
 
 
+def test_reconciler_refuses_scalar_walkover_settlement():
+    """A non-binary Kalshi settlement (market_result='scalar' — a walkover/retirement refund) must NEVER
+    be auto-booked: the poly complement's redemption isn't inferable, so booking it guesses a windfall
+    (the MICDRA +$15.94 phantom). It is refused + logged ONCE, and re-runs stay silent + un-booked."""
+    from src.genz.maker_rt.settle import SettledPnlReconciler
+
+    class _Log:
+        def __init__(self):
+            self.msgs = []
+
+        def critical(self, m, *a):
+            self.msgs.append(m % a if a else m)
+        error = critical
+        warning = critical
+
+    class _K:
+        def get_settlements(self, **_k):
+            return {"settlements": [{"ticker": "KXATPMATCH-26JUL27MICDRA-MIC", "market_result": "scalar",
+                                     "revenue": 1548, "value": 43, "yes_count_fp": "36.00"}]}
+
+    log = _Log()
+    recorded = []
+    rec = SettledPnlReconciler(kalshi=_K(), record=lambda row, now: recorded.append(row), log=log)
+    pair = {"sport": "tennis", "game": "KXATPMATCH-26JUL27MICDRA", "market_key": "match_winner",
+            "kalshi": {"ticker": "KXATPMATCH-26JUL27MICDRA-MIC", "side": "yes", "shares": 36, "cost": 15.74},
+            "poly": {"token": "P", "shares": 36, "cost": 19.80}}
+    assert rec.reconcile([pair], None) == [] and recorded == [], "a walkover is never auto-booked"
+    assert any("non-binary" in m for m in log.msgs)
+    log.msgs.clear()
+    assert rec.reconcile([pair], None) == [] and log.msgs == [], "re-run: still un-booked, logged once"
+
+
 def test_daily_caps_prior_day_snapshot_is_ignored(tmp_path):
     import json
     path = mrt_config.runtime_path("daily_caps")

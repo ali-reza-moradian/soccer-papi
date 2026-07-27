@@ -86,6 +86,7 @@ class SettledPnlReconciler:
         self.log = log
         self.max_pair_stake_usd = float(max_pair_stake_usd)   # sanity-guard ceiling for |net| (config-driven)
         self._settled_keys: set = set()            # (game, market_key) already reconciled
+        self._manual_keys: set = set()             # non-binary (walkover/void) settlements -> logged ONCE, never auto-booked
 
     def reconcile(self, pairs: list, now: Any) -> list:
         """``pairs``: the maker's traded hedged markets with per-leg COST BASIS, each:
@@ -159,7 +160,21 @@ class SettledPnlReconciler:
         st = settlements.get(k.get("ticker"))
         if st is None:                              # Kalshi leg not settled yet -> retry next pass
             return None
-        result = str(st.get("market_result") or st.get("result") or "").lower()   # 'yes' | 'no'
+        result = str(st.get("market_result") or st.get("result") or "").lower()   # 'yes' | 'no' | 'scalar' | ...
+        # NON-BINARY settlement (e.g. a tennis walkover/retirement -> Kalshi ``market_result: "scalar"``,
+        # refunding ~last price; Poly settles by its OWN rules). The poly complement's redemption CANNOT be
+        # inferred from a scalar Kalshi settlement, so auto-booking it GUESSES a windfall — that guess
+        # booked the 2026-07-27 MICDRA +$15.94 phantom (it assumed the poly leg redeemed a full $36). REFUSE
+        # + flag for manual reconciliation; never emit a guessed number.
+        if result not in ("yes", "no"):
+            key = (p.get("game"), p.get("market_key"))
+            if key not in self._manual_keys:
+                self._manual_keys.add(key)
+                _log_critical(self.log, "[MAKER_RT][SETTLE][CRITICAL] %s settled market_result=%r "
+                              "(non-binary — walkover/void/scalar). Poly redemption is NOT inferable; NOT "
+                              "auto-booked. Reconcile by hand (read the actual poly redemption).",
+                              k.get("ticker"), result)
+            return None
         k_shares = float(k.get("shares") or 0.0)
         k_side = str(k.get("side") or "yes").lower()
         k_won = (result == k_side) if result in ("yes", "no") else None
