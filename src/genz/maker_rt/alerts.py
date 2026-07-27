@@ -31,6 +31,7 @@ STATUS = {
     "cancelled": ("⚪", "CANCELLED"),
     "filled":    ("💰", "FILLED!"),
     "locked":    ("✅", "LOCKED"),
+    "locked_loss": ("🔴", "ERROR"),
     "settled":   ("🏁", "SETTLED"),
     "unwound":   ("🟠", "UNWOUND"),
     "halted":    ("🔴", "STOPPED"),
@@ -301,6 +302,30 @@ def format_event(kind: str, *, sport: Any = None, game: Any = None, market_key: 
             ft = f"{int(fills_today)} fills · " if fills_today is not None else ""
             l4 = f"\n   📈 Today: {ft}{signed_money(today_pnl)} · Lifetime: {signed_money(lifetime_pnl)}"
         return l1 + l2 + l3 + l4
+
+    if kind == "locked_loss":
+        # A completed pair that does NOT profit (locked_net <= 0, or rest+hedge >= $1.00/share). This is
+        # NEVER "GUARANTEED" — it is a guaranteed LOSS that the pre-hedge check should have declined, so it
+        # is a red ERROR the operator must see, with the exact numbers that prove it.
+        hedge_nm = other_name(name, teams)
+        rp = rest_price if rest_price is not None else price
+        rs = rest_shares if rest_shares is not None else size
+        rest_amt = money((float(rp) * float(rs)) if (rp is not None and rs is not None) else None)
+        hedge_amt = money((float(hedge_price) * float(hedge_shares)) if (hedge_price is not None and hedge_shares is not None) else None)
+        risked = _pair_risk(rest_price, rest_shares, hedge_price, hedge_shares, hedge_fee, price, size)
+        pays = money(float(rs) if rs is not None else None)
+        pair_ps = None
+        if rp is not None and hedge_price is not None:
+            pair_ps = float(rp) + float(hedge_price)
+        l1 = f"{_status(kind)} · {tag} · {match} · HEDGED AT A LOSS — this pair cannot profit"
+        l2 = (f"\n   Bought: {name} {rest_amt} @ {cents(rp)} ({venue_label(venue)}) + "
+              f"{hedge_nm} {hedge_amt} @ {cents(hedge_price)} ({venue_label(hedge_venue)})")
+        roi = f" ({pct(net_pct)})" if net_pct is not None else ""
+        l3 = f"\n   Total risked {money(risked)} → pays {pays} · 💵 net {signed_money(pnl)} after fees{roi}"
+        warn = (f"\n   ⚠️ rest+hedge = {money(pair_ps)}/share (≥ $1.00) — the pre-hedge check should have "
+                f"declined this. Investigate." if (pair_ps is not None and pair_ps >= 1.0 - 1e-9)
+                else "\n   ⚠️ net edge is ≤ 0 after fees — the pre-hedge check should have declined this. Investigate.")
+        return l1 + l2 + l3 + warn
 
     if kind == "settled":
         won = f" · {_title(winner)} won" if winner else ""

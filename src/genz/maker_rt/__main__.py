@@ -342,6 +342,8 @@ async def _run(cfg: Any, log: Any) -> int:
             if now_ts - last_hb >= HEARTBEAT_EVERY_S:
                 state.write_heartbeat(mode, sockets, driver.open_quote_count(), now)
                 state.maybe_persist_tuning(now_ts)         # throttled; fills persist immediately
+                if pregame_exec is not None:
+                    pregame_exec.maybe_persist_daily_caps(now_ts)   # daily caps survive a mid-day restart
                 summ = state.summary(mode, sockets, now)
                 state.write_summary(mode, sockets, now)
                 if now_ts - last_achv_log >= 60.0:            # a compact per-sport achievable heartbeat

@@ -188,9 +188,12 @@ class MakerState:
     # after BOTH legs settle/redeem. A ``trade_settled`` row (written by the settlement reconciler) nets
     # both venues; these lifetime counters are the AUTHORITATIVE realized pnl the panel/summary report
     # (vs the fill-time estimate in pnl_today). They survive the daily roll + persist across restarts.
-    settled_pnl_lifetime: float = 0.0                  # sum of true net across settled trades ($)
+    settled_pnl_lifetime: float = 0.0                  # sum of true net across ALL settled trades ($)
+    # UNTRACKED (naked) settled pnl — e.g. the 2026-07-25 UFC ghost-stack luck (+$42). Tracked SEPARATELY
+    # so the HEDGED-only realized number (settled_pnl_lifetime − this) is not flattered by a naked windfall.
+    settled_pnl_untracked_lifetime: float = 0.0
     settled_cost_lifetime: float = 0.0                 # sum of cost basis across settled trades ($; ROI denom)
-    settled_trades: int = 0                            # count of settled hedged trades
+    settled_trades: int = 0                            # count of settled trades (hedged + untracked)
     # SANITY CEILING on |net| for a settled row (defense-in-depth: the reconciler guards at the source,
     # this guards the AGGREGATOR so a backfill / CSV replay / future call site can't inject a corrupt
     # number either). Set at startup from cfg.live.max_pair_stake_usd; the ROI ceiling is fixed at 50%.
@@ -208,13 +211,13 @@ class MakerState:
                     self.lifetime_fills, self.lifetime_unwinds, self.recent_outcomes,
                     self.lifetime_quotes, self.recent_locked_nets,
                     self.settled_pnl_lifetime, self.settled_cost_lifetime, self.settled_trades,
-                    self.settled_max_net_usd)
+                    self.settled_max_net_usd, self.settled_pnl_untracked_lifetime)
             self.__init__(day=day)  # type: ignore[misc]
             (self.log, self.restarts_today, self.gates, self.live,
              self.lifetime_fills, self.lifetime_unwinds, self.recent_outcomes,
              self.lifetime_quotes, self.recent_locked_nets,
              self.settled_pnl_lifetime, self.settled_cost_lifetime, self.settled_trades,
-             self.settled_max_net_usd) = keep
+             self.settled_max_net_usd, self.settled_pnl_untracked_lifetime) = keep
 
     def _bucket(self, sport: str, phase: str) -> _Bucket:
         return self.buckets.setdefault((str(sport or "?"), str(phase or "pre")), _Bucket())
@@ -234,6 +237,7 @@ class MakerState:
         self.recent_locked_nets = deque((float(v) for v in (obj.get("recent_locked_nets") or [])),
                                         maxlen=_TUNING_WINDOW)
         self.settled_pnl_lifetime = float(obj.get("settled_pnl_lifetime", 0.0) or 0.0)
+        self.settled_pnl_untracked_lifetime = float(obj.get("settled_pnl_untracked_lifetime", 0.0) or 0.0)
         self.settled_cost_lifetime = float(obj.get("settled_cost_lifetime", 0.0) or 0.0)
         self.settled_trades = int(obj.get("settled_trades", 0) or 0)
 
@@ -246,6 +250,7 @@ class MakerState:
             "recent_outcomes": list(self.recent_outcomes),
             "recent_locked_nets": list(self.recent_locked_nets),
             "settled_pnl_lifetime": round(self.settled_pnl_lifetime, 4),
+            "settled_pnl_untracked_lifetime": round(self.settled_pnl_untracked_lifetime, 4),
             "settled_cost_lifetime": round(self.settled_cost_lifetime, 4),
             "settled_trades": self.settled_trades,
         })
@@ -333,6 +338,8 @@ class MakerState:
                     self._append_csv({**row, "event": "trade_settled_refused"}, now)
                     return                                       # never aggregate; audit row is inert
                 self.settled_pnl_lifetime += float(row["realized_pnl_usd"])
+                if row.get("untracked"):                        # naked windfall/loss — keep it OUT of hedged pnl
+                    self.settled_pnl_untracked_lifetime += float(row["realized_pnl_usd"])
                 self.settled_trades += 1
                 if row.get("settled_cost_usd") not in (None, ""):
                     self.settled_cost_lifetime += float(row["settled_cost_usd"])
@@ -398,6 +405,11 @@ class MakerState:
             # SETTLED (VENUE-TRUTH) realized pnl — the authoritative lifetime number (both legs netted),
             # distinct from pnl_today (the fill-time locked estimate).
             "settled_pnl_lifetime": round(self.settled_pnl_lifetime, 4),
+            # HEDGED-ONLY realized pnl (excludes untracked naked windfalls like the UFC +$42), reported
+            # alongside the untracked bucket so the maker's true hedged edge is never flattered by luck.
+            "settled_pnl_hedged_lifetime": round(self.settled_pnl_lifetime
+                                                 - self.settled_pnl_untracked_lifetime, 4),
+            "settled_pnl_untracked_lifetime": round(self.settled_pnl_untracked_lifetime, 4),
             "settled_trades": self.settled_trades,
             "settled_roi": (round(self.settled_pnl_lifetime / self.settled_cost_lifetime, 4)
                             if self.settled_cost_lifetime else 0.0),
@@ -427,6 +439,9 @@ class MakerState:
               "sockets": dict(sockets), "open_quotes": open_quotes,
               "fills_today": self.n_fills, "pnl_today": round(self.pnl_today, 4),
               "settled_pnl_lifetime": round(self.settled_pnl_lifetime, 4),
+              "settled_pnl_hedged_lifetime": round(self.settled_pnl_lifetime
+                                                   - self.settled_pnl_untracked_lifetime, 4),
+              "settled_pnl_untracked_lifetime": round(self.settled_pnl_untracked_lifetime, 4),
               "settled_trades": self.settled_trades,
               "restarts_today": self.restarts_today, "gates": dict(self.gates),
               "live": dict(self.live)}

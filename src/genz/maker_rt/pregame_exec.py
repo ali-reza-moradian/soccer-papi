@@ -203,6 +203,14 @@ class PregameLiveExecutor:
             kalshi=self.kalshi, poly=self.poly,
             record=(self.state.record if self.state is not None else None), log=self.log,
             max_pair_stake_usd=float(getattr(self.caps, "max_pair_stake_usd", 100.0)))
+        # DAILY CAPS PERSISTENCE: LiveCaps' per-day counters (stake_today / fills_today / pnl_today) are
+        # in-memory and reset to 0 on every process start, so a mid-day deploy silently RESET the daily
+        # budget (12:08Z restart wiped the day's stake to $0). Persist them (keyed by UTC day) and restore
+        # them at startup so a restart can't reopen a spent daily cap. LiveCaps stays PURE — the executor
+        # (which already persists orphan/expected/traded state) owns this I/O.
+        self._daily_caps_path = mrt_config.runtime_path("daily_caps")
+        self._daily_caps_saved_ts = 0.0
+        self._load_daily_caps()
         self._load_traded_tokens()
         self._load_settled_ledger()
         self._load_expected_positions()
@@ -225,6 +233,58 @@ class PregameLiveExecutor:
         self._place_fail_n = {}
         if hasattr(self.caps, "roll"):
             self.caps.roll(day)
+        self.persist_daily_caps()                    # a new UTC day -> persist the reset counters
+
+    # -- daily-caps persistence (survives a mid-day restart) -----------------
+    def _load_daily_caps(self) -> None:
+        """Restore today's committed stake / fills / pnl at startup so a restart can't reopen a spent
+        daily cap. Only a SAME-UTC-DAY snapshot is restored; a stale (prior-day) file is ignored. Sets
+        ``caps._day`` to the restored day so the first roll_day does NOT wipe the restored counters."""
+        import json
+        from .state import utcnow
+        if not self._daily_caps_path or not os.path.exists(self._daily_caps_path):
+            return
+        try:
+            with open(self._daily_caps_path, "r", encoding="utf-8") as fh:
+                data = json.load(fh)
+            today = utcnow().strftime("%Y%m%d")
+            if not isinstance(data, dict) or str(data.get("day")) != today:
+                return                                # prior day -> let the normal midnight roll reset it
+            self.caps.stake_today = float(data.get("stake_today", 0.0) or 0.0)
+            self.caps.fills_today = int(data.get("fills_today", 0) or 0)
+            self.caps.pnl_today = float(data.get("pnl_today", 0.0) or 0.0)
+            self.caps._day = today                    # so caps.roll(today) is a no-op (don't wipe on restart)
+            if self.log:
+                self.log.warning("[MAKER_RT][LIVE] restored today's daily caps across restart: "
+                                 "stake $%.2f, fills %d, pnl $%.2f (cap $%.0f).", self.caps.stake_today,
+                                 self.caps.fills_today, self.caps.pnl_today, self.caps.max_daily_stake_usd)
+        except Exception:  # noqa: BLE001 — a corrupt/locked file must never block startup
+            pass
+
+    def persist_daily_caps(self) -> None:
+        """Atomically write today's caps counters (best-effort — never blocks trading)."""
+        import json
+        from .state import utcnow
+        if not self._daily_caps_path:
+            return
+        try:
+            mrt_config.assert_writable(self._daily_caps_path)
+            tmp = self._daily_caps_path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as fh:
+                json.dump({"day": utcnow().strftime("%Y%m%d"),
+                           "stake_today": round(float(self.caps.stake_today), 4),
+                           "fills_today": int(self.caps.fills_today),
+                           "pnl_today": round(float(self.caps.pnl_today), 4)}, fh)
+            os.replace(tmp, self._daily_caps_path)
+        except Exception:  # noqa: BLE001
+            pass
+
+    def maybe_persist_daily_caps(self, now_ts: float) -> None:
+        """Throttled daily-caps persist for the heartbeat loop (fills persist immediately)."""
+        if now_ts - self._daily_caps_saved_ts < 30.0:
+            return
+        self._daily_caps_saved_ts = now_ts
+        self.persist_daily_caps()
 
     # -- gate / eligibility --------------------------------------------------
     @staticmethod
@@ -1151,6 +1211,7 @@ class PregameLiveExecutor:
             if self.in_flight is not None:
                 self.in_flight.release(("live", key))
         self._digest["fills"] += 1                          # count for the digest (the hedge is instant-alerted)
+        self.persist_daily_caps()                           # a fill moved stake/fills/pnl -> persist NOW
         if lo.phase == "inplay":
             self._apply_inplay_circuit(lo, result, now, now_ts)
         if total_matched >= lo.size - 1e-9:                # fully filled -> no remainder resting
@@ -1170,12 +1231,20 @@ class PregameLiveExecutor:
         hedge_venue = hl.get("venue", "kalshi")
         hv = store.kalshi_view(hl.get("ticker"), hl.get("side")) if hedge_venue == "kalshi" \
             else store.poly_view(hl.get("token"))
+        # ONE shared PRE-HEDGE gate for BOTH directions (rest-poly->hedge-kalshi AND rest-kalshi->hedge-poly):
+        # walk the ACTUAL current hedge book for the full fill size + that venue's taker fee -> the achievable
+        # locked net (the rest leg is a maker, fee 0, on both sides). This is what re-checks a quote whose
+        # hedge moved against us between quote and fill (adverse selection) — the exact failure that let a
+        # rest-kalshi golubic fill hedge into a -2% guaranteed loss.
         re_mark = hedge_mod.mark_hedge(hv.ask_ladder, matched, hedge_venue, lo.poly_rate) if hv else None
         locked = hedge_mod.locked_net(fill_price, re_mark["cost_per_share"]) if re_mark else None
+        hedge_px_est = re_mark["avg_price"] if re_mark else None
         self._record_fill(lo, matched, fill_price, now)          # ledger chain head: fill -> hedge_* -> unwind
         self._emit_event("filled", lo, instant=True, price=fill_price, size=matched)
-        # DECLINE: the walked hedge is too dear -> do NOT leg in; unwind the WHOLE fill (verified).
-        if locked is None or locked < HEDGE_DECLINE_FLOOR:
+        # DECLINE (same code path, both directions): the walked hedge can't lock a net above the decline
+        # floor, OR the walked pair already costs >= $1.00/share (a guaranteed loss before fees), OR there
+        # is no readable hedge book. Do NOT leg in — unwind the WHOLE rest fill (verified) + log hedge_declined.
+        if self._prehedge_declines(locked, fill_price, hedge_px_est):
             return self._unwind_and_record(lo, matched, fill_price, locked, "hedge_declined", now)
         # FIRE the hedge on the COMPLEMENT venue (rest_poly -> Kalshi IOC; rest_kalshi -> Poly FAK).
         if hedge_venue == "polymarket":
@@ -1212,9 +1281,15 @@ class PregameLiveExecutor:
                 true_hedged = min(lo.matched_seen, max(hedged, complement))
                 locked_actual = self._actual_locked_net(fill_price, hedge_avg, hedge_fee, true_hedged, locked)
                 pnl = float(locked_actual) * true_hedged if locked_actual is not None else 0.0
+                # OVER-FILL ACCOUNTING: a $-sized Poly hedge sweep can fill at a better avg price and return
+                # MORE shares than requested. pnl is booked on the PAIRED amount (true_hedged), but the
+                # EXPECTED position must register the ACTUAL VENUE-HELD shares (``complement``) — never the
+                # clamped/derived amount — so a benign over-hedge can never read as a naked orphan on the
+                # next reconcile (the 2026-07-27 19:09 halt: 82.59 held vs 79 registered).
                 return self._record_hedge_locked(lo, matched, fill_price, true_hedged, hedge_avg,
                                                  hedge_oid, locked_actual, hedge_venue, now, pnl=pnl,
-                                                 hedge_fee=hedge_fee, verified=True)
+                                                 hedge_fee=hedge_fee, verified=True,
+                                                 actual_hedge_shares=complement)
             hedged = max(hedged, complement)                   # never unwind shares we actually hold hedged
         # MISS / PARTIAL / ERROR -> unwind the genuinely UNHEDGED remainder (verified). A partial hedge
         # locks its part.
@@ -1223,6 +1298,33 @@ class PregameLiveExecutor:
         remainder = max(0.0, matched - hedged)
         return self._unwind_and_record(lo, remainder, fill_price, locked, "hedge_unwound", now,
                                        hedge_oid=hedge_oid)
+
+    @staticmethod
+    def _prehedge_declines(locked_net_est: Optional[float], fill_price: float,
+                           hedge_price_est: Optional[float]) -> bool:
+        """THE shared pre-hedge gate (identical for BOTH directions). Return True — DO NOT HEDGE, unwind
+        the rest fill instead — when the pair cannot profitably lock:
+          * the walked achievable locked net is below ``HEDGE_DECLINE_FLOOR`` (or unreadable/None), OR
+          * the walked pair (rest fill price + hedge avg, per share) already costs >= $1.00 — a guaranteed
+            loss BEFORE fees, so no fee model can rescue it.
+        Pure so it is unit-tested directly against the (a)/(b) production numbers."""
+        if locked_net_est is None:
+            return True                                          # no readable hedge -> can't prove a profit
+        if float(locked_net_est) < HEDGE_DECLINE_FLOOR:
+            return True
+        if hedge_price_est is not None and (float(fill_price) + float(hedge_price_est)) >= 1.0 - 1e-9:
+            return True                                          # rest + hedge >= $1/share == guaranteed loss
+        return False
+
+    @staticmethod
+    def _pair_is_profit(fill_price: float, hedge_avg: Any, locked: Optional[float]) -> bool:
+        """A completed hedge is a GENUINE profit only when the actual locked net is > 0 AND the pair
+        (rest + hedge per share) costs < $1.00. Anything else is a locked LOSS (alert it as an ERROR, never
+        'GUARANTEED')."""
+        if locked is None or float(locked) <= 1e-9:
+            return False
+        pair_ps = float(fill_price) + float(hedge_avg or 0.0)
+        return pair_ps < 1.0 - 1e-9
 
     @staticmethod
     def _actual_locked_net(fill_price: float, hedge_avg: Any, hedge_fee: Any, hedged: Any,
@@ -1237,22 +1339,37 @@ class PregameLiveExecutor:
 
     def _record_hedge_locked(self, lo: _LiveOrder, matched: float, fill_price: float, hedged: float,
                              hedge_avg: Any, hedge_oid: Any, locked: Optional[float], hedge_venue: str,
-                             now: Any, *, pnl: float, hedge_fee: Any = None, verified: bool = False) -> dict:
+                             now: Any, *, pnl: float, hedge_fee: Any = None, verified: bool = False,
+                             actual_hedge_shares: Any = None) -> dict:
         """Book a LOCKED hedge (reported OR position-verified): commit the hedge stake, count the fill,
         ledger the hedge_locked chain row + instant alert. ``locked`` is the FEE-HONEST net (actual hedge
         price + actual fee). ``verified`` marks the path where the venue's fill count under-reported but
         the COMPLEMENT position proves fully hedged (unwind suppressed)."""
         self.caps.commit_stake(float(hedged) * float(hedge_avg or 0.0) + float(hedge_fee or 0.0))
         self.caps.on_fill(pnl)
+        # POST-HEDGE HONESTY GUARD: a "LOCKED / profit is GUARANTEED" alert may ONLY be emitted when the
+        # pair genuinely profits (locked_net > 0 AND rest+hedge < $1/share). A pair that summed >= $1/share
+        # or nets <= 0 is a guaranteed LOSS the pre-hedge gate should have declined — alert it as a red
+        # ERROR (never "GUARANTEED") so a -2% hedge like the 2026-07-27 golubic fill can't read as a win.
+        profit = self._pair_is_profit(fill_price, hedge_avg, locked)
         self._record_lo(lo, "hedge_locked", now, price=fill_price, size=matched, locked_net=locked,
                         locked_pnl=pnl, hedge_avg=hedge_avg, hedge_order_id=hedge_oid)
-        self._emit_event("locked", lo, instant=True, pnl=pnl,
+        if not profit and self.log:
+            self.log.error("[MAKER_RT][LIVE] HEDGED AT A LOSS %s: rest %.4f + hedge %.4f = %.4f/sh, "
+                           "locked_net %s, pnl $%.2f — booked, alerted ERROR (not GUARANTEED).",
+                           self._name_for(lo), float(fill_price), float(hedge_avg or 0.0),
+                           float(fill_price) + float(hedge_avg or 0.0),
+                           ("%.2f%%" % (locked * 100.0)) if locked is not None else "n/a", pnl)
+        self._emit_event("locked" if profit else "locked_loss", lo, instant=True, pnl=pnl,
                          net_pct=(locked * 100.0 if locked is not None else None),
                          hedge_price=hedge_avg, hedge_venue=hedge_venue,
                          rest_price=fill_price, rest_shares=matched, hedge_shares=hedged,
                          hedge_fee=hedge_fee, **self._live_ctx())
         self._note_pair_legs(lo, matched, fill_price, hedged, hedge_avg, hedge_fee)   # fee-honest cost basis
-        self._note_expected_legs(lo, matched, hedged, hedge_venue, now)    # rest+hedge legs we now HOLD
+        # Register the ACTUAL venue-held hedge shares (never the derived/clamped amount) so an over-fill is
+        # accounted, not orphaned. Falls back to ``hedged`` when the caller has no separate venue read.
+        hedge_held = actual_hedge_shares if actual_hedge_shares is not None else hedged
+        self._note_expected_legs(lo, matched, hedge_held, hedge_venue, now)    # rest+hedge legs we now HOLD
         if verified and self.log:
             self.log.warning("[MAKER_RT][LIVE] hedge reported non-locked but the COMPLEMENT position "
                              "confirms FULLY HEDGED (%.2f sh) — booked LOCKED, unwind suppressed (no "
