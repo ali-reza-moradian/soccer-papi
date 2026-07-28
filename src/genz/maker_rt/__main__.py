@@ -297,7 +297,7 @@ async def _run(cfg: Any, log: Any) -> int:
     # WHAT blocks it, not just how much. Everything below runs SYNCHRONOUS REST on the event loop, so a
     # slow venue read is loop lag by definition; attributing it is the difference between a number and a
     # cause. (Quote refresh is pure in-memory book math and never blocks on I/O.)
-    blockers = {"fill_poll": 0.0, "reconcile": 0.0, "settle": 0.0}
+    blockers = {"quotes": 0.0, "fill_poll": 0.0, "reconcile": 0.0, "settle": 0.0}
     try:
         while True:
             now, now_ts = utcnow(), time.time()
@@ -312,9 +312,15 @@ async def _run(cfg: Any, log: Any) -> int:
                 log.warning("[MAKER_RT] graceful stop (%s) — cancelling live orders + exiting.",
                             "STOP_ALL" if stop_all else "signal")
                 return 0
+            # Quote refresh is in-memory book math EXCEPT when it decides to act: a place/reprice/cancel
+            # is a synchronous POST to the venue, so an active tick blocks for as long as the exchange
+            # takes. That is the unexplained part of the max lag (a 2.7s tick with only 612ms of fill-poll
+            # in it), and it is inherent to placing orders — worth seeing, not worth hiding.
+            _b = time.monotonic()
             driver.refresh_quotes(store, now, now_ts)
             driver.process_drift(store, now, now_ts)
             driver.expire_kickoff(now, now_ts)
+            blockers["quotes"] = max(blockers["quotes"], (time.monotonic() - _b) * 1000.0)
             if pregame_exec is not None:
                 pregame_exec.roll_day(now)                        # reset in-play circuit + caps at UTC midnight
                 pregame_exec.enforce_arm_state(now)               # a phase disarmed mid-run -> cancel its opens
@@ -380,14 +386,14 @@ async def _run(cfg: Any, log: Any) -> int:
                         worst = max(blockers, key=blockers.get)
                         log.info("[MAKER_RT][LOOP] %d ticks, lag p50 %.1fms max %.1fms (target %dms) · "
                                  "%d book event(s) absorbed = %.1f per tick (conflated) · %d markets · "
-                                 "slowest blocking sync REST: %s %.0fms (fill_poll %.0f/reconcile %.0f/"
-                                 "settle %.0f)",
+                                 "slowest blocking sync REST: %s %.0fms (quotes %.0f/fill_poll %.0f/"
+                                 "reconcile %.0f/settle %.0f)",
                                  loop_ticks, ordered[len(ordered) // 2], ordered[-1], cfg.debounce_ms,
                                  applied, applied / max(1, loop_ticks), len(universe),
-                                 worst, blockers[worst], blockers["fill_poll"], blockers["reconcile"],
-                                 blockers["settle"])
+                                 worst, blockers[worst], blockers["quotes"], blockers["fill_poll"],
+                                 blockers["reconcile"], blockers["settle"])
                         loop_lags, loop_ticks = [], 0
-                        blockers = {"fill_poll": 0.0, "reconcile": 0.0, "settle": 0.0}
+                        blockers = {"quotes": 0.0, "fill_poll": 0.0, "reconcile": 0.0, "settle": 0.0}
                     if pregame_exec is not None:
                         lv = pregame_exec.snapshot()
                         log.info("[MAKER_RT][LIVE] feed_ok=%s open=%d stake=$%.2f/%.0f fills=%d pnl=$%.2f "
