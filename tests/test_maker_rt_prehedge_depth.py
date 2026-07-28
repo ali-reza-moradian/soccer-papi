@@ -494,3 +494,47 @@ def test_hedge_price_cap_admits_the_profitable_phimia_hedges():
 def test_hedge_price_cap_never_negative_or_above_venue_max():
     assert PregameLiveExecutor._hedge_price_cap(1.20, "polymarket", 0.05) == 0.0
     assert PregameLiveExecutor._hedge_price_cap(0.001, "kalshi", 0.05) <= 0.99
+
+
+# --------------------------------------------------------------------------- #
+# 9. The digest must NEVER go silent — silence looked exactly like health       #
+# --------------------------------------------------------------------------- #
+def test_digest_is_sent_even_on_a_completely_quiet_interval(tmp_path):
+    """05:21Z -> 14:11Z produced no digest at all while the bot was halted and idle. A quiet interval
+    must still report, and must say WHY."""
+    ex, _ = _exec(tmp_path)
+    sent = []
+    ex._send_telegram = sent.append
+    ex.digest_min = 15.0
+    ex.feed_ok = True
+    ex.maybe_flush_digest(100.0)                               # primes the window
+    ex.maybe_flush_digest(100.0 + 15 * 60.0 + 1)               # a whole interval, zero activity
+    assert len(sent) == 1
+    assert "0 offers placed" in sent[0]
+    assert "Why no fills" in sent[0]
+
+
+def test_quiet_digest_names_the_halt_as_the_reason(tmp_path):
+    """The exact 2026-07-28 situation: halted on an orphan, feeds fine, nothing happening."""
+    ex, _ = _exec(tmp_path)
+    sent = []
+    ex._send_telegram = sent.append
+    ex.digest_min = 15.0
+    ex.caps.halted = True
+    ex.caps.halt_reason = "orphan_position"
+    ex.maybe_flush_digest(100.0)
+    ex.maybe_flush_digest(100.0 + 15 * 60.0 + 1)
+    assert "HALTED" in sent[0] and "orphan_position" in sent[0]
+
+
+def test_quiet_digest_distinguishes_no_edge_from_dead_feeds(tmp_path):
+    ex, _ = _exec(tmp_path)
+    ex.digest_min = 15.0
+    for feed_ok, expect in ((True, "no market offered enough edge"), (False, "feeds were down")):
+        sent = []
+        ex._send_telegram = sent.append
+        ex.feed_ok = feed_ok
+        ex._digest_since = 0.0
+        ex.maybe_flush_digest(100.0)
+        ex.maybe_flush_digest(100.0 + 15 * 60.0 + 1)
+        assert expect in sent[0], sent[0]

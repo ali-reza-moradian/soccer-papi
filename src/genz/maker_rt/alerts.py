@@ -410,8 +410,5 @@ def digest_line(minutes: float, *, placed: int, cancelled: int, fills: int, open
                     + ("" if _ok >= _att else " — still down"))
     decl = (f"\n   🛡️ {int(prehedge_declines)} fill{'s' if int(prehedge_declines) != 1 else ''} refused a "
             f"hedge that would have lost money (unwound instead)") if prehedge_declines else ""
-    why = ""
-    if fills == 0 and (why_no_fills or placed):
-        reason = why_no_fills or "nobody crossed our price yet"
-        why = f"\n   Why no fills: {reason}"
+    why = f"\n   Why no fills: {why_no_fills}" if (fills == 0 and why_no_fills) else ""
     return l1 + l2 + flap + pflap + rec + decl + why

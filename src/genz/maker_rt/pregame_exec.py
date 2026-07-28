@@ -2402,7 +2402,13 @@ class PregameLiveExecutor:
             self._digest["cancels"][b] = self._digest["cancels"].get(b, 0) + 1
 
     def maybe_flush_digest(self, now_ts: float) -> None:
-        """Every ``telegram_digest_min`` minutes send ONE digest line for the routine activity."""
+        """Every ``telegram_digest_min`` minutes send ONE digest line.
+
+        It is sent UNCONDITIONALLY. The digest used to be suppressed on a fully quiet interval, so a bot
+        that was HALTED and idle said nothing at all — 2026-07-28 ran 05:21Z to 14:11Z (~9h) without a
+        single digest while live sat halted on a stale orphan and three feed drops went unmentioned
+        (only KALSHI flaps could break the silence). Silence is indistinguishable from death, and "it
+        went quiet" is the one thing an operator must never have to infer."""
         if self.digest_min <= 0:
             return
         if self._digest_since == 0.0:
@@ -2412,31 +2418,36 @@ class PregameLiveExecutor:
             return
         d = self._digest
         cancelled = sum(d["cancels"].values())
-        kflaps = int(d.get("kalshi_flaps", 0) or 0)
-        pflaps = int(d.get("poly_flaps", 0) or 0)
-        if d["quotes"] or cancelled or d["fills"] or kflaps or pflaps:
-            best = d.get("best_edge", 0.0)
-            binding = d.get("binding") or {}
-            top_binding = max(binding.items(), key=lambda kv: kv[1])[0] if binding else None
-            why = None
-            if d["fills"] == 0 and d["quotes"]:
+        best = d.get("best_edge", 0.0)
+        binding = d.get("binding") or {}
+        top_binding = max(binding.items(), key=lambda kv: kv[1])[0] if binding else None
+        why = None
+        if d["fills"] == 0:
+            if self.caps.halted:
+                why = f"I am HALTED ({self.caps.halt_reason or 'unknown'}) — not quoting until that clears"
+            elif not d["quotes"]:
+                why = ("no market offered enough edge to be worth quoting" if self.feed_ok
+                       else "my feeds were down, so I held off")
+            else:
                 why = ("sizes were limited by hedge/book depth" if top_binding in
                        ("hedge_depth", "book_depth", "below_venue_minimum")
                        else "nobody crossed our price yet")
-            line = alerts.digest_line(self.digest_min, placed=d["quotes"], cancelled=cancelled,
-                                      fills=d["fills"], open_now=len(self.open_orders),
-                                      max_open=self.caps.max_open_quotes,
-                                      best_edge_pct=(best if best else None),
-                                      kalshi_flaps=kflaps, kalshi_down_s=float(d.get("kalshi_down_s", 0.0)),
-                                      poly_flaps=pflaps, poly_down_s=float(d.get("poly_down_s", 0.0)),
-                                      reconnects=dict(self._feed_health),
-                                      prehedge_declines=int(d.get("prehedge_declines", 0) or 0),
-                                      binding=top_binding, stake_today=round(self.caps.stake_today, 2),
-                                      stake_cap=self.caps.max_daily_stake_usd,
-                                      today_pnl=round(self.caps.pnl_today, 4), why_no_fills=why)
-            self._send_telegram(line)
-            if self.log:
-                self.log.warning(line)
+        line = alerts.digest_line(self.digest_min, placed=d["quotes"], cancelled=cancelled,
+                                  fills=d["fills"], open_now=len(self.open_orders),
+                                  max_open=self.caps.max_open_quotes,
+                                  best_edge_pct=(best if best else None),
+                                  kalshi_flaps=int(d.get("kalshi_flaps", 0) or 0),
+                                  kalshi_down_s=float(d.get("kalshi_down_s", 0.0)),
+                                  poly_flaps=int(d.get("poly_flaps", 0) or 0),
+                                  poly_down_s=float(d.get("poly_down_s", 0.0)),
+                                  reconnects=dict(self._feed_health),
+                                  prehedge_declines=int(d.get("prehedge_declines", 0) or 0),
+                                  binding=top_binding, stake_today=round(self.caps.stake_today, 2),
+                                  stake_cap=self.caps.max_daily_stake_usd,
+                                  today_pnl=round(self.caps.pnl_today, 4), why_no_fills=why)
+        self._send_telegram(line)
+        if self.log:
+            self.log.warning(line)
         self._reset_digest()
         self._digest_since = now_ts
 
