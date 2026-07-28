@@ -40,6 +40,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 from ..theoddsapi import normalize_team  # same team normalization the rest of the project uses
+from . import soccer_names             # soccer club-name equivalence (diacritics, legal forms, exonyms)
 
 # Market families and their arity. The engine arbs only clean 2-outcome markets; 3-way and
 # many-outcome families are recorded in the tree but skipped by the v1 engine.
@@ -86,6 +87,54 @@ def parse_settlement_period(text: str) -> Optional[str]:
         return "full_game"
     if "90 minutes" in t or "regular time" in t or "regulation" in t:
         return "regulation"
+    return None
+
+
+# --------------------------------------------------------------------------- #
+# TWO-LEG TIE scope — a knockout tie is NOT the same bet as one leg of it        #
+# --------------------------------------------------------------------------- #
+# UEFA qualifying rounds are two-legged. Both venues list markets on the SAME fixture that settle on
+# COMPLETELY different events, and their team-named outcomes look identical to a pairing engine:
+#
+#   Kalshi KXUCLGAME     'Reg Time: Crvena Zvezda'  -> wins THIS game in 90'+stoppage
+#   Kalshi KXUCLADVANCE  'Crvena Zvezda advances'   -> wins the TIE on aggregate over both legs
+#   Poly   'Team to Advance' -> "...officially advances from this two-legged tie, based on aggregate
+#                               score across both legs... includes advancement after regulation,
+#                               extra time, a penalty shoot-out..."
+#
+# Pairing a single-game leg against an aggregate market is a guaranteed mis-settlement: a team can
+# lose the leg and still advance. (Verified live 2026-07-28 — tests/fixtures/raw_soccer_ucl_*.json.)
+#
+# The discrimination is SUBTLE, and a naive keyword scan gets it backwards: ordinary regulation-time
+# markets carry the boilerplate "extra time, and penalty shoot-outs are excluded", so matching bare
+# 'penalt' or 'extra time' would refuse the very markets we want. Only TIE-SCOPE phrasing counts.
+_TIE_SCOPE = (
+    "two-legged", "two legged", "on aggregate", "aggregate score", "aggregate winner",
+    "advances from this", "advance past", "to advance", " advances", "advancement after",
+    "wins the tie", "qualifies for the next round", "progress to the next round",
+    "over both legs", "across both legs", "both legs",
+)
+# Phrases that pin a market to ONE fixture. 'excluded' boilerplate lives here, not in _TIE_SCOPE.
+_SINGLE_SCOPE = (
+    "90 minutes plus stoppage", "90 minutes of regular", "within the first 90",
+    "first 90 minutes", "this market will resolve to \"yes\"", "wins on ", "win on ",
+    "end in a draw", "regulation time only",
+)
+
+
+def parse_tie_scope(text: str) -> Optional[str]:
+    """Classify a market's settlement SCOPE: 'tie' (resolves on a two-legged aggregate / who advances)
+    or 'single_game' (resolves on one fixture), else None when undeterminable.
+
+    TIE phrasing WINS over single-game phrasing, because an aggregate market's description also
+    describes the deciding leg ("with the deciding leg scheduled for July 28")."""
+    t = str(text or "").lower()
+    if not t:
+        return None
+    if any(p in t for p in _TIE_SCOPE):
+        return "tie"
+    if any(p in t for p in _SINGLE_SCOPE):
+        return "single_game"
     return None
 
 
@@ -215,6 +264,11 @@ def _team_role_in(fragment: str, ctx: "GameCtx") -> Optional[str]:
         return "home"
     if a and a in cand:
         return "away"
+    frag = _after_colon(fragment)                      # club-name equivalence (diacritics/exonyms)
+    if ctx.home and soccer_names.same_club_with_alias(frag, ctx.home):
+        return "home"
+    if ctx.away and soccer_names.same_club_with_alias(frag, ctx.away):
+        return "away"
     return None
 
 
@@ -307,10 +361,21 @@ class GameCtx:
     away: str
 
     def side_for_team(self, name: str) -> Optional[str]:
+        """Which side of THIS game a market's team name refers to.
+
+        The cheap normalized-substring test is tried first (it settles the common venue truncations),
+        then the SOCCER CLUB-NAME matcher, which is what resolves the European spellings the substring
+        test cannot: 'Omonia Nicosia' is 'AS Omónoia Leukosías' and 'Vikingur Reykjavik' is
+        'KF Víkingur'. Without this the EVENT pairs but its team-named outcomes silently drop, leaving
+        a game with only its draw node (live: Kairat/Omonia and Be'er Sheva/Vikingur got 1 node of 3)."""
         nt = _team(name)
         if _team(self.home) and (nt == _team(self.home) or _team(self.home) in nt):
             return "home"
         if _team(self.away) and (nt == _team(self.away) or _team(self.away) in nt):
+            return "away"
+        if self.home and soccer_names.same_club_with_alias(name, self.home):
+            return "home"
+        if self.away and soccer_names.same_club_with_alias(name, self.away):
             return "away"
         return None
 

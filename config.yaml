@@ -420,7 +420,10 @@ genz:
   soccer:
     competitions:
       - {name: mls,             kalshi_series: AUTO, poly_slug_prefix: mls,           enabled: true}
-      - {name: club_friendlies, kalshi_series: AUTO, poly_slug_prefix: club-friendly, enabled: true}
+      # poly_slug_prefix VERIFIED against live payloads 2026-07-28: Polymarket uses 'clf'
+      # (clf-avl-rso-2026-07-28 = Aston Villa vs Real Sociedad), NOT 'club-friendly'. The wrong prefix
+      # rejected 94 of 95 Kalshi friendlies before the club-name matcher was ever consulted.
+      - {name: club_friendlies, kalshi_series: AUTO, poly_slug_prefix: clf,            enabled: true}
       - {name: ucl_qualifying,  kalshi_series: AUTO, poly_slug_prefix: ucl,           enabled: true}
       - {name: world_cup,       kalshi_series: [KXWCGAME], poly_slug_prefix: fifwc,   enabled: false}
   # MLB — a SECOND sport, fully isolated (its own tree/snapshot/heartbeat/arbs/papermaker files). Only

@@ -29,6 +29,7 @@ from .. import kalshi as ks
 from .. import polymarket as pm
 from . import config as gz_config
 from . import match_rules as mr
+from . import soccer_names
 
 # code (lowercase FIFA) -> canonical team name, inverted from the Polymarket source's curated map.
 _CODE_TO_NAME: dict[str, str] = {code: name for name, code in pm._FIFA_CODES_RAW.items()}
@@ -250,6 +251,23 @@ def _poly_token_periods(events: list[dict]) -> dict[str, Optional[str]]:
     return out
 
 
+def _poly_token_scopes(events: list[dict]) -> dict[str, Optional[str]]:
+    """clob_token_id -> settlement SCOPE ('tie' | 'single_game'). Read from the question AND the
+    groupItemTitle as well as the description: Polymarket's two-legged market is titled
+    'X vs. Y: Team to Advance' with groupItemTitle 'Team to Advance'."""
+    out: dict[str, Optional[str]] = {}
+    for ev in events:
+        for m in ev.get("markets") or []:
+            if not isinstance(m, dict):
+                continue
+            blob = f"{m.get('question')} {m.get('groupItemTitle')} {_poly_desc(m)}"
+            scope = mr.parse_tie_scope(blob)
+            for tok in pm._as_list(m.get("clobTokenIds")):
+                if tok:
+                    out[str(tok)] = scope
+    return out
+
+
 _POLY_FEE_DEFAULT_RATE = 0.05         # gamma feeSchedule.rate for sports markets (verified live)
 
 
@@ -308,12 +326,14 @@ def kalshi_options(kalshi_client: Any, game: Game, series_list: list[str],
             if not isinstance(m, dict):
                 continue
             period = mr.parse_settlement_period(_kalshi_desc(m))   # regulation vs full game (incl. ET)
+            scope = mr.parse_tie_scope(f"{m.get('title')} {m.get('yes_sub_title')} {_kalshi_desc(m)}")
             for outcome, side in mr.kalshi_outcomes(m, game.ctx):
                 options.setdefault(outcome.twin_key(), {
                     "market_type": outcome.market_type, "market_key": outcome.group,
                     "side": outcome.side, "line": outcome.line, "kind": outcome.kind,
                     "confidence": outcome.confidence, "outcome_label": outcome.label or outcome.side,
                     "kalshi_ticker": m.get("ticker"), "kalshi_side": side, "settle_period": period,
+                    "settle_scope": scope,
                 })
     return options, {"ok": ok, "failed": failed}
 
@@ -444,6 +464,7 @@ def poly_options(series_events: list[dict], game: Game, log: Any = None) -> tupl
     failed: list[str] = []
     sibs = game_sibling_events(series_events, game)
     token_periods = _poly_token_periods(sibs)              # clob token -> settlement period (reg / full game)
+    token_scopes = _poly_token_scopes(sibs)                # clob token -> tie vs single-game scope
     token_fees = _poly_token_fees(sibs)                    # clob token -> taker-fee schedule
     for ev in sibs:
         slug = str(ev.get("slug") or "")
@@ -466,6 +487,7 @@ def poly_options(series_events: list[dict], game: Game, log: Any = None) -> tupl
                 "confidence": outcome.confidence, "outcome_label": outcome.label or outcome.side,
                 "poly_token_id": str(token), "poly_side": poly_side,
                 "settle_period": token_periods.get(str(token)),
+                "settle_scope": token_scopes.get(str(token)),
                 "poly_fee_enabled": fee["enabled"], "poly_fee_rate": fee["rate"],
                 "poly_fee_taker_only": fee["taker_only"],
             })
@@ -707,9 +729,22 @@ def join_game(k_opts: dict[str, dict], p_opts: dict[str, dict],
     poly_period so the engine can re-check (belt-and-suspenders)."""
     nodes: list[dict] = []
     period_mismatch: list[str] = []                        # twin_keys dropped for a period disagreement
+    two_leg_mismatch: list[str] = []                       # twin_keys dropped for a tie-vs-leg disagreement
     for key in sorted(set(k_opts) | set(p_opts)):
         k, p = k_opts.get(key), p_opts.get(key)
         if not (k and p):
+            continue
+        # TWO-LEG TIE GUARD (all market types). One side settling on the AGGREGATE of a two-legged tie
+        # while the other settles on a single leg is not the same bet — a team can lose the leg and
+        # still advance. Refuse whenever the two scopes are known and DISAGREE, and equally when only
+        # ONE side declares tie scope (an undeclared counterpart is not evidence that it is a tie).
+        ks_, ps_ = k.get("settle_scope"), p.get("settle_scope")
+        if (ks_ == "tie") != (ps_ == "tie"):
+            two_leg_mismatch.append(key)
+            if log:
+                log.warning("[GENZ] %s %s: two_leg_mismatch — kalshi=%s vs poly=%s; NOT paired (a "
+                            "two-legged tie/aggregate market is a different bet from one leg).",
+                            game_id, key, ks_, ps_)
             continue
         kp, pp = k.get("settle_period"), p.get("settle_period")
         if k["market_type"] in mr.COUNT_MARKETS and kp and pp and kp != pp:
@@ -732,18 +767,25 @@ def join_game(k_opts: dict[str, dict], p_opts: dict[str, dict],
         })
     unmatched: list[dict] = []
     mismatch_set = set(period_mismatch)
-    for key in sorted((set(k_opts) - set(p_opts)) | mismatch_set):
+    two_leg_set = set(two_leg_mismatch)
+
+    def _reason(key: str) -> str:
+        if key in two_leg_set:
+            return "two_leg_mismatch"
+        return "settlement_period_mismatch" if key in mismatch_set else "one_venue_only"
+
+    for key in sorted((set(k_opts) - set(p_opts)) | mismatch_set | two_leg_set):
         o = k_opts.get(key)
         if o:
             unmatched.append({"venue": "kalshi", "market_type": o["market_type"],
                               "outcome_label": o.get("outcome_label"), "identifier": o.get("kalshi_ticker"),
-                              "reason": "settlement_period_mismatch" if key in mismatch_set else "one_venue_only"})
-    for key in sorted((set(p_opts) - set(k_opts)) | mismatch_set):
+                              "reason": _reason(key)})
+    for key in sorted((set(p_opts) - set(k_opts)) | mismatch_set | two_leg_set):
         o = p_opts.get(key)
         if o:
             unmatched.append({"venue": "polymarket", "market_type": o["market_type"],
                               "outcome_label": o.get("outcome_label"), "identifier": o.get("poly_token_id"),
-                              "reason": "settlement_period_mismatch" if key in mismatch_set else "one_venue_only"})
+                              "reason": _reason(key)})
     return nodes, unmatched
 
 
@@ -821,6 +863,37 @@ def _scan_soccer_series(kalshi_client: Any, comp: Any, log: Any = None, *, ends:
     if log and ends == "GAME":
         log.info("[GENZ][SOCCER] AUTO %s: catalog candidates %s.", comp.name, hits or "none")
     return sorted(dict.fromkeys(hits))
+
+
+def _total_series_for(kalshi_client: Any, game_series: list[str], scanned: list[str],
+                      log: Any = None) -> list[str]:
+    """The competition's 2-way TOTAL series, derived from its GAME series ticker STEM and confirmed
+    against the live catalog.
+
+    The title-keyword scan alone MISSES these, because Kalshi does not repeat the competition name in
+    a totals series title: KXUCLGAME is 'UEFA Champions League Game' (matches the 'uefa champions
+    league' keyword) but KXUCLTOTAL is 'Champions League Total Goals' (no 'uefa'), and KXCLUBFTOTAL is
+    just 'Point Total'. Both were therefore invisible, so soccer produced ONLY 3-way moneyline nodes —
+    and the engine/maker quote 2-way markets, which is why soccer vanished from the quotable universe.
+
+    Deriving GAME -> TOTAL on the ticker stem is exact, not a guess, and the result is only used when
+    the catalog actually lists it."""
+    derived = [s[:-4] + "TOTAL" for s in game_series if s.endswith("GAME")]
+    if not derived:
+        return list(scanned)
+    known: set = set()
+    try:
+        lister = getattr(kalshi_client, "list_series", None)
+        for s in (lister(category="Sports") if callable(lister) else []) or []:
+            if isinstance(s, dict) and _is_soccer_series(s):
+                known.add(str(s.get("ticker") or ""))
+    except Exception:  # noqa: BLE001 — catalog unavailable -> fall back to the keyword scan alone
+        return list(scanned)
+    confirmed = [t for t in derived if t in known and t not in scanned]
+    if log and confirmed:
+        log.info("[GENZ][SOCCER] TOTAL series derived from the GAME stem and confirmed in the catalog: "
+                 "%s (title-keyword scan found %s).", confirmed, scanned or "none")
+    return sorted(dict.fromkeys(list(scanned) + confirmed))
 
 
 # Kalshi decorates a per-player/team yes_sub_title with a period prefix on some competitions
@@ -940,19 +1013,37 @@ def _sig_tokens(name: str) -> list[str]:
     return re.findall(r"[a-z0-9]+", str(name or "").lower())
 
 
-def _soccer_team_match(a: str, b: str) -> bool:
-    ta, tb = _sig_tokens(a), _sig_tokens(b)
-    if not ta or not tb:
-        return False
-    short, long = (ta, tb) if len(ta) <= len(tb) else (tb, ta)
-    used: set = set()
-    for t in short:
-        m = next((i for i, u in enumerate(long)
-                  if i not in used and (u == t or u.startswith(t) or t.startswith(u))), None)
-        if m is None:
-            return False
-        used.add(m)
-    return True
+SOCCER_ALIAS_PATH = os.path.join(gz_config.GENZ_DIR, "soccer_team_alias.json")
+
+
+def _load_team_aliases() -> dict:
+    """The learned club-name alias map (folded key -> folded key). Missing/corrupt -> {}."""
+    try:
+        with open(SOCCER_ALIAS_PATH, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        return data if isinstance(data, dict) else {}
+    except Exception:  # noqa: BLE001 — a bad alias file must never block a build
+        return {}
+
+
+def _save_team_aliases(aliases: dict) -> None:
+    """Persist confirmed club-name pairs so future builds resolve them exactly (atomic, best-effort)."""
+    try:
+        os.makedirs(os.path.dirname(SOCCER_ALIAS_PATH), exist_ok=True)
+        tmp = SOCCER_ALIAS_PATH + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(dict(sorted(aliases.items())), fh, indent=2, ensure_ascii=False)
+        os.replace(tmp, SOCCER_ALIAS_PATH)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _soccer_team_match(a: str, b: str, aliases: Optional[dict] = None) -> bool:
+    """Do two spellings name the same club? Delegates to the soccer club-name normalizer (diacritic
+    folding, legal-form stripping, per-token fuzzy, sponsor/city tolerance, reserve + truncation
+    vetoes) plus the learned alias map. See src/genz/soccer_names.py for the evidence this is built
+    on — the old ASCII-only all-tokens-must-match rule scored 0/92 on European club fixtures."""
+    return soccer_names.same_club_with_alias(a, b, aliases if aliases is not None else _load_team_aliases())
 
 
 def _resolve_competition_poly(game: "Game", poly_client: Any, log: Any = None) -> Optional[dict]:
@@ -970,6 +1061,8 @@ def _resolve_competition_poly(game: "Game", poly_client: Any, log: Any = None) -
             log.debug("[GENZ][SOCCER] poly search failed for %s: %s", game.game_id, exc)
         return None
     events = res.get("events") if isinstance(res, dict) else res
+    aliases = _load_team_aliases()
+    near_misses: list[str] = []
     for e in events or []:
         if not isinstance(e, dict):
             continue
@@ -982,11 +1075,30 @@ def _resolve_competition_poly(game: "Game", poly_client: Any, log: Any = None) -
         if not players:
             continue
         pa, pb = players
-        if ((_soccer_team_match(game.away, pa) and _soccer_team_match(game.home, pb))
-                or (_soccer_team_match(game.away, pb) and _soccer_team_match(game.home, pa))):
-            game.poly_base_slug = base
-            game.poly_slug_alts = [base]
-            return e
+        # Try BOTH orientations; the venues do not agree on home/away ordering.
+        for x, y in ((pa, pb), (pb, pa)):
+            if _soccer_team_match(game.away, x, aliases) and _soccer_team_match(game.home, y, aliases):
+                if log:
+                    sa, sh = soccer_names.score(game.away, x), soccer_names.score(game.home, y)
+                    log.info("[GENZ][SOCCER] MATCH %s: %r->%r (score %.2f/strong %d) + %r->%r "
+                             "(score %.2f/strong %d) -> %s", game.game_id, game.away, x,
+                             sa["score"], sa["strong"], game.home, y, sh["score"], sh["strong"], base)
+                # LEARN the pair when the rules alone could not derive it, so the next build is exact.
+                before = dict(aliases)
+                soccer_names.learn(aliases, game.away, x)
+                soccer_names.learn(aliases, game.home, y)
+                if aliases != before:
+                    _save_team_aliases(aliases)
+                game.poly_base_slug = base
+                game.poly_slug_alts = [base]
+                return e
+        # SAME date + competition but the names did not line up: this is the diagnostic that matters.
+        near_misses.append(f"{base}: {soccer_names.explain(game.away, pa)} | "
+                           f"{soccer_names.explain(game.home, pb)}")
+    if log and near_misses:
+        log.warning("[GENZ][SOCCER] NEAR-MISS %s (%s vs %s): %d same-date candidate(s) rejected on "
+                    "NAMES — %s", game.game_id, game.away, game.home, len(near_misses),
+                    " || ".join(near_misses[:3]))
     return None
 
 
@@ -1041,6 +1153,7 @@ class SoccerSpec:
             else:
                 # game-winner (3-way, moneyline) + the 2-way TOTAL series (what the engine actually arbs).
                 total_series = _scan_soccer_series(kalshi_client, comp, log, ends="TOTAL")
+                total_series = _total_series_for(kalshi_client, series_list, total_series, log)
                 gs = _discover_competition_games(kalshi_client, comp, series_list, now=now,
                                                  lookahead_hours=cfg.lookahead_hours, log=log,
                                                  pair_series=series_list + total_series)
