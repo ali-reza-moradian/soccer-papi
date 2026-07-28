@@ -61,6 +61,18 @@ GENERIC_TOKENS = frozenset({
     "internacional", "national", "sport", "sports", "spartak", "lokomotiv", "zenit",
     "deportivo", "royal", "hapoel", "maccabi", "estrella", "roja", "red", "green", "blue",
 })
+# CONJUNCTIONS that appear as WORDS inside registered club names. Dropped like legal forms: they
+# name no club and carry no identity, and leaving them in was actively harmful — each is a SINGLE
+# LETTER, and ``accepts`` treats an unmatched single letter as an outright veto (Kalshi emits one
+# only to disambiguate a truncation: 'Los Angeles G' = Galaxy vs 'Los Angeles F' = LAFC). So a
+# Portuguese/Spanish conjunction on Polymarket's side fired a veto meant for Kalshi truncations and
+# killed matches that were otherwise PERFECT (score 1.00, every one of our tokens matched). Live
+# 2026-07-28, all three rejected on exactly this:
+#     'SL Benfica'        vs 'Sport Lisboa e Benfica'          (score 1.00, strong 2) -> unmatched ['e']
+#     'Gimnasia La Plata' vs 'Gimnasia y Esgrima de La Plata'  (score 1.00, strong 3) -> unmatched ['y', ...]
+#     'Mendoza'           vs 'CA Gimnasia y Esgrima de Mendoza'(score 1.00, strong 1) -> unmatched ['y', ...]
+# Only conjunctions are listed: never a letter Kalshi could be using as a truncation marker.
+PARTICLE_TOKENS = frozenset({"e", "y"})
 # A RESERVE/YOUTH marker on ONE side only means it is a DIFFERENT TEAM ('GNK Dinamo Zagreb' vs
 # 'GNK Dinamo Zagreb II'). Presence asymmetry is an outright veto, never a tolerated extra token.
 RESERVE_TOKENS = frozenset({
@@ -73,7 +85,14 @@ _ALNUM_RE = re.compile(r"[a-z0-9]+")
 # Latin letters whose NFKD decomposition does NOT strip to the expected ASCII (no combining mark).
 _TRANSLIT = {
     "ß": "ss", "æ": "ae", "ø": "o", "å": "a", "đ": "d", "ð": "d", "þ": "th",
-    "ł": "l", "ħ": "h", "ı": "i", "œ": "oe", "ʻ": "", "'": "", "`": "", "’": "",
+    "ł": "l", "ħ": "h", "ı": "i", "œ": "oe",
+    # APOSTROPHE VARIANTS — all dropped, so the two venues' typography cannot split a name.
+    # 'ʼ' U+02BC, ''' U+0027, '`' U+0060, ''' U+2019 were already here; '´' U+00B4 (ACUTE ACCENT used
+    # as an apostrophe) was NOT, and it is not a combining mark either — NFKD turns it into a SPACE
+    # plus a combining accent, so it SPLIT the word. Live 2026-07-28: Kalshi 'O´Higgins' folded to
+    # 'o higgins' while Poly "O'Higgins FC" folded to 'ohiggins', and the CONMEBOL Sudamericana
+    # fixture was rejected on names despite the two strings being the same club.
+    "ʻ": "", "'": "", "`": "", "’": "", "´": "", "‘": "", "ʼ": "",
 }
 
 
@@ -116,9 +135,13 @@ def significant(name: str) -> list[str]:
     different clubs — the exact collision the old prefix matcher was written to avoid. A single letter
     is matched by prefix in ``token_similar``, so it still lines up with the full word.
 
+    CONJUNCTION particles ('e', 'y') ARE dropped — see PARTICLE_TOKENS. They are single letters, so
+    keeping them tripped the truncation-marker veto on names like 'Sport Lisboa e Benfica'.
+
     Falls back to the raw tokens when stripping would leave nothing (a club literally named by its
     legal form, e.g. 'KÍ'), so a name can never normalize to the empty set."""
-    out = [t for t in tokens(name) if t not in LEGAL_TOKENS and not t.isdigit()]
+    out = [t for t in tokens(name)
+           if t not in LEGAL_TOKENS and t not in PARTICLE_TOKENS and not t.isdigit()]
     return out or [t for t in tokens(name) if t] or []
 
 
@@ -277,6 +300,13 @@ SEED_ALIASES: dict[str, str] = {
     "athletic": "athletic bilbao",
     # Milton Keynes Dons trade as 'MK Dons' on one side.
     "milton keynes": "mk dons",
+    # --- CITY EXONYMS, added 2026-07-28 from live near-misses in the newly-added leagues. Each is
+    # the SAME club name with the city written in English on Kalshi and locally on Polymarket —
+    # the identical shape as Nicosia/Leukosia above, and the club word matches exactly on both
+    # sides. Recorded explicitly because no amount of folding or fuzzing connects an exonym.
+    "copenhagen": "kobenhavn",                      # 'Copenhagen'       vs 'FC København'
+    "apollon limassol": "apollon lemesou",          # 'Apollon Limassol' vs 'Apóllon Lemesoú'
+    "sparta prague": "sparta praha",                # 'Sparta Prague'    vs 'AC Sparta Praha'
 }
 
 

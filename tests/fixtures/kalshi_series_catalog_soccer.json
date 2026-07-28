@@ -1,0 +1,10274 @@
+{
+ "note": "Kalshi /series?category=Sports catalog, filtered to the rows tree_builder._is_soccer_series accepts (tags contain Soccer or Football). Captured LIVE 2026-07-28. This is the evidence behind _COMP_SERIES_KEYWORDS: every keyword set must resolve to EXACTLY ONE *GAME ticker across ALL of these rows, and the GAME->TOTAL stem derivation must find its TOTAL here.",
+ "captured_utc": "2026-07-28T16:10:00Z",
+ "endpoint": "GET /series?category=Sports",
+ "series": [
+  {
+   "ticker": "KX1HOMEGAME",
+   "title": "First Home Game Opponent",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KX1STHOMEGAME",
+   "title": "First Home Game Opponent",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXACQUIREMANU",
+   "title": "ManU acquire",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXAFC",
+   "title": "AFC Championship",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXAFCA",
+   "title": "AFC Asian Cup",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXAFCAC1H",
+   "title": "1st Half Winner",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXAFCAC1HBTTS",
+   "title": "1st Half BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXAFCAC1HSPREAD",
+   "title": "1st Half Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXAFCAC1HTOTAL",
+   "title": "1st Half Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXAFCACADVANCE",
+   "title": "To Advance",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXAFCACBTTS",
+   "title": "BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXAFCACFTTS",
+   "title": "First Team to Score",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXAFCACGAME",
+   "title": "AFC Asia Cup Game",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXAFCACMOV",
+   "title": "Method of Victory",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXAFCACSCORE",
+   "title": "Correct Score",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXAFCACSPREAD",
+   "title": "Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXAFCACTEAMTOTAL",
+   "title": "Team Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXAFCACTOTAL",
+   "title": "Point Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXAFCCL1H",
+   "title": "1st Half Winner",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXAFCCL1HBTTS",
+   "title": "1st Half BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXAFCCL1HSPREAD",
+   "title": "1st Half Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXAFCCL1HTOTAL",
+   "title": "1st Half Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXAFCCLADVANCE",
+   "title": "To Advance",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXAFCCLBTTS",
+   "title": "BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXAFCCLFTTS",
+   "title": "First Team to Score",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXAFCCLGAME",
+   "title": "AFC Champions League Game",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXAFCCLMOF",
+   "title": "Method of Finish",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXAFCCLMOV",
+   "title": "Method of Victory",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXAFCCLSCORE",
+   "title": "Correct Score",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXAFCCLSPREAD",
+   "title": "Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXAFCCLTEAMTOTAL",
+   "title": "Team Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXAFCCLTOTAL",
+   "title": "Point Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXAFCON",
+   "title": "AFCON Champion",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXAFCON1H",
+   "title": "1st Half Winner",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXAFCON1HBTTS",
+   "title": "1st Half BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXAFCON1HSPREAD",
+   "title": "1st Half Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXAFCON1HTOTAL",
+   "title": "1st Half Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXAFCONADVANCE",
+   "title": "AFCON To Advance",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXAFCONBTTS",
+   "title": "BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXAFCONFTTS",
+   "title": "First Team to Score",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXAFCONGAME",
+   "title": "AFCON Game Winner",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXAFCONMOV",
+   "title": "Method of Victory",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXAFCONSCORE",
+   "title": "Correct Score",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXAFCONSPREAD",
+   "title": "Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXAFCONTEAMTOTAL",
+   "title": "Team Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXAFCONTOTAL",
+   "title": "Point Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXALEAGUE1H",
+   "title": "1st Half Winner",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXALEAGUE1HBTTS",
+   "title": "1st Half BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXALEAGUE1HSPREAD",
+   "title": "1st Half Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXALEAGUE1HTOTAL",
+   "title": "1st Half Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXALEAGUEADVANCE",
+   "title": "To Advance",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXALEAGUEBTTS",
+   "title": "BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXALEAGUEGAME",
+   "title": "Australian A League Game",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXALEAGUESPREAD",
+   "title": "Australian A League Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXALEAGUETEAMTOTAL",
+   "title": "Team Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXALEAGUETOTAL",
+   "title": "Australia A League Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXALLSVENSKANADVANCE",
+   "title": "To Advance",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXALLSVENSKANBTTS",
+   "title": "BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXALLSVENSKANGAME",
+   "title": "Allsvenskan Game",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXALLSVENSKANSPREAD",
+   "title": "Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXALLSVENSKANTOTAL",
+   "title": "Point Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXALMVP",
+   "title": "NL MVP",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXAPFDDH",
+   "title": "APF Division de Honor",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXAPFDDHADVANCE",
+   "title": "To Advance",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXAPFDDHBTTS",
+   "title": "BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXAPFDDHGAME",
+   "title": "APF Division de Honor Game",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXAPFDDHSPREAD",
+   "title": "Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXAPFDDHTOTAL",
+   "title": "Point Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXARGNACBADVANCE",
+   "title": "To Advance",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXARGNACBBTTS",
+   "title": "BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXARGNACBGAME",
+   "title": "Argentine Nacional B Game",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXARGNACBSPREAD",
+   "title": "Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXARGNACBTOTAL",
+   "title": "Point Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXARGPREMDIV",
+   "title": "Argentina Primera Division Game",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXARGPREMDIVADVANCE",
+   "title": "Argentina Primera Division To Advance",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXARGPREMDIVBTTS",
+   "title": "Argentina Premier Division BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXARGPREMDIVGAME",
+   "title": "Argentina Primera Division Game",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXARGPREMDIVSPREAD",
+   "title": "Argentina Premier Division Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXARGPREMDIVTOTAL",
+   "title": "Argentina Premier Division Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXARKCOACH",
+   "title": "Arkansas Next Coach",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXARODGRETIRE",
+   "title": "Aaron Rodgers Retire",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXARSENALCUPS",
+   "title": "Arsenal Cups",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXASEANADVANCE",
+   "title": "To Advance",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXASEANBTTS",
+   "title": "BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXASEANGAME",
+   "title": "ASEAN Game",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXASEANSPREAD",
+   "title": "Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXASEANTOTAL",
+   "title": "Point Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXATLCOACH",
+   "title": "Next Atlanta Coach",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXAUBCOACH",
+   "title": "Auburn Next Coach",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXBALLERLEAGUE",
+   "title": "Baller League",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXBALLERLEAGUEGAME",
+   "title": "Baller League Game",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXBALLONDOR",
+   "title": "Ballon d'Or",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXBALOGUNPLAY",
+   "title": "Will Balogun Play Today",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXBELGIANPL",
+   "title": "Belgian Pro League Champion",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXBELGIANPLADVANCE",
+   "title": "To Advance",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXBELGIANPLBTTS",
+   "title": "BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXBELGIANPLGAME",
+   "title": "Belgian Pro League Game",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXBELGIANPLSPREAD",
+   "title": "Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXBELGIANPLTOTAL",
+   "title": "Point Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXBOLPDIVADVANCE",
+   "title": "To Advance",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXBOLPDIVGAME",
+   "title": "Bolivia Premier Division Game",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXBRASILEIRO",
+   "title": "Brasileiro Winner",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXBRASILEIRO1H",
+   "title": "1st Half Winner",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXBRASILEIRO1HBTTS",
+   "title": "1st Half BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXBRASILEIRO1HSPREAD",
+   "title": "1st Half Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXBRASILEIRO1HTOTAL",
+   "title": "1st Half Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXBRASILEIROADVANCE",
+   "title": "To Advance",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXBRASILEIROB1H",
+   "title": "1st Half Winner",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXBRASILEIROB1HBTTS",
+   "title": "1st Half BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXBRASILEIROB1HSPREAD",
+   "title": "1st Half Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXBRASILEIROB1HTOTAL",
+   "title": "1st Half Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXBRASILEIROBADVANCE",
+   "title": "To Advance",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXBRASILEIROBBTTS",
+   "title": "BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXBRASILEIROBGAME",
+   "title": "Brasileiro Serie B Game",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXBRASILEIROBSPREAD",
+   "title": "Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXBRASILEIROBTEAMTOTAL",
+   "title": "Team Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXBRASILEIROBTOTAL",
+   "title": "Point Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXBRASILEIROBTTS",
+   "title": "BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXBRASILEIROC1H",
+   "title": "1st Half Winner",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXBRASILEIROC1HBTTS",
+   "title": "1st Half BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXBRASILEIROC1HSPREAD",
+   "title": "1st Half Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXBRASILEIROC1HTOTAL",
+   "title": "1st Half Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXBRASILEIROCADVANCE",
+   "title": "To Advance",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXBRASILEIROCBTTS",
+   "title": "BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXBRASILEIROCGAME",
+   "title": "Brasileiro Serie C Game",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXBRASILEIROCSPREAD",
+   "title": "Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXBRASILEIROCTEAMTOTAL",
+   "title": "Team Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXBRASILEIROCTOTAL",
+   "title": "Point Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXBRASILEIROFTTS",
+   "title": "First Team to Score",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXBRASILEIROGAME",
+   "title": "Brasileiro Serie A Game",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXBRASILEIROMOV",
+   "title": "Method of Victory",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXBRASILEIRORELEGATION",
+   "title": "Brasileiro Relegation",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXBRASILEIROSCORE",
+   "title": "Correct Score",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXBRASILEIROSPREAD",
+   "title": "Brasileiro Serie A Game",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXBRASILEIROTEAMTOTAL",
+   "title": "Team Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXBRASILEIROTOP",
+   "title": "Brasileiro Serie A",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXBRASILEIROTOPX",
+   "title": "Brasileiro Top X",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXBRASILEIROTOTAL",
+   "title": "Brasileiro Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXBUNDESLIGA",
+   "title": "BUNDESLIGA",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXBUNDESLIGA1H",
+   "title": "Bundesliga First Half Winner",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXBUNDESLIGA1HBTTS",
+   "title": "1st Half BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXBUNDESLIGA1HSPREAD",
+   "title": "1st Half Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXBUNDESLIGA1HTOTAL",
+   "title": "1st Half Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXBUNDESLIGA2ADVANCE",
+   "title": "To Advance",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXBUNDESLIGA2BTTS",
+   "title": "BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXBUNDESLIGA2GAME",
+   "title": "Bundesliga 2 Game",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXBUNDESLIGA2SPREAD",
+   "title": "Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXBUNDESLIGA2TOTAL",
+   "title": "Point Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXBUNDESLIGAADVANCE",
+   "title": "To Advance",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXBUNDESLIGABTTS",
+   "title": "Bundesliga BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXBUNDESLIGAFTTS",
+   "title": "First Team to Score",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXBUNDESLIGAGAME",
+   "title": "Bundesliga Game",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXBUNDESLIGAMOV",
+   "title": "Method of Victory",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXBUNDESLIGARELEGATION",
+   "title": "Bundesliga Relegation",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXBUNDESLIGASCORE",
+   "title": "Correct Score",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXBUNDESLIGASPREAD",
+   "title": "Bundesliga Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXBUNDESLIGATEAMTOTAL",
+   "title": "Team Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXBUNDESLIGATOP4",
+   "title": "Bundesliga Top 4 Finishers",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXBUNDESLIGATOTAL",
+   "title": "Bundesliga Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCALCOACH",
+   "title": "California Next Coach",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXCANPLADVANCE",
+   "title": "To Advance",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCANPLBTTS",
+   "title": "BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCANPLGAME",
+   "title": "Canadian Premier League",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCANPLSPREAD",
+   "title": "Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCANPLTOTAL",
+   "title": "Point Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCCARCOACH",
+   "title": "Coastal Carolina Next Coach",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXCFBCOTY",
+   "title": "College Football Coach of the Year",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXCFBDOBRIEN",
+   "title": "Davey O'Brien Award",
+   "tags": [
+    "Football",
+    "CFB"
+   ]
+  },
+  {
+   "ticker": "KXCFLGAME",
+   "title": "CFL Game",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXCFLSPREAD",
+   "title": "CFL Spread",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXCFLTOTAL",
+   "title": "CFL Total",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXCFPSEED",
+   "title": "College Football Playoff Seed",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXCHLLDP",
+   "title": "Chilean Primer Division",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCHLLDPADVANCE",
+   "title": "To Advance",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCHLLDPBTTS",
+   "title": "BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCHLLDPGAME",
+   "title": "Chile Liga de Primera Game",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCHLLDPSPREAD",
+   "title": "Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCHLLDPTOTAL",
+   "title": "Point Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCHNSL",
+   "title": "Chinese Super League",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCHNSLADVANCE",
+   "title": "To Advance",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCHNSLBTTS",
+   "title": "BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCHNSLGAME",
+   "title": "Chinese Super League Game",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCHNSLSPREAD",
+   "title": "Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCHNSLTOTAL",
+   "title": "Point Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCLUBCHANGEMBAPPE",
+   "title": "Club Change Mbappe",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCLUBFBTTS",
+   "title": "BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCLUBFGAME",
+   "title": "Club Friendlies",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCLUBFSPREAD",
+   "title": "Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCLUBFTOTAL",
+   "title": "Point Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCLUBWC",
+   "title": "Club World Cup Championship",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCLUBWC1H",
+   "title": "1st Half Winner",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCLUBWC1HBTTS",
+   "title": "1st Half BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCLUBWC1HSCORE",
+   "title": "1st Half Correct Score",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCLUBWC1HSPREAD",
+   "title": "1st Half Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCLUBWC1HTOTAL",
+   "title": "1st Half Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCLUBWC2H",
+   "title": "2nd Half Winner",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCLUBWC2HBTTS",
+   "title": "2nd Half BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCLUBWC2HSPREAD",
+   "title": "2nd Half Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCLUBWC2HTOTAL",
+   "title": "2nd Half Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCLUBWCADVANCE",
+   "title": "To Advance",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCLUBWCBTTS",
+   "title": "BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCLUBWCFTTS",
+   "title": "First Team to Score",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCLUBWCGA",
+   "title": "Club World Club Group A",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCLUBWCGAME",
+   "title": "Club World Club Game",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCLUBWCGB",
+   "title": "Club World Club Group B",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCLUBWCGC",
+   "title": "Club World Club Group C",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCLUBWCGD",
+   "title": "Club World Club Group D",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCLUBWCGE",
+   "title": "Club World Club Group E",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCLUBWCGF",
+   "title": "Club World Club Group F",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCLUBWCGG",
+   "title": "Club World Club Group G",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCLUBWCGH",
+   "title": "Club World Club Group H",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCLUBWCHOST",
+   "title": "Club World Cup Host",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCLUBWCMOF",
+   "title": "Method of Finish",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCLUBWCMOV",
+   "title": "Method of Victory",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCLUBWCSCORE",
+   "title": "Correct Score",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCLUBWCSPREAD",
+   "title": "Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCLUBWCTEAMTOTAL",
+   "title": "Team Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCLUBWCTOTAL",
+   "title": "Point Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCOACHONDATE",
+   "title": "Coach on Date",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXCOACHOUTNCAAFB",
+   "title": "NCAAFB Coaches Out",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXCOACHOUTNFL",
+   "title": "NFL Coach Out",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXCOACHOUTNFLFIRST",
+   "title": "First NFL Coach Out",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXCOACHOUTOLEMISS",
+   "title": "Coach Out Ole Miss",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXCOACHOUTUNC",
+   "title": "Bill Belichick Out",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXCOLLEGEGAMEDAY",
+   "title": "College GameDay Location",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXCOLLEGEGAMEDAYGUEST",
+   "title": "College Gameday Guest",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXCONCACAFCCUP1H",
+   "title": "1st Half Winner",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCONCACAFCCUP1HBTTS",
+   "title": "1st Half BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCONCACAFCCUP1HSPREAD",
+   "title": "1st Half Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCONCACAFCCUP1HTOTAL",
+   "title": "1st Half Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCONCACAFCCUPADVANCE",
+   "title": "To Advance",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCONCACAFCCUPBTTS",
+   "title": "BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCONCACAFCCUPGAME",
+   "title": "CONCACAF Champions Cup Game",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCONCACAFCCUPSPREAD",
+   "title": "Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCONCACAFCCUPTEAMTOTAL",
+   "title": "Team Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCONCACAFCCUPTOTAL",
+   "title": "Point Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCONCACAFGC",
+   "title": "CONCACAF Gold Cup",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCONCACAFNL",
+   "title": "CONCACAF Nations League",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCONMEBOLLIB",
+   "title": "CONMEBOL Libertadores",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCONMEBOLLIB1H",
+   "title": "1st Half Winner",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCONMEBOLLIB1HBTTS",
+   "title": "1st Half BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCONMEBOLLIB1HSPREAD",
+   "title": "1st Half Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCONMEBOLLIB1HTOTAL",
+   "title": "1st Half Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCONMEBOLLIBADVANCE",
+   "title": "To Advance",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCONMEBOLLIBBTTS",
+   "title": "BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCONMEBOLLIBGAME",
+   "title": "CONMEBOL Libertadores Game",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCONMEBOLLIBSPREAD",
+   "title": "Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCONMEBOLLIBTEAMTOTAL",
+   "title": "Team Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCONMEBOLLIBTOTAL",
+   "title": "Point Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCONMEBOLSUD",
+   "title": "CONMEBOL Sudamericana",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCONMEBOLSUD1H",
+   "title": "1st Half Winner",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCONMEBOLSUD1HBTTS",
+   "title": "1st Half BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCONMEBOLSUD1HSPREAD",
+   "title": "1st Half Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCONMEBOLSUD1HTOTAL",
+   "title": "1st Half Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCONMEBOLSUDADVANCE",
+   "title": "To Advance",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCONMEBOLSUDBTTS",
+   "title": "BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCONMEBOLSUDGAME",
+   "title": "CONMEBOL Sudamericana Game",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCONMEBOLSUDSPREAD",
+   "title": "Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCONMEBOLSUDTEAMTOTAL",
+   "title": "Team Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCONMEBOLSUDTOTAL",
+   "title": "Point Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCONNCOACH",
+   "title": "UConn Next Coach",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXCOPAAMERICA",
+   "title": "Copa America",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCOPAAMERICAHOST",
+   "title": "Copa America Host",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCOPADELREY",
+   "title": "Copa del Rey Winner",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCOPADELREY1H",
+   "title": "1st Half Winner",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCOPADELREY1HBTTS",
+   "title": "1st Half BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCOPADELREY1HSPREAD",
+   "title": "1st Half Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCOPADELREY1HTOTAL",
+   "title": "1st Half Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCOPADELREYADVANCE",
+   "title": "Copa Del Rey To Advance",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCOPADELREYBTTS",
+   "title": "BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCOPADELREYFTTS",
+   "title": "First Team to Score",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCOPADELREYGAME",
+   "title": "Copa Del Rey Game",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCOPADELREYMOF",
+   "title": "Method of Finish",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCOPADELREYMOV",
+   "title": "Method of Victory",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCOPADELREYSCORE",
+   "title": "Correct Score",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCOPADELREYSPREAD",
+   "title": "Copa Del Rey Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCOPADELREYTEAMTOTAL",
+   "title": "Team Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCOPADELREYTOTAL",
+   "title": "Copa del Rey Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCOPADOBRASIL",
+   "title": "Copa Do Brasil",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCOPADOBRASIL1H",
+   "title": "1st Half Winner",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCOPADOBRASIL1HBTTS",
+   "title": "1st Half BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCOPADOBRASIL1HSPREAD",
+   "title": "1st Half Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCOPADOBRASIL1HTOTAL",
+   "title": "1st Half Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCOPADOBRASILADVANCE",
+   "title": "To Advance",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCOPADOBRASILBTTS",
+   "title": "BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCOPADOBRASILGAME",
+   "title": "Copa do Brasil Game",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCOPADOBRASILSPREAD",
+   "title": "Copa do Brasil Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCOPADOBRASILTEAMTOTAL",
+   "title": "Team Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCOPADOBRASILTOTAL",
+   "title": "Copa do Brasil Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCOPPAITALIA",
+   "title": "Coppa Italia Winner",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCOPPAITALIA1H",
+   "title": "1st Half Winner",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCOPPAITALIA1HBTTS",
+   "title": "1st Half BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCOPPAITALIA1HSPREAD",
+   "title": "1st Half Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCOPPAITALIA1HTOTAL",
+   "title": "1st Half Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCOPPAITALIAADVANCE",
+   "title": "Coppa Italia To Advance",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCOPPAITALIABTTS",
+   "title": "BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCOPPAITALIAFTTS",
+   "title": "First Team to Score",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCOPPAITALIAGAME",
+   "title": "Coppa Italia Game",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCOPPAITALIAMOF",
+   "title": "Method of Finish",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCOPPAITALIAMOV",
+   "title": "Method of Victory",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCOPPAITALIASCORE",
+   "title": "Correct Score",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCOPPAITALIASPREAD",
+   "title": "Copa Italia Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCOPPAITALIATEAMTOTAL",
+   "title": "Team Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCOPPAITALIATOTAL",
+   "title": "Coppa Italia Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCOUPEDEFRANCE",
+   "title": "Coupe de France Winner",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCOUPEDEFRANCE1H",
+   "title": "1st Half Winner",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCOUPEDEFRANCE1HBTTS",
+   "title": "1st Half BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCOUPEDEFRANCE1HSPREAD",
+   "title": "1st Half Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCOUPEDEFRANCE1HTOTAL",
+   "title": "1st Half Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCOUPEDEFRANCEADVANCE",
+   "title": "Coupe de France To Advance",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCOUPEDEFRANCEBTTS",
+   "title": "BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCOUPEDEFRANCEFTTS",
+   "title": "First Team to Score",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCOUPEDEFRANCEGAME",
+   "title": "Coupe de France Game",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCOUPEDEFRANCEMOF",
+   "title": "Method of Finish",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCOUPEDEFRANCEMOV",
+   "title": "Method of Victory",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCOUPEDEFRANCESCORE",
+   "title": "Correct Score",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCOUPEDEFRANCESPREAD",
+   "title": "Coupe de France Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCOUPEDEFRANCETEAMTOTAL",
+   "title": "Team Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCOUPEDEFRANCETOTAL",
+   "title": "Coupe de France Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCZEFLADVANCE",
+   "title": "To Advance",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCZEFLBTTS",
+   "title": "BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCZEFLGAME",
+   "title": "Czech First League Game",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCZEFLSPREAD",
+   "title": "Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXCZEFLTOTAL",
+   "title": "Point Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXDANISHSUPERLIGAGAME",
+   "title": "Danish Superliga Game",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXDEFHEISMAN",
+   "title": "Defensive Heisman Candidate",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXDENSUPERLIGA",
+   "title": "Danish Superliga Champion",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXDENSUPERLIGAADVANCE",
+   "title": "To Advance",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXDENSUPERLIGABTTS",
+   "title": "BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXDENSUPERLIGAGAME",
+   "title": "Danish Superliga Game",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXDENSUPERLIGASPREAD",
+   "title": "Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXDENSUPERLIGATOTAL",
+   "title": "Point Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXDFBPOKAL",
+   "title": "DFB Pokal Winner",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXDFBPOKAL1H",
+   "title": "1st Half Winner",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXDFBPOKAL1HBTTS",
+   "title": "1st Half BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXDFBPOKAL1HSPREAD",
+   "title": "1st Half Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXDFBPOKAL1HTOTAL",
+   "title": "1st Half Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXDFBPOKALADVANCE",
+   "title": "DFB Pokal Advance",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXDFBPOKALBTTS",
+   "title": "BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXDFBPOKALFTTS",
+   "title": "First Team to Score",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXDFBPOKALGAME",
+   "title": "DFB Pokal Game",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXDFBPOKALMOF",
+   "title": "Method of Finish",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXDFBPOKALMOV",
+   "title": "Method of Victory",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXDFBPOKALSCORE",
+   "title": "Correct Score",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXDFBPOKALSPREAD",
+   "title": "DFB Pokal Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXDFBPOKALTEAMTOTAL",
+   "title": "Team Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXDFBPOKALTOTAL",
+   "title": "DFB Pokal Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXDIMAYORADVANCE",
+   "title": "To Advance",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXDIMAYORBTTS",
+   "title": "BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXDIMAYORGAME",
+   "title": "Liga DIMAYOR Game",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXDIMAYORSPREAD",
+   "title": "Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXDIMAYORTOTAL",
+   "title": "Point Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXDONATEMRBEAST",
+   "title": "WILL MR BEAST DONATE",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXECULP",
+   "title": "Ecuador Liga Pro",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXECULPADVANCE",
+   "title": "To Advance",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXECULPBTTS",
+   "title": "BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXECULPGAME",
+   "title": "Ecuador Liga Pro Game",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXECULPSPREAD",
+   "title": "Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXECULPTOTAL",
+   "title": "Point Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXEFLCHAMPIONSHIP",
+   "title": "EFL Championship League Winner",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXEFLCHAMPIONSHIP1H",
+   "title": "1st Half Winner",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXEFLCHAMPIONSHIP1HBTTS",
+   "title": "1st Half BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXEFLCHAMPIONSHIP1HSPREAD",
+   "title": "1st Half Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXEFLCHAMPIONSHIP1HTOTAL",
+   "title": "1st Half Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXEFLCHAMPIONSHIPADVANCE",
+   "title": "EFL Championship Advance",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXEFLCHAMPIONSHIPBTTS",
+   "title": "BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXEFLCHAMPIONSHIPGAME",
+   "title": "EFL Championship Game",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXEFLCHAMPIONSHIPSPREAD",
+   "title": "EFL Championship Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXEFLCHAMPIONSHIPTEAMTOTAL",
+   "title": "Team Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXEFLCHAMPIONSHIPTOTAL",
+   "title": "EFL Championship Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXEFLCUP",
+   "title": "EFL Cup Winner",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXEFLCUP1H",
+   "title": "1st Half Winner",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXEFLCUP1HBTTS",
+   "title": "1st Half BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXEFLCUP1HSPREAD",
+   "title": "1st Half Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXEFLCUP1HTOTAL",
+   "title": "1st Half Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXEFLCUPADVANCE",
+   "title": "EFL Cup Advance",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXEFLCUPBTTS",
+   "title": "BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXEFLCUPFTTS",
+   "title": "First Team to Score",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXEFLCUPGAME",
+   "title": "EFL Cup Game",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXEFLCUPMOF",
+   "title": "Method of Finish",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXEFLCUPMOV",
+   "title": "Method of Victory",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXEFLCUPSCORE",
+   "title": "Correct Score",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXEFLCUPSPREAD",
+   "title": "EFL Cup Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXEFLCUPTEAMTOTAL",
+   "title": "Team Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXEFLCUPTOTAL",
+   "title": "EFL Cup Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXEFLL11H",
+   "title": "1st Half Winner",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXEFLL11HBTTS",
+   "title": "1st Half BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXEFLL11HSPREAD",
+   "title": "1st Half Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXEFLL11HTOTAL",
+   "title": "1st Half Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXEFLL1ADVANCE",
+   "title": "To Advance",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXEFLL1BTTS",
+   "title": "BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXEFLL1GAME",
+   "title": "EFL League One Game",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXEFLL1SPREAD",
+   "title": "Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXEFLL1TEAMTOTAL",
+   "title": "Team Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXEFLL1TOTAL",
+   "title": "Point Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXEFLPROMO",
+   "title": "EFL Promotion",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXEGYPL",
+   "title": "Egyptian Premier League ",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXEGYPLADVANCE",
+   "title": "To Advance",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXEGYPLBTTS",
+   "title": "BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXEGYPLGAME",
+   "title": "Egyptian Premier League Game",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXEGYPLSPREAD",
+   "title": "Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXEGYPLTOTAL",
+   "title": "Point Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXEKSTRAKLASA",
+   "title": "Ekstraklasa Champion",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXEKSTRAKLASAADVANCE",
+   "title": "To Advance",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXEKSTRAKLASABTTS",
+   "title": "BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXEKSTRAKLASAGAME",
+   "title": "Polish Ekstraklasa Game",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXEKSTRAKLASASPREAD",
+   "title": "Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXEKSTRAKLASATOTAL",
+   "title": "Point Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXELITESERIENADVANCE",
+   "title": "To Advance",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXELITESERIENBTTS",
+   "title": "BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXELITESERIENGAME",
+   "title": "Eliteserien Game",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXELITESERIENSPREAD",
+   "title": "Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXELITESERIENTOTAL",
+   "title": "Point Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXEPL1H",
+   "title": "Premier League First Half Winner",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXEPL1HBTTS",
+   "title": "EPL 1st Half BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXEPL1HSCORE",
+   "title": "1st Half Correct Score",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXEPL1HSPREAD",
+   "title": "EPL 1st Half Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXEPL1HTOTAL",
+   "title": "EPL 1st Half Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXEPL2H",
+   "title": "2nd Half Winner",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXEPL2HBTTS",
+   "title": "2nd Half BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXEPL2HSPREAD",
+   "title": "2nd Half Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXEPL2HTOTAL",
+   "title": "2nd Half Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXEPLADVANCE",
+   "title": "To Advance",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXEPLANYGOAL",
+   "title": "EPL Anytime Goalscorer",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXEPLBTTS",
+   "title": "EPL Both Teams to Score",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXEPLCORNERS",
+   "title": "EPL Corners",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXEPLFIRSTGOAL",
+   "title": "EPL 1st Goalscorer",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXEPLFTTS",
+   "title": "First Team to Score",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXEPLGAME",
+   "title": "English Premier League Game",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXEPLGOAL",
+   "title": "EPL Goalscorer",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXEPLPOY",
+   "title": "EPL Player Of The Year ",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXEPLRELEGATION",
+   "title": "English Premier League Relegation",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXEPLSCORE",
+   "title": "Correct Score",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXEPLSOA",
+   "title": "EPL Score or Assist",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXEPLSPREAD",
+   "title": "English Premier League Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXEPLTCORNERS",
+   "title": "EPL Team Corners",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXEPLTEAMTOTAL",
+   "title": "Team Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXEPLTOP",
+   "title": "EPL Top Finishers",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXEPLTOP2",
+   "title": "Top 2 Finishers",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXEPLTOP4",
+   "title": "EPL top 4 teams",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXEPLTOP6",
+   "title": "Top 6 Finishers",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXEPLTOTAL",
+   "title": "English Premier League Total Goals",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXEREDIVISIE",
+   "title": "Eredivisie League Winner",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXEREDIVISIE1H",
+   "title": "1st Half Winner",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXEREDIVISIE1HBTTS",
+   "title": "1st Half BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXEREDIVISIE1HSPREAD",
+   "title": "1st Half Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXEREDIVISIE1HTOTAL",
+   "title": "1st Half Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXEREDIVISIEADVANCE",
+   "title": "To Advance",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXEREDIVISIEBTTS",
+   "title": "BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXEREDIVISIEGAME",
+   "title": "Eredivisie Game",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXEREDIVISIESPREAD",
+   "title": "Eredivisie Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXEREDIVISIETEAMTOTAL",
+   "title": "Team Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXEREDIVISIETOTAL",
+   "title": "Eredivisie Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXESPSUPERCUP1H",
+   "title": "1st Half Winner",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXESPSUPERCUP1HBTTS",
+   "title": "1st Half BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXESPSUPERCUP1HSPREAD",
+   "title": "1st Half Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXESPSUPERCUP1HTOTAL",
+   "title": "1st Half Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXESPSUPERCUPADVANCE",
+   "title": "Spain Super Cup Advance",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXESPSUPERCUPBTTS",
+   "title": "BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXESPSUPERCUPFTTS",
+   "title": "First Team to Score",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXESPSUPERCUPGAME",
+   "title": "Spain Super Cup Game",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXESPSUPERCUPMOF",
+   "title": "Method of Finish",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXESPSUPERCUPMOV",
+   "title": "Method of Victory",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXESPSUPERCUPSCORE",
+   "title": "Correct Score",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXESPSUPERCUPSPREAD",
+   "title": "Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXESPSUPERCUPTEAMTOTAL",
+   "title": "Team Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXESPSUPERCUPTOTAL",
+   "title": "Point Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXEWSLADVANCE",
+   "title": "To Advance",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXEWSLGAME",
+   "title": "England Women's Super League Game",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXFACUP",
+   "title": "FA cup",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXFACUP1H",
+   "title": "1st Half Winner",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXFACUP1HBTTS",
+   "title": "1st Half BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXFACUP1HSCORE",
+   "title": "1st Half Correct Score",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXFACUP1HSPREAD",
+   "title": "1st Half Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXFACUP1HTOTAL",
+   "title": "1st Half Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXFACUP2H",
+   "title": "2nd Half Winner",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXFACUP2HBTTS",
+   "title": "2nd Half BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXFACUP2HSPREAD",
+   "title": "2nd Half Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXFACUP2HTOTAL",
+   "title": "2nd Half Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXFACUPADVANCE",
+   "title": "FA Cup Advance",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXFACUPBTTS",
+   "title": "BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXFACUPFTTS",
+   "title": "First Team to Score",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXFACUPGAME",
+   "title": "FA Cup Game",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXFACUPMOF",
+   "title": "Method of Finish",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXFACUPMOV",
+   "title": "Method of Victory",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXFACUPSCORE",
+   "title": "Correct Score",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXFACUPSPREAD",
+   "title": "FA Cup Game",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXFACUPTEAMTOTAL",
+   "title": "Team Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXFACUPTOTAL",
+   "title": "FA Cup Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXFIFAADVANCE",
+   "title": "Fifa To Advance",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXFIFAGAME",
+   "title": "Fifa Game",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXFIFASPREAD",
+   "title": "Fifa Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXFIFATOTAL",
+   "title": "Fifa Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXFIFAUSPULL",
+   "title": "FIFA us pull",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXFIFAUSPULLGAME",
+   "title": "FIFA US pull game",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXFIFAWADVANCE",
+   "title": "To Advance",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXFIFAWBTTS",
+   "title": "BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXFIFAWGAME",
+   "title": "FIFA Women's Game",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXFIFAWSPREAD",
+   "title": "Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXFIFAWTOTAL",
+   "title": "Point Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXFINALISSIMA1H",
+   "title": "1st Half Winner",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXFINALISSIMA1HBTTS",
+   "title": "1st Half BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXFINALISSIMA1HSPREAD",
+   "title": "1st Half Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXFINALISSIMA1HTOTAL",
+   "title": "1st Half Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXFINALISSIMAADVANCE",
+   "title": "To Advance",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXFINALISSIMABTTS",
+   "title": "BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXFINALISSIMAFTTS",
+   "title": "First Team to Score",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXFINALISSIMAGAME",
+   "title": "Finalissima",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXFINALISSIMAMOV",
+   "title": "Method of Victory",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXFINALISSIMASCORE",
+   "title": "Correct Score",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXFINALISSIMASPREAD",
+   "title": "Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXFINALISSIMATEAMTOTAL",
+   "title": "Team Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXFINALISSIMATOTAL",
+   "title": "Point Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXFIRSTSUPERBOWLSONG",
+   "title": "What will be the first Super Bowl Song played during halfitme?",
+   "tags": [
+    "Soccer",
+    "Music"
+   ]
+  },
+  {
+   "ticker": "KXFLACOACH",
+   "title": "Florida Next Coach",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXFOOTBALL1001",
+   "title": "Football rankings",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXFRASUPERCUP1H",
+   "title": "1st Half Winner",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXFRASUPERCUP1HBTTS",
+   "title": "1st Half BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXFRASUPERCUP1HSPREAD",
+   "title": "1st Half Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXFRASUPERCUP1HTOTAL",
+   "title": "1st Half Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXFRASUPERCUPADVANCE",
+   "title": "France Super Cup to Advance",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXFRASUPERCUPBTTS",
+   "title": "BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXFRASUPERCUPFTTS",
+   "title": "First Team to Score",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXFRASUPERCUPGAME",
+   "title": "France Super Cup Game",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXFRASUPERCUPMOF",
+   "title": "Method of Finish",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXFRASUPERCUPMOV",
+   "title": "Method of Victory",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXFRASUPERCUPSCORE",
+   "title": "Correct Score",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXFRASUPERCUPSPREAD",
+   "title": "Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXFRASUPERCUPTEAMTOTAL",
+   "title": "Team Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXFRASUPERCUPTOTAL",
+   "title": "Point Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXGREYCUP",
+   "title": "CFL Grey Cup",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXHEISMAN",
+   "title": "Heisman Trophy Winner",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXHEISMANFINALIST",
+   "title": "Defensive Heisman Finalist",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXHKANEKNIGHT",
+   "title": "Harry Kane Knighted",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXHNLADVANCE",
+   "title": "To Advance",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXHNLBTTS",
+   "title": "BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXHNLGAME",
+   "title": "Croatia HNL Game",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXHNLSPREAD",
+   "title": "Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXHNLTOTAL",
+   "title": "Point Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXINTERCONCUPGAME",
+   "title": "Intercontinental Cup Match",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXINTERCUPADVANCE",
+   "title": "Intercontinental Cup To Advance",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXINTLFRIENDLY1H",
+   "title": "1st Half Winner",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXINTLFRIENDLY1HBTTS",
+   "title": "1st Half BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXINTLFRIENDLY1HSPREAD",
+   "title": "1st Half Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXINTLFRIENDLY1HTOTAL",
+   "title": "1st Half Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXINTLFRIENDLYADVANCE",
+   "title": "To Advance",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXINTLFRIENDLYBTTS",
+   "title": "BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXINTLFRIENDLYGAME",
+   "title": "International Friendly Game",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXINTLFRIENDLYSPREAD",
+   "title": "International Friendly Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXINTLFRIENDLYTEAMTOTAL",
+   "title": "Team Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXINTLFRIENDLYTOTAL",
+   "title": "International Friendly Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXINTLPLAYAGAIN",
+   "title": "Play Again",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXITASUPERCUP1H",
+   "title": "1st Half Winner",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXITASUPERCUP1HBTTS",
+   "title": "1st Half BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXITASUPERCUP1HSPREAD",
+   "title": "1st Half Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXITASUPERCUP1HTOTAL",
+   "title": "1st Half Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXITASUPERCUPADVANCE",
+   "title": "Italy Super Cup Winner",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXITASUPERCUPBTTS",
+   "title": "BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXITASUPERCUPFTTS",
+   "title": "First Team to Score",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXITASUPERCUPGAME",
+   "title": "Italy Super Cup Game",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXITASUPERCUPMOF",
+   "title": "Method of Finish",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXITASUPERCUPMOV",
+   "title": "Method of Victory",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXITASUPERCUPSCORE",
+   "title": "Correct Score",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXITASUPERCUPSPREAD",
+   "title": "Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXITASUPERCUPTEAMTOTAL",
+   "title": "Team Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXITASUPERCUPTOTAL",
+   "title": "Point Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXJLEAGUE1H",
+   "title": "1st Half Winner",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXJLEAGUE1HBTTS",
+   "title": "1st Half BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXJLEAGUE1HSPREAD",
+   "title": "1st Half Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXJLEAGUE1HTOTAL",
+   "title": "1st Half Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXJLEAGUEADVANCE",
+   "title": "To Advance",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXJLEAGUEBTTS",
+   "title": "BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXJLEAGUEGAME",
+   "title": "Japan J League Game",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXJLEAGUESPREAD",
+   "title": "Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXJLEAGUETEAMTOTAL",
+   "title": "Team Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXJLEAGUETOTAL",
+   "title": "Point Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXJOINCLUB",
+   "title": "Soccer Join Club",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXJOINDAVID",
+   "title": "Jonathan David transfer",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXJOINEKITIKE",
+   "title": "Hugo Ekitike",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXJOINLEAGUE",
+   "title": "Soccer Join League",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXJOINMBAPPE",
+   "title": "Kylian Mbappe next team",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXJOINMESSI",
+   "title": "Messi",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXJOINNEYMARMIAMI",
+   "title": "Inter Miami Neymar",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXJOINRONALDO",
+   "title": "Cristiano Ronaldo",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXJOINSALAH",
+   "title": "Mo Salah next team",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXJOINSANE",
+   "title": "Leroy Sane transfer",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXKELCERETIRE",
+   "title": "Travis Kelce Retire",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXKLEAGUE",
+   "title": "Korea K League Winner",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXKLEAGUE1H",
+   "title": "1st Half Winner",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXKLEAGUE1HBTTS",
+   "title": "1st Half BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXKLEAGUE1HSPREAD",
+   "title": "1st Half Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXKLEAGUE1HTOTAL",
+   "title": "1st Half Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXKLEAGUEADVANCE",
+   "title": "To Advance",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXKLEAGUEBTTS",
+   "title": "BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXKLEAGUEGAME",
+   "title": "Korea K League Game",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXKLEAGUESPREAD",
+   "title": "Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXKLEAGUETEAMTOTAL",
+   "title": "Team Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXKLEAGUETOTAL",
+   "title": "Point Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXKNVBCUP",
+   "title": "KNVB Cup Winner",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXKNVBCUPADVANCE",
+   "title": "KNVB Cup Advance",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXKNVBCUPBTTS",
+   "title": "BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXKNVBCUPGAME",
+   "title": "KNVB Cup Game",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXKNVBCUPSPREAD",
+   "title": "Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXKNVBCUPTOTAL",
+   "title": "Point Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXKXECULPGAME",
+   "title": "delete",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXLALIGA",
+   "title": "LA LIGA",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXLALIGA1H",
+   "title": "La Liga First Half Winner",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXLALIGA1HBTTS",
+   "title": "1st Half BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXLALIGA1HSCORE",
+   "title": "1st Half Correct Score",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXLALIGA1HSPREAD",
+   "title": "1st Half Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXLALIGA1HTOTAL",
+   "title": "1st Half Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXLALIGA2ADVANCE",
+   "title": "To Advance",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXLALIGA2BTTS",
+   "title": "BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXLALIGA2GAME",
+   "title": "LaLiga 2 Game",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXLALIGA2H",
+   "title": "2nd Half Winner",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXLALIGA2HBTTS",
+   "title": "2nd Half BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXLALIGA2HSPREAD",
+   "title": "2nd Half Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXLALIGA2HTOTAL",
+   "title": "2nd Half Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXLALIGA2PROMO",
+   "title": "La Liga 2 Promotion",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXLALIGA2SPREAD",
+   "title": "Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXLALIGA2TOTAL",
+   "title": "Point Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXLALIGAADVANCE",
+   "title": "To Advance",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXLALIGABTTS",
+   "title": "La Liga BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXLALIGAFTTS",
+   "title": "First Team to Score",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXLALIGAGAME",
+   "title": "La Liga Game",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXLALIGAMOV",
+   "title": "Method of Victory",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXLALIGARELEGATION",
+   "title": "La Liga Relegation",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXLALIGASCORE",
+   "title": "Correct Score",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXLALIGASPREAD",
+   "title": "La Liga Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXLALIGATEAMTOTAL",
+   "title": "Team Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXLALIGATOP4",
+   "title": "La Liga Top 4 Finishers",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXLALIGATOTAL",
+   "title": "La Liga Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXLAMINEYAMAL",
+   "title": "Lamine Yamal",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXLEADERNFLINT",
+   "title": "NFL leader interceptions",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXLEADERNFLPTDS",
+   "title": "NFL leader passing TDs",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXLEADERNFLPYDS",
+   "title": "NFL leader passing yards",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXLEADERNFLRTDS",
+   "title": "NFL leader receiving TDs",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXLEADERNFLRUSHTDS",
+   "title": "NFL leader rushing TDs",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXLEADERNFLRUSHYDS",
+   "title": "NFL leader rushing yards",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXLEADERNFLRYDS",
+   "title": "NFL leader receiving yards",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXLEADERNFLSACKS",
+   "title": "NFL Sacks Leader",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXLEADERPINT",
+   "title": "Pro Football Passing Interceptions Leader",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXLEADERUCLGOALS",
+   "title": "UCL Top Goalscorer",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXLIGAEXP1H",
+   "title": "1st Half Winner",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXLIGAEXP1HBTTS",
+   "title": "1st Half BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXLIGAEXP1HSPREAD",
+   "title": "1st Half Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXLIGAEXP1HTOTAL",
+   "title": "1st Half Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXLIGAEXPADVANCE",
+   "title": "To Advance",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXLIGAEXPBTTS",
+   "title": "BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXLIGAEXPGAME",
+   "title": "Liga Expansion Game",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXLIGAEXPSPREAD",
+   "title": "Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXLIGAEXPTEAMTOTAL",
+   "title": "Team Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXLIGAEXPTOTAL",
+   "title": "Point Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXLIGAMX",
+   "title": "Liga MX Winner",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXLIGAMX1H",
+   "title": "1st Half Winner",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXLIGAMX1HBTTS",
+   "title": "1st Half BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXLIGAMX1HSPREAD",
+   "title": "1st Half Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXLIGAMX1HTOTAL",
+   "title": "1st Half Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXLIGAMXADVANCE",
+   "title": "Liga MX Advance",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXLIGAMXBTTS",
+   "title": "Liga MX BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXLIGAMXFTTS",
+   "title": "First Team to Score",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXLIGAMXGAME",
+   "title": "Liga MX Game",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXLIGAMXMOV",
+   "title": "Method of Victory",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXLIGAMXSCORE",
+   "title": "Correct Score",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXLIGAMXSPREAD",
+   "title": "Liga MX Game",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXLIGAMXTEAMTOTAL",
+   "title": "Team Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXLIGAMXTOTAL",
+   "title": "Liga MX Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXLIGAPORTUGAL",
+   "title": "Liga Portugal Winner",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXLIGAPORTUGAL1H",
+   "title": "1st Half Winner",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXLIGAPORTUGAL1HBTTS",
+   "title": "1st Half BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXLIGAPORTUGAL1HSPREAD",
+   "title": "1st Half Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXLIGAPORTUGAL1HTOTAL",
+   "title": "1st Half Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXLIGAPORTUGALADVANCE",
+   "title": "To Advance",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXLIGAPORTUGALBTTS",
+   "title": "BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXLIGAPORTUGALGAME",
+   "title": "Liga Portugal Game",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXLIGAPORTUGALSPREAD",
+   "title": "Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXLIGAPORTUGALTEAMTOTAL",
+   "title": "Team Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXLIGAPORTUGALTOTAL",
+   "title": "Point Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXLIGUE1",
+   "title": "LIGUE 1",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXLIGUE11H",
+   "title": "Ligue 1 First Half Winner",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXLIGUE11HBTTS",
+   "title": "1st Half BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXLIGUE11HSPREAD",
+   "title": "1st Half Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXLIGUE11HTOTAL",
+   "title": "1st Half Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXLIGUE1ADVANCE",
+   "title": "To Advance",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXLIGUE1BTTS",
+   "title": "Ligue 1 BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXLIGUE1FTTS",
+   "title": "First Team to Score",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXLIGUE1GAME",
+   "title": "Ligue 1 Game",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXLIGUE1MOV",
+   "title": "Method of Victory",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXLIGUE1RELEGATION",
+   "title": "Ligue 1 Relegation",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXLIGUE1SCORE",
+   "title": "Correct Score",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXLIGUE1SPREAD",
+   "title": "Ligue 1 Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXLIGUE1TEAMTOTAL",
+   "title": "Team Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXLIGUE1TOP4",
+   "title": "Ligue 1 Top 4 Finishers",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXLIGUE1TOTAL",
+   "title": "Ligue 1 Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXLSUCOACH",
+   "title": "LSU Next Coach",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXMANAGEROUTDATE",
+   "title": "Manager Out Date",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXMANAGERSOUT",
+   "title": "Managers Out",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXMEMCOACH",
+   "title": "Memphis Next Coach",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXMENWORLDCUP",
+   "title": "Men's World Cup winner",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXMICHCOACH",
+   "title": "Michigan Next Coach",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXMLS1H",
+   "title": "1st Half Winner",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXMLS1HBTTS",
+   "title": "1st Half BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXMLS1HSPREAD",
+   "title": "1st Half Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXMLS1HTOTAL",
+   "title": "1st Half Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXMLSADVANCE",
+   "title": "MLS To Advance",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXMLSBTTS",
+   "title": "MLS BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXMLSCUP",
+   "title": "MLS Cup champion",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXMLSEAST",
+   "title": "MLS Western Conference winner?",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXMLSFTTS",
+   "title": "First Team to Score",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXMLSGAME",
+   "title": "Major League Soccer Game",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXMLSJOIN",
+   "title": "MLS Transfers",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXMLSMOV",
+   "title": "Method of Victory",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXMLSSCORE",
+   "title": "Correct Score",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXMLSSPREAD",
+   "title": "MLS Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXMLSTEAMTOTAL",
+   "title": "Team Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXMLSTOTAL",
+   "title": "MLS Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXMLSWEST",
+   "title": "MLS Western Conference winner?",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXMWORLDCUP",
+   "title": "Men's World Cup winner",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXNCAAF",
+   "title": "NCAAF Championship",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNCAAF1HWINNER",
+   "title": "College Football 1st Half Winner",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNCAAFAAC",
+   "title": "American Athletic Conference Champion",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNCAAFAACQUAL",
+   "title": "College Football American Athletic Conference Championship Qualifiers",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNCAAFACC",
+   "title": "ACC Champion",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNCAAFACCQUAL",
+   "title": "College Football ACC Championship Qualifiers",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNCAAFACCREGTOP",
+   "title": "College Football ACC Regular Season Top Finishers",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNCAAFAPRANK",
+   "title": "College Football AP Rank",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNCAAFB10",
+   "title": "Big Ten Champion",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNCAAFB10QUAL",
+   "title": "College Football Big Ten Championship Qualifiers",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNCAAFB12",
+   "title": "Big 12 Champion",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNCAAFB12QUAL",
+   "title": "College Football Big 12 Championship Qualifiers",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNCAAFB12REGTOP",
+   "title": "College Football Big 12 Regular Season Top Finishers",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNCAAFBIGTENREGTOP",
+   "title": "College Football Big Ten Regular Season Top Finishers",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNCAAFCONF",
+   "title": "NCAAF Championship Conference",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNCAAFCOTW",
+   "title": "College Football Coach of the Week",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNCAAFCOTY",
+   "title": "College Football Coach of the Year",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNCAAFCS",
+   "title": "FCS Football Champion",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNCAAFCSGAME",
+   "title": "College Football FCS Game",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNCAAFCUSA",
+   "title": "Conference USA Champion",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNCAAFCUSAQUAL",
+   "title": "College Football Conference USA Championship Qualifiers",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNCAAFD3",
+   "title": "D3 College Football Champion",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNCAAFD3GAME",
+   "title": "College Football Game",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNCAAFFINALIST",
+   "title": "College Football Finalist",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNCAAFGAME",
+   "title": "College Football Game",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNCAAFH2HWINS",
+   "title": "College Football Head-to-Head Regular Season Wins",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNCAAFIVY",
+   "title": "Ivy League Champion",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNCAAFMAC",
+   "title": "MAC Champion",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNCAAFMACQUAL",
+   "title": "College Football Mid-American Conference Championship Qualifiers",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNCAAFMWC",
+   "title": "Mountain West Champion",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNCAAFMWCQUAL",
+   "title": "College Football Mountain West Conference Championship Qualifiers",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNCAAFPAC10",
+   "title": "Pac-10 Champion",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNCAAFPAC12",
+   "title": "Pac-12 Champion",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNCAAFPAC12QUAL",
+   "title": "College Football Pac-12 Championship Qualifiers",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNCAAFPLAYOFF",
+   "title": "College Football Playoff Qualifiers",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNCAAFPREPACK2ML",
+   "title": "MVE NCAAF Pre Pack",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNCAAFPREPACK3ML",
+   "title": "MVE NCAAF Pre Pack",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNCAAFPREPACK4ML",
+   "title": "MVE NCAAF Pre Pack",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNCAAFPREPACKSGP",
+   "title": "MVE NCAAF Pre Pack",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNCAAFQF",
+   "title": "College Football Playoff Quarterfinals Qualifiers",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNCAAFSBELT",
+   "title": "Sun Belt Champion",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNCAAFSBELTQUAL",
+   "title": "College Football Sun Belt Championship Qualifiers",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNCAAFSEC",
+   "title": "SEC Champion",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNCAAFSECQ",
+   "title": "College Football SEC Championship Qualifiers",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNCAAFSECREGTOP",
+   "title": "College Football SEC Regular Season Top Finishers",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNCAAFSF",
+   "title": "College Football Playoff Semifinals Qualifiers",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNCAAFSPREAD",
+   "title": "College Football Spread",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNCAAFTEAMTOTAL",
+   "title": "College Football Team Total Points",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNCAAFTOPAPRANK",
+   "title": "College Football AP Poll Top Rank",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNCAAFTOTAL",
+   "title": "College Football Total Points",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNCAAFUNDEFEATED",
+   "title": "Undefeated in College Football Regular Season",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNCAAFWINS",
+   "title": "College Football Win Total",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNCAAPLAYOFF",
+   "title": "College Football Playoff Qualifiers",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNDJOINCONF",
+   "title": "Join Conference",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNEWCASTLEUBADGE",
+   "title": "Newcastle United badge",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXNEWCOACHCHIBEARS",
+   "title": "Chicago Bears new coach",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNEWCOACHDAL",
+   "title": "Dallas Cowboys new coach",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNEWCOACHJAX",
+   "title": "JACKSONVILLE JAGUARS new coach",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNEWCOACHLV",
+   "title": "Las Vegas Raiders New Coach",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNEWCOACHNE",
+   "title": "New England Patriots new coach",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNEWCOACHNO",
+   "title": "New Orleans Saints new coach",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNEWCOACHNYJ",
+   "title": "New York Jets new coach",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNEWCOACHUNC",
+   "title": "University of North Carolina new coach",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNEXTEAMTYREEK",
+   "title": "Tyreek Hill next team",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNEXTMANAGER",
+   "title": "Next Manager",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXNEXTMANAGERCHELSEA",
+   "title": "Next Manager Chelsea",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXNEXTMANAGEREPL",
+   "title": "Next Manager",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXNEXTMANAGERJUV",
+   "title": "Next Manager of Juventus",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXNEXTMANAGERLALIGA",
+   "title": "La Liga Next Manager",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXNEXTMANAGERMANU",
+   "title": "Next Man U Manager",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXNEXTMANAGERMIL",
+   "title": "Next Manager of AC Milan",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXNEXTMANAGERSERIEA",
+   "title": "Next Manager",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXNEXTNFLCOACH",
+   "title": "Next Pro Football Coach",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNEXTTEAMMCLAURIN",
+   "title": "Terry McLaurin next team",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNEXTTEAMMICAH",
+   "title": "Micah Parsons next team",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNEXTTEAMNFL",
+   "title": "Pro Football Player Next Team",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNEXTTEAMTYREEK",
+   "title": "Tyreek Hill next team",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFC",
+   "title": "NFC Championship",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFCAFCSB",
+   "title": "AFC NFC SB",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFL1HSPREAD",
+   "title": "NFL 1st Half Spread",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFL1HTOTAL",
+   "title": "NFL 1st  Half Total Points",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFL1HWINNER",
+   "title": "NFL 1st Half Winner",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFL1QSPREAD",
+   "title": "Pro Football 1st Quarter Spread",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFL1QTOTAL",
+   "title": "Pro Football 1st Quarter Total",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFL1QWINNER",
+   "title": "Pro Football 1st Quarter Winner",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFL1SEED",
+   "title": "Will team win conference in regular season",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFL1YDPASS",
+   "title": "Seattle 1 Yard Pass",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFL2HSPREAD",
+   "title": "Pro Football 2nd Half Spread",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFL2HTOTAL",
+   "title": "Pro Football 2nd Half Total",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFL2HWINNER",
+   "title": "NFL 2nd Half Winner",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFL2PTCONV",
+   "title": "Pro Football 2-Point Conversions",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFL2QSPREAD",
+   "title": "Pro Football 2nd Quarter Spread",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFL2QTOTAL",
+   "title": "Pro Football 2nd Quarter Total",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFL2QWINNER",
+   "title": "Pro Football 2nd Quarter Winner",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFL2TD",
+   "title": "Pro Football Multiple Touchdowns",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFL3QSPREAD",
+   "title": "Pro Football 3rd Quarter Spread",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFL3QTOTAL",
+   "title": "Pro Football 3rd Quarter Total",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFL3QWINNER",
+   "title": "Pro Football 3rd Quarter Winner",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFL4DCONV",
+   "title": "Pro Football 4th Down Conversions",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFL4DOWNCONV",
+   "title": "Pro Football 4th Down Conversions",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFL4QSPREAD",
+   "title": "Pro Football 4th Quarter Spread",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFL4QTOTAL",
+   "title": "Pro Football 4th Quarter Total",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFL4QWINNER",
+   "title": "Pro Football 4th Quarter Winner",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLAFCCHAMP",
+   "title": "American Football Conference Champion",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLAFCEAST",
+   "title": "American Football Conference East Winner",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLAFCNORTH",
+   "title": "American Football Conference North Winner",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLAFCSOUTH",
+   "title": "American Football Conference South Winner",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLAFCWEST",
+   "title": "American Football Conference West Winner",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLANYTD",
+   "title": "Pro Football Anytime Touchdown",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLCOMBINE",
+   "title": "NFL Combine",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLCOMBINE40",
+   "title": "Pro Football Combine Fastest 40 Time",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLCOMBO",
+   "title": "NFL COMBO",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLCOMEBACK",
+   "title": "Pro Football Comeback",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLCOMPETE",
+   "title": "Will an NFL Player Compete in game",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLCONTRACTSIZE",
+   "title": "Pro Football Next Contract Size",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLCOTY",
+   "title": "AP Pro Football Coach Of The Year",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLCPOTY",
+   "title": "AP Pro Football Comeback Player of the Year",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLDEPTHPOSITIONCLEQB2",
+   "title": "QB2 CLE",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLDIVISIONORDER",
+   "title": "Pro Football Division Exact Order",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLDIVISIONWINS",
+   "title": "Pro Football Division Total Wins",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLDIVLEASTWINS",
+   "title": "Pro Football Division with the Most Wins",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLDIVMOSTWINS",
+   "title": "Pro Football Division with the Least Wins",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLDPOTY",
+   "title": "AP Pro Football Defensive Player Of The Year",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLDRAFT1",
+   "title": "NFL Draft First Pick",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLDRAFT1ST",
+   "title": "Make the 1st pick in NFL Draft",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLDRAFTCAT",
+   "title": "Pro Football Draft Category",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLDRAFTCOMPARE",
+   "title": "NFL Draft Comparison",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLDRAFTDB",
+   "title": "Pro Football Defensive Back Drafted",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLDRAFTDT",
+   "title": "Pro Football Defensive Tackle Drafted",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLDRAFTEAMPOS",
+   "title": "Will team draft a position across round",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLDRAFTEDGE",
+   "title": "Pro Football Edge Drafted",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLDRAFTLB",
+   "title": "Pro Football Linebacker Drafted",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLDRAFTMATCHUP",
+   "title": "Pro Football Draft Matchup",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLDRAFTOL",
+   "title": "Pro Football Offensive Line Drafted ",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLDRAFTOU",
+   "title": "Will Player be drafted before or after pick?",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLDRAFTPICK",
+   "title": "NFL Draft Pick",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLDRAFTQB",
+   "title": "Pro Football Quarterback Drafted",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLDRAFTRB",
+   "title": "Pro Football Running Back Drafted",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLDRAFTTE",
+   "title": "Pro Football Tight End Drafted",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLDRAFTTEAM",
+   "title": "Pro Football Team Draft",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLDRAFTTEAMPOS",
+   "title": "Which team will draft a quarterback in specific round?",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLDRAFTTOP",
+   "title": "Pro Football Top Draft",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLDRAFTWR",
+   "title": "Pro Football Wide Receiver Drafted ",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLDROTY",
+   "title": "AP Pro Football Defensive Rookie of the Year",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLDSTTD",
+   "title": "Pro Football D/ST Touchdown",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLENDSTREAK",
+   "title": "When will team end streak",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLEXACTWINSARI",
+   "title": "Pro football exact wins Arizona",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLEXACTWINSATL",
+   "title": "Pro football exact wins Atlanta",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLEXACTWINSBAL",
+   "title": "Pro football exact wins Baltimore",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLEXACTWINSBUF",
+   "title": "Pro football exact wins Buffalo",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLEXACTWINSCAR",
+   "title": "Pro football exact wins Carolina",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLEXACTWINSCHI",
+   "title": "Pro football exact wins Chicago",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLEXACTWINSCIN",
+   "title": "Pro football exact wins Cincinnati",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLEXACTWINSCLE",
+   "title": "Pro football exact wins Cleveland",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLEXACTWINSDAL",
+   "title": "Pro football exact wins Dallas",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLEXACTWINSDEN",
+   "title": "Pro football exact wins Denver",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLEXACTWINSDET",
+   "title": "Pro football exact wins Detroit",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLEXACTWINSGB",
+   "title": "Pro football exact wins Green Bay",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLEXACTWINSHOU",
+   "title": "Pro football exact wins Houston",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLEXACTWINSIND",
+   "title": "Pro football exact wins Indianapolis",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLEXACTWINSJAC",
+   "title": "Pro football exact wins Jacksonville",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLEXACTWINSKC",
+   "title": "Pro football exact wins Kansas City",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLEXACTWINSLA",
+   "title": "Pro football exact wins Los Angeles R",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLEXACTWINSLAC",
+   "title": "Pro football exact wins Los Angeles C",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLEXACTWINSLV",
+   "title": "Pro football exact wins Las Vegas",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLEXACTWINSMIA",
+   "title": "Pro football exact wins Miami",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLEXACTWINSMIN",
+   "title": "Pro football exact wins Minnesota",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLEXACTWINSNE",
+   "title": "Pro football exact wins New England",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLEXACTWINSNO",
+   "title": "Pro football exact wins New Orleans",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLEXACTWINSNYG",
+   "title": "Pro football exact wins New York G",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLEXACTWINSNYJ",
+   "title": "Pro football exact wins New York J",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLEXACTWINSPHI",
+   "title": "Pro football exact wins Philadephia",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLEXACTWINSPIT",
+   "title": "Pro football exact wins Pittsburgh",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLEXACTWINSSEA",
+   "title": "Pro football exact wins Seattle",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLEXACTWINSSF",
+   "title": "Pro football exact wins San Francisco",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLEXACTWINSTB",
+   "title": "Pro football exact wins Tampa Bay",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLEXACTWINSTEN",
+   "title": "Pro football exact wins Tennessee",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLEXACTWINSWAS",
+   "title": "Pro football exact wins Washington",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLEXECOTY",
+   "title": "Pro Football Executive of the Year",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLFANTASYMOST",
+   "title": "Pro Football Most Fantasy Points",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLFIRSTPICK",
+   "title": "First Pick in NFL Draft",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLFIRSTTD",
+   "title": "Pro Football First Touchdown",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLFIRSTTDTIME",
+   "title": "Pro Football First Touchdown Time",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLGAME",
+   "title": "Professional Football Game",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLGAMEFG",
+   "title": "Pro Football Field Goals",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLGAMESACK",
+   "title": "Pro Football Sacks",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLGAMETD",
+   "title": "Pro Football Touchdowns",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLGAMETO",
+   "title": "Pro Football Turnovers",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLGPICKENSCONTRACT",
+   "title": "Pro Football George Picken's Next Contract Size",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLH2HWINS",
+   "title": "Pro Football Head-to-Head Win Totals",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLHALLOFFAME",
+   "title": "Pro Football Hall of Fame",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLHIGHSCOREQ",
+   "title": "Pro Football Highest Scoring Quarter",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLHOFINDUCTEES",
+   "title": "Pro Football Hall of Fame Inductees",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLLARGELEAD",
+   "title": "Pro Football Largest Lead",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLLARGESTLEAD",
+   "title": "Pro Football Largest Lead",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLLASTPICKPOS",
+   "title": "NFL Last Pick of the Draft Position",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLLEADCHANGE",
+   "title": "Pro Football Lead Changes",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLLEADERPINT",
+   "title": "Pro Football P INT Leader",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLLEASTPENALIZED",
+   "title": "Pro Football Least Penalized Team",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLLONGESTTD",
+   "title": "Pro Football Longest Touchdown",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLMATCHUP",
+   "title": "Pro Football Matchups",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLMOSTRECYDS",
+   "title": "Pro Football Most Receiving Yards",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLMOSTRSHYDS",
+   "title": "Pro Football Most Rushing Yards",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLMVP",
+   "title": "AP Pro Football Regular Season MVP",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLNEXTINT",
+   "title": "Pro Football Next Interception",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLNEXTTD",
+   "title": "Pro Football Next TD scorer",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLNEXTTEAM",
+   "title": "Pro Football Next Team",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLNFCCHAMP",
+   "title": "National Football Conference Champion",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLNFCEAST",
+   "title": "National Football Conference East Winner",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLNFCNORTH",
+   "title": "National Football Conference North Winner",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLNFCSOUTH",
+   "title": "National Football Conference South Winner",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLNFCWEST",
+   "title": "National Football Conference West Winner",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLNONQBPASS",
+   "title": "Pro Football Non-QB Passes",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLNOSCOREQ",
+   "title": "Pro Football Scoreless Quarter",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLOPOTY",
+   "title": "AP Pro Football Offensive Player Of The Year",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLOROTY",
+   "title": "AP Pro Football Offensive Rookie of the Year",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLOT",
+   "title": "Pro Football Overtime",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLOWNERSTAKE",
+   "title": "Next Pro Football Team to Sell Ownership Stake",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLPASSTDS",
+   "title": "Pro Football player Passing Touchdowns",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLPASSYDS",
+   "title": "Pro Football player Passing Yards",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLPLAYOFF",
+   "title": "Pro Football Playoff Qualifiers",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLPREPACK",
+   "title": "MVE NFL Pre Pack",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLPRIMETIME",
+   "title": "Pro Football Primetime Games",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLPROOTY",
+   "title": "Pro Football Protector of the Year",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLREBOOT",
+   "title": "Reboot Rules",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLREC",
+   "title": "Pro Football Player Receptions",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLRECYDS",
+   "title": "Pro Football player Receiving Yards",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLRECYDSRECORD",
+   "title": "NFL Regular Season Receiving Yards Record",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLRETIRE",
+   "title": "Pro Football Retirement",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLRETURN",
+   "title": "Pro Football Injury Return",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLRSHYDS",
+   "title": "Pro Football player Rushing Yards",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLSACKRECORD",
+   "title": "NFL Regular Season Sack Record",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLSAFETY",
+   "title": "Pro Football Safeties",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLSBMVP",
+   "title": "Pro Football Championship MVP",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLSBMVPDEF",
+   "title": "Defensive Player Championship MVP",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLSBMVPPOS",
+   "title": "Pro Football Championship MVP Position",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLSBMVPQB",
+   "title": "Non QB Championship MVP",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLSDRAFTTOP",
+   "title": "Will player be drafted Top X in Supplemental Draft",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLSEASONPASSYDS",
+   "title": "Pro Football Season Passing Yards",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLSEASONREC",
+   "title": "Pro Football Season Receptions",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLSEASONRECTD",
+   "title": "Pro Football Season Receiving Touchdowns",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLSEASONRECYDS",
+   "title": "Pro Football Season Receiving Yards",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLSEASONRSHTD",
+   "title": "Pro Football Season Rush Touchdowns",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLSEASONRSHYDS",
+   "title": "Pro Football Season Rushing Yards",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLSEASONRUSHYDS",
+   "title": "Pro Football Season Rushing Yards",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLSHORTESTTD",
+   "title": "Pro Football Shortest Touchdown",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLSPREAD",
+   "title": "Pro Football Spread",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLSTAGEOFELIM",
+   "title": "Pro Football Stage of Elimination",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLSUPDRAFTPICK",
+   "title": "Will Player declare for supplemental draft",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLT100",
+   "title": "Will player be ranked on Pro Football T100 List",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLT100TOP",
+   "title": "Will player be ranked Top X on NFL 100",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLTEAM1POS",
+   "title": "What position will Team select with first pick",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLTEAMDPTS",
+   "title": "Who will allow the least/most points this season",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLTEAMFIRSTTD",
+   "title": "Pro Football First Touchdown",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLTEAMPTS",
+   "title": "Who will most/least points in Regular Season",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLTEAMTOTAL",
+   "title": "Pro Football Team Total Points",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLTOTAL",
+   "title": "Pro Football Total Points",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLTRADE",
+   "title": "NFL Trade",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLTSPEC",
+   "title": "NFL Team Specials",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLWINMARGIN",
+   "title": "Pro Football Win Margin",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLWINS",
+   "title": "Pro Football Wins",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLWINS-ANY",
+   "title": "Pro football wins any team",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLWINS-ARI",
+   "title": "Pro football wins Arizona",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLWINS-ATL",
+   "title": "Pro football wins Atlanta",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLWINS-BAL",
+   "title": "Pro football wins Baltimore",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLWINS-BUF",
+   "title": "Pro football wins Buffalo",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLWINS-CAR",
+   "title": "Pro football wins Carolina",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLWINS-CHI",
+   "title": "Pro football wins Chicago",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLWINS-CIN",
+   "title": "Pro football wins Cincinnati",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLWINS-CLE",
+   "title": "Pro football wins Cleveland",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLWINS-DAL",
+   "title": "Pro football wins Dallas",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLWINS-DEN",
+   "title": "Pro football wins Denver",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLWINS-DET",
+   "title": "Pro football wins Detroit",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLWINS-GB",
+   "title": "Pro football wins Green Bay",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLWINS-HOU",
+   "title": "Pro football wins Houston",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLWINS-IND",
+   "title": "Pro football wins Indianapolis",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLWINS-JAC",
+   "title": "Pro football wins Jacksonville",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLWINS-KC",
+   "title": "Pro football wins Kansas City",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLWINS-LA",
+   "title": "Pro football wins Los Angeles R",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLWINS-LAC",
+   "title": "Pro football wins Los Angeles C",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLWINS-LV",
+   "title": "Pro football wins Las Vegas",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLWINS-MIA",
+   "title": "Pro football wins Miami",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLWINS-MIN",
+   "title": "Pro football wins Minnesota",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLWINS-NE",
+   "title": "Pro football wins New England",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLWINS-NO",
+   "title": "Pro football wins New Orleans",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLWINS-NYG",
+   "title": "Pro football wins New York G",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLWINS-NYJ",
+   "title": "Pro football wins New York J",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLWINS-PHI",
+   "title": "Pro football wins Philadelphia",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLWINS-PIT",
+   "title": "Pro football wins Pittsburgh",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLWINS-SEA",
+   "title": "Pro football wins Seattle",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLWINS-SF",
+   "title": "Pro football wins San Francisco",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLWINS-TB",
+   "title": "Pro football wins Tampa Bay",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLWINS-TEN",
+   "title": "Pro football wins Tennessee",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLWINS-WAS",
+   "title": "Pro football wins Washington",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLWORSTTOFIRST",
+   "title": "Pro Football Worst in Division to First",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNFLWPMOTY",
+   "title": "Walter Payton Man of the Year",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNHLMVP",
+   "title": "NHL Hart Memorial Trophy Winner",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNLMVP",
+   "title": "AL MVP",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXNWSL",
+   "title": "NWSL Champion",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXNWSLADVANCE",
+   "title": "To Advance",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXNWSLBTTS",
+   "title": "NWSL BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXNWSLGAME",
+   "title": "NWSL Game",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXNWSLSPREAD",
+   "title": "NWSL Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXNWSLTOTAL",
+   "title": "NWSL Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXNYGCOACH",
+   "title": "New York G Next Coach",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXOKSTCOACH",
+   "title": "Oklahoma State Next Coach",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXOLEMISSATTENDANCE",
+   "title": "Ole Miss Attendance Record",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXPAVIAPRESEASON",
+   "title": "Pavia Preseason",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXPERFORMANCEORDERDR",
+   "title": "WHAT SONG WILL DIANA ROSS SING  FIRST ON NYE",
+   "tags": [
+    "Soccer",
+    "Music"
+   ]
+  },
+  {
+   "ticker": "KXPERLIGA1",
+   "title": "Peru Liga 1",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXPERLIGA1ADVANCE",
+   "title": "To Advance",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXPERLIGA1BBTTS",
+   "title": "BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXPERLIGA1BTTS",
+   "title": "BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXPERLIGA1GAME",
+   "title": "Peru Liga 1 Game",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXPERLIGA1SPREAD",
+   "title": "Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXPERLIGA1TOTAL",
+   "title": "Point Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXPFAPOY",
+   "title": "PFA Player of The Year",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXPHILIPRIVERSNFL",
+   "title": "Philips Rivers Play This Year",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXPLAYWC",
+   "title": "Player World Cup",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXPPPKSO",
+   "title": "PrizePicks PK Shootout",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXPREMIERLEAGUE",
+   "title": "PREMIER LEAGUE",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXPRYLIGA1GAME",
+   "title": "delete",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXPSUCOACH",
+   "title": "Penn State Next Coach",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXQSTARSGAME",
+   "title": "Qatar Stars League",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXRANKLISTAICODE",
+   "title": "AI Coding",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXRANKLISTAPPREALSPORTS",
+   "title": "Will 'Real Sports' be a top 10 sports app before Nov 15th, 2025?",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXRANKLISTBONK",
+   "title": "Bonk top 100 currencies by end of year",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXRANKLISTFFDST",
+   "title": "TOP FANTASY FOOTBALL D ST",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXRANKLISTFFK",
+   "title": "TOP FANTASY FOOTBALL K",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXRANKLISTFFQB",
+   "title": "TOP FANTASY FOOTBALL QB",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXRANKLISTFFRB",
+   "title": "TOP FANTASY FOOTBALL RB",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXRANKLISTFFTE",
+   "title": "TOP FANTASY FOOTBALL TE",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXRANKLISTFFWR",
+   "title": "TOP FANTASY FOOTBALL WR",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXRANKLISTIBD",
+   "title": "IBD League Tables",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXRANKLISTKAITO",
+   "title": "Which exchange will have the highest mindshare this week?",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXRANKLISTKG",
+   "title": "Will Ken Griffin be the top donator on <date>?",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXRANKLISTREALSPORTS",
+   "title": "Real Sports Top 10 App",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXRANKLISTSUI",
+   "title": "Sui top 10",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXRECORDNFLBEST",
+   "title": "best football record",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXRECORDNFLWORST",
+   "title": "worst football record",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXRELOCATIONCHI",
+   "title": "Chicago Football Relocation",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXRMAPLAYTOGETHER",
+   "title": "Real Madrid Play Together",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXSAUDIPL1H",
+   "title": "1st Half Winner",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXSAUDIPL1HBTTS",
+   "title": "1st Half BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXSAUDIPL1HSPREAD",
+   "title": "1st Half Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXSAUDIPL1HTOTAL",
+   "title": "1st Half Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXSAUDIPLADVANCE",
+   "title": "To Advance",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXSAUDIPLBTTS",
+   "title": "BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXSAUDIPLGAME",
+   "title": "Saudi Pro League Game",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXSAUDIPLSPREAD",
+   "title": "Saudi Pro League Game",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXSAUDIPLTEAMTOTAL",
+   "title": "Team Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXSAUDIPLTOTAL",
+   "title": "Saudi Pro League Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXSB",
+   "title": "Super Bowl",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXSBGUESTS",
+   "title": "Super Bowl guests",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXSBHOST",
+   "title": "Pro Football Championship Host",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXSBOPENINGCEREMONY",
+   "title": "WHAT SONG WILL GREENDAY OPEN UP WITH AT THE SUPER BOWL OPENING CEREMONY",
+   "tags": [
+    "Soccer",
+    "Music"
+   ]
+  },
+  {
+   "ticker": "KXSBSETLISTS",
+   "title": "Super Bowl setlist",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXSCOCUPADVANCE",
+   "title": "To Advance",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXSCOCUPBTTS",
+   "title": "BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXSCOCUPGAME",
+   "title": "Scottish Cup Game",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXSCOCUPSPREAD",
+   "title": "Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXSCOCUPTOTAL",
+   "title": "Point Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXSCOTTISHPREM1H",
+   "title": "1st Half Winner",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXSCOTTISHPREM1HBTTS",
+   "title": "1st Half BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXSCOTTISHPREM1HSPREAD",
+   "title": "1st Half Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXSCOTTISHPREM1HTOTAL",
+   "title": "1st Half Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXSCOTTISHPREMADVANCE",
+   "title": "To Advance",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXSCOTTISHPREMBTTS",
+   "title": "BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXSCOTTISHPREMGAME",
+   "title": "Scottish Premiership Game",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXSCOTTISHPREMSPREAD",
+   "title": "Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXSCOTTISHPREMTEAMTOTAL",
+   "title": "Team Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXSCOTTISHPREMTOTAL",
+   "title": "Point Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXSERIEA",
+   "title": "Serie A ",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXSERIEA1H",
+   "title": "Serie A First Half Winner",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXSERIEA1HBTTS",
+   "title": "1st Half BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXSERIEA1HSPREAD",
+   "title": "1st Half Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXSERIEA1HTOTAL",
+   "title": "1st Half Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXSERIEAADVANCE",
+   "title": "To Advance",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXSERIEABTTS",
+   "title": "Serie A BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXSERIEAFTTS",
+   "title": "First Team to Score",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXSERIEAGAME",
+   "title": "Serie A Game",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXSERIEAMOV",
+   "title": "Method of Victory",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXSERIEARELEGATION",
+   "title": "Serie A Relegation",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXSERIEASCORE",
+   "title": "Correct Score",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXSERIEASPREAD",
+   "title": "Serie A Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXSERIEATEAMTOTAL",
+   "title": "Team Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXSERIEATOP4",
+   "title": "Serie A Top 4 Finishers",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXSERIEATOTAL",
+   "title": "Serie A Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXSERIEBADVANCE",
+   "title": "To Advance",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXSERIEBBTTS",
+   "title": "BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXSERIEBGAME",
+   "title": "Serie B Game",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXSERIEBSPREAD",
+   "title": "Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXSERIEBTOTAL",
+   "title": "Point Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXSLGREECE",
+   "title": "Super League Greece Winner",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXSLGREECEADVANCE",
+   "title": "To Advance",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXSLGREECEBTTS",
+   "title": "BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXSLGREECEGAME",
+   "title": "Super League Greece Game",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXSLGREECESPREAD",
+   "title": "Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXSLGREECETOTAL",
+   "title": "Point Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXSOCCERBTTS",
+   "title": "Soccer Both Team to Score",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXSOCCERINTLRETIRE",
+   "title": "Soccer International Play Retirement",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXSOCCERJOIN",
+   "title": "Soccer Next Team",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXSOCCERPLAYCRON",
+   "title": "Cristiano Ronaldo world cup",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXSOCCERPLAYMESSI",
+   "title": "Messi World Cup",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXSOCCERRETIRE",
+   "title": "Soccer Retire",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXSOCCERSPREAD",
+   "title": "Soccer Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXSOCCERTOTAL",
+   "title": "Soccer Goal Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXSOCCERTRANSFER",
+   "title": "Soccer Transfer",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXSORONDO",
+   "title": "Rajon Rando Summer Olympics Flag Football",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXSTANCOACH",
+   "title": "Stanford Next Coach",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXSTARTCIN",
+   "title": "Joe Burrow Week 12",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXSTARTCLEBROWNS",
+   "title": "Cleveland Browns starter",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXSTARTIND",
+   "title": "iNDIANAPOLIS WEEK 1 QB",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXSTARTINGQBWEEK1",
+   "title": "NFL Starting QB Week 1",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXSTARTNO",
+   "title": "NEW ORLEANS WEEK 1 QB",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXSTARTNOSAINTS",
+   "title": "NEW ORLEANS WEEK 1 QB",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXSTARTNOTREDAME",
+   "title": "NOTREDAME WEEK 1 QB",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXSTARTNYG",
+   "title": "NEW YORK G WEEK 1 QB",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXSTARTNYJ",
+   "title": "new york jets week 1 qb",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXSUPDRAFTPICK",
+   "title": "Will player announce that he will enter Supplemental Draft",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXSUPERBALLONDOR",
+   "title": "Super Ballon d'Or",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXSUPERLIG",
+   "title": "Turkish Super Lig Champion",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXSUPERLIGADVANCE",
+   "title": "To Advance",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXSUPERLIGBTTS",
+   "title": "BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXSUPERLIGGAME",
+   "title": "Turkish Super Lig Game",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXSUPERLIGSPREAD",
+   "title": "Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXSUPERLIGTOTAL",
+   "title": "Point Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXSWISSLEAGUEADVANCE",
+   "title": "To Advance",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXSWISSLEAGUEBTTS",
+   "title": "BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXSWISSLEAGUEGAME",
+   "title": "Swiss Super League Game",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXSWISSLEAGUESPREAD",
+   "title": "Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXSWISSLEAGUETOTAL",
+   "title": "Point Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXTACAPORT1H",
+   "title": "1st Half Winner",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXTACAPORT1HBTTS",
+   "title": "1st Half BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXTACAPORT1HSPREAD",
+   "title": "1st Half Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXTACAPORT1HTOTAL",
+   "title": "1st Half Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXTACAPORTADVANCE",
+   "title": "Taca de Portugal To Advance",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXTACAPORTBTTS",
+   "title": "BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXTACAPORTGAME",
+   "title": "Taca de Portugal Game",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXTACAPORTSPREAD",
+   "title": "Taca de Portugal Game",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXTACAPORTTEAMTOTAL",
+   "title": "Team Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXTACAPORTTOTAL",
+   "title": "Taca de Portgual Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXTEAMSINSB",
+   "title": "Teams in Super Bowl",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXTEAMSINUCL",
+   "title": "Champions League Final Matchup",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXTENCOACH",
+   "title": "Tennessee Next Coach",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXTENNCOACH",
+   "title": "Tennessee Pro Football Team Next Coach",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXTHAIL1",
+   "title": "Thai 1 League",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXTHAIL1ADVANCE",
+   "title": "To Advance",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXTHAIL1BTTS",
+   "title": "BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXTHAIL1GAME",
+   "title": "Thai League 1 Game",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXTHAIL1SPREAD",
+   "title": "Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXTHAIL1TOTAL",
+   "title": "Point Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXTRINITYRODMANNWSL",
+   "title": "Trinity Rodman NWSL",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXTULNCOACH",
+   "title": "Tulane Next Coach",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXTUSHPUSH",
+   "title": "Tush Push ban",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXUABCOACH",
+   "title": "UAB Next Coach",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXUAEPLADVANCE",
+   "title": "To Advance",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUAEPLBTTS",
+   "title": "BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUAEPLGAME",
+   "title": "UAE Pro League",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUAEPLSPREAD",
+   "title": "Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUAEPLTOTAL",
+   "title": "Point Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUCL",
+   "title": "UEFA Champions League",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUCL16",
+   "title": "Champions League round of 16",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUCL16BVBSPO",
+   "title": "Champions League round of 16 - BVB SPO",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUCL16PSGSTB",
+   "title": "Champions League round of 16 - PSG STB",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUCL16PSVJUV",
+   "title": "Champions League round of 16 - PSV JUV",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUCL16RMAMCI",
+   "title": "Champions League round of 16 - RMA MCI",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUCL1H",
+   "title": "Champions League First Hal Winner",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUCL1HBTTS",
+   "title": "UCL Half BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUCL1HSCORE",
+   "title": "1st Half Correct Score",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUCL1HSPREAD",
+   "title": "UCL First Half Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUCL1HTOTAL",
+   "title": "UCL 1st Half Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUCL2H",
+   "title": "2nd Half Winner",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUCL2HBTTS",
+   "title": "2nd Half BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUCL2HSPREAD",
+   "title": "2nd Half Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUCL2HTOTAL",
+   "title": "2nd Half Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUCL8",
+   "title": "Champion's League to Round of 8",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUCLACOACH",
+   "title": "UCLA Next Coach",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXUCLADVANCE",
+   "title": "Champions League Advance",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUCLAST",
+   "title": "UCL Assists",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUCLBOTTOM",
+   "title": "UCL League Phase Bottom of Table",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUCLBTTS",
+   "title": "Champions League BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUCLCORNERS",
+   "title": "UCL Corners",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUCLFINALIST",
+   "title": "UCL Advance to the Finals",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUCLFIRSTGOAL",
+   "title": "UCL First Goalscorer",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUCLFTTS",
+   "title": "First Team to Score",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUCLGAME",
+   "title": "UEFA Champions League Game",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUCLGOAL",
+   "title": "UCL Goalscorer",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUCLMOF",
+   "title": "UCL Method of Finish",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUCLMOV",
+   "title": "UCL Method of Advancing",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUCLRO16",
+   "title": "UCL Advance to Round of 16",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUCLRO4",
+   "title": "UCL Advance to Round of 4",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUCLRO8",
+   "title": "UCL Advance to Round of 8",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUCLROUND",
+   "title": "Champion's League Round",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUCLSAVE",
+   "title": "UCL Goalkeeper Saves",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUCLSCORE",
+   "title": "Correct Score",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUCLSHOT",
+   "title": "UCL Shots",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUCLSOA",
+   "title": "UCL Score or Assist",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUCLSOT",
+   "title": "UCL Shots or Target",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUCLSPREAD",
+   "title": "Champions League Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUCLTCORNERS",
+   "title": "Champions League Team Corners",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUCLTEAMSHOT",
+   "title": "UCL Team Shots",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUCLTEAMSOT",
+   "title": "UCL Team Shots on Target",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUCLTEAMTOTAL",
+   "title": "UCL Team Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUCLTOP",
+   "title": "UCL League Phase Top of Table",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUCLTOP8",
+   "title": "UCL League Phase Top 8 Finishers",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUCLTOTAL",
+   "title": "Champions League Total Goals",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUCLW",
+   "title": "Champions League Women's",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUCLWADVANCE",
+   "title": "To Advance",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUCLWBTTS",
+   "title": "BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUCLWGAME",
+   "title": "Champions League Women's Game",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUCLWSPREAD",
+   "title": "Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUCLWTOTAL",
+   "title": "Point Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUECL",
+   "title": "UEFA Conference League Winner",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUECL1H",
+   "title": "Conference League 1H",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUECL1HBTTS",
+   "title": "1st Half BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUECL1HSPREAD",
+   "title": "1st Half Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUECL1HTOTAL",
+   "title": "1st Half Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUECLADVANCE",
+   "title": "Conference League Advance",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUECLBTTS",
+   "title": "Conference League BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUECLFTTS",
+   "title": "First Team to Score",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUECLGAME",
+   "title": "UEFA Conference League Game",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUECLMOF",
+   "title": "Method of Finish",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUECLMOV",
+   "title": "Method of Victory",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUECLSCORE",
+   "title": "Correct Score",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUECLSPREAD",
+   "title": "Conference League Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUECLTEAMTOTAL",
+   "title": "Team Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUECLTOTAL",
+   "title": "Conference League Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUEFACL",
+   "title": "UEFA Champions League",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUEFACLTOPGOAL",
+   "title": "UEFA CL Top Goal Scorer",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUEFAEURO",
+   "title": "UEFA European Championship",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUEFAGAME",
+   "title": "UEFA Soccer Games",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUEFANL",
+   "title": "UEFA Nations League",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUEFANL1H",
+   "title": "1st Half Winner",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUEFANL1HBTTS",
+   "title": "1st Half BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUEFANL1HSPREAD",
+   "title": "1st Half Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUEFANL1HTOTAL",
+   "title": "1st Half Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUEFANLADVANCE",
+   "title": "To Advance",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUEFANLBTTS",
+   "title": "BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUEFANLFTTS",
+   "title": "First Team to Score",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUEFANLGAME",
+   "title": "UEFA Nations League Game",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUEFANLMOV",
+   "title": "Method of Victory",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUEFANLSCORE",
+   "title": "Correct Score",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUEFANLSPREAD",
+   "title": "Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUEFANLTEAMTOTAL",
+   "title": "Team Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUEFANLTOTAL",
+   "title": "Point Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUEL",
+   "title": "Europa Leauge champion",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUEL16AJAUSG",
+   "title": "Europa League round of 16 - AJA USG",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUEL16BOGTWE",
+   "title": "Europa League round of 16 -  BOG TWE",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUEL16FCSBPAOK",
+   "title": "Europa League round of 16 - FCSB PAOK",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUEL16FTCRSO",
+   "title": "Europa League round of 16 - FTC RSO",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUEL16GALAZA",
+   "title": "Europa League round of 16 - GAL AZA",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUEL16ROMFCP",
+   "title": "Europa League round of 16 - ROM FCP",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUEL16RSCFEN",
+   "title": "Europa League round of 16 - RSC FEN",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUEL16RSOFCM",
+   "title": "Europa League round of 16 - RSO FCM",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUEL16TWEVIK",
+   "title": "Europa League round of 16 - TWE VIK",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUEL16VIKFTC",
+   "title": "Europa League round of 16 - VIK FTC",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUEL1H",
+   "title": "Europa League 1st Half",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUEL1HBTTS",
+   "title": "1st Half BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUEL1HSPREAD",
+   "title": "1st Half Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUEL1HTOTAL",
+   "title": "1st Half Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUELADVANCE",
+   "title": "Europa League Advance",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUELBTTS",
+   "title": "Europa League BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUELFTTS",
+   "title": "First Team to Score",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUELGAME",
+   "title": "UEFA Europa League Game",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUELMOF",
+   "title": "Method of Finish",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUELMOV",
+   "title": "Europa League Method of Victory",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUELSCORE",
+   "title": "Correct Score",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUELSPREAD",
+   "title": "Europa League Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUELTEAMTOTAL",
+   "title": "Team Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUELTOTAL",
+   "title": "Europa League Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUFLCHAMP",
+   "title": "UFL Champion",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXUFLGAME",
+   "title": "UFL Football Game",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXUFLSPREAD",
+   "title": "UFL Spread",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXUFLTOTAL",
+   "title": "UFL Total",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXUFLUSFLCONF",
+   "title": "UFL USFL Conference Champion",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXUFLXFLCONF",
+   "title": "UFL XLF Conference Champion",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXUKCOACH",
+   "title": "Kentucky Next Coach",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXUNTCOACH",
+   "title": "North Texas Next Coach",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXURYPD",
+   "title": "Uruguayan Premier Division",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXURYPDADVANCE",
+   "title": "To Advance",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXURYPDBBTTS",
+   "title": "BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXURYPDBTTS",
+   "title": "BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXURYPDGAME",
+   "title": "Uruguay Primera Division Game",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXURYPDSPREAD",
+   "title": "Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXURYPDTOTAL",
+   "title": "Point Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUSFCOACH",
+   "title": "USF Next Coach",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXUSL",
+   "title": "USL Championship",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUSL1H",
+   "title": "1st Half Winner",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUSL1HBTTS",
+   "title": "1st Half BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUSL1HSPREAD",
+   "title": "1st Half Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUSL1HTOTAL",
+   "title": "1st Half Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUSLADVANCE",
+   "title": "To Advance",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUSLBTTS",
+   "title": "BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUSLCUP1H",
+   "title": "1st Half Winner",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUSLCUP1HBTTS",
+   "title": "1st Half BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUSLCUP1HSPREAD",
+   "title": "1st Half Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUSLCUP1HTOTAL",
+   "title": "1st Half Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUSLCUPADVANCE",
+   "title": "To Advance",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUSLCUPBTTS",
+   "title": "BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUSLCUPGAME",
+   "title": "USL Cup Game",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUSLCUPSPREAD",
+   "title": "Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUSLCUPTEAMTOTAL",
+   "title": "Team Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUSLCUPTOTAL",
+   "title": "Point Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUSLGAME",
+   "title": "USL Championship Game",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUSLSPREAD",
+   "title": "Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUSLTEAMTOTAL",
+   "title": "Team Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUSLTOTAL",
+   "title": "Point Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUSOPENCUP",
+   "title": "US Open Cup Soccer",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUSOPENCUP1H",
+   "title": "1st Half Winner",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUSOPENCUP1HBTTS",
+   "title": "1st Half BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUSOPENCUP1HSPREAD",
+   "title": "1st Half Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUSOPENCUP1HTOTAL",
+   "title": "1st Half Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUSOPENCUPADVANCE",
+   "title": "To Advance",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUSOPENCUPBTTS",
+   "title": "BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUSOPENCUPFTTS",
+   "title": "First Team to Score",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUSOPENCUPGAME",
+   "title": "US Open Cup Game",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUSOPENCUPMOF",
+   "title": "Method of Finish",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUSOPENCUPMOV",
+   "title": "Method of Victory",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUSOPENCUPSCORE",
+   "title": "Correct Score",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUSOPENCUPSPREAD",
+   "title": "Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUSOPENCUPTEAMTOTAL",
+   "title": "Team Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXUSOPENCUPTOTAL",
+   "title": "Point Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXVENFUTVE",
+   "title": "Venezuela Primera Division",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXVENFUTVEADVANCE",
+   "title": "To Advance",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXVENFUTVEBTTS",
+   "title": "BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXVENFUTVEGAME",
+   "title": "Venezuela Liga FUTVE game",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXVENFUTVESPREAD",
+   "title": "Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXVENFUTVETOTAL",
+   "title": "Point Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXVTCOACH",
+   "title": "Virginia Tech Next Coach",
+   "tags": [
+    "Football"
+   ]
+  },
+  {
+   "ticker": "KXWC",
+   "title": "World Cup",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWC1H",
+   "title": "World Cup 1st Half",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWC1HBTTS",
+   "title": "World Cup 1st Half BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWC1HSCORE",
+   "title": "World Cup 1st Half Score",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWC1HSPREAD",
+   "title": "World Cup First Half Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWC1HTOTAL",
+   "title": "World Cup 1st Half Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWC1STTIMEWIN",
+   "title": "World Cup First Time Winner",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWC2H",
+   "title": "World Cup 2nd Half Winner",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWC2HBTTS",
+   "title": "World Cup 2nd Half BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWC2HSPREAD",
+   "title": "World Cup Second Half Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWC2HTOTAL",
+   "title": "World Cup 2nd Half Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWC3RDPLACE",
+   "title": "World Cup 3rd Place Finisher",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWC3RDPLACEQUAL",
+   "title": "World Cup 3rd Place Qualification",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWCADVANCE",
+   "title": "World Cup Advance",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWCAST",
+   "title": "World Cup Assists",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWCAWARD",
+   "title": "World Cup Award",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWCAWARDCOMBO",
+   "title": "World Cup Awards",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWCBESTHOST",
+   "title": "World Cup Best Performing Host Nation",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWCBTTS",
+   "title": "World Cup BTTS",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWCCAREERGOALS",
+   "title": "World Cup Career Goals",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWCCLUBGOALS",
+   "title": "World Cup Club Goals",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWCCONCEDE1ST",
+   "title": "World Cup Concede First",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWCCONGO",
+   "title": "DR Congo World Cup",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWCCONTINENT",
+   "title": "World Cup Continent",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWCCORNERS",
+   "title": "World Cup Corners",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWCEVERYTEAMGOAL",
+   "title": "World Cup Every Team to Score a Goal",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWCFASTESTGOAL",
+   "title": "World Cup Fastest Goal",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWCFIFATOP10",
+   "title": "World Cup FIFA Top 10",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWCFINALMATCHUP",
+   "title": "World Cup Final Matchup",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWCFINISHINGORDER",
+   "title": "World Cup Finishing Order",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWCFIRSTGOAL",
+   "title": "World Cup First Goal",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWCFIRSTSONG",
+   "title": "what will be the first song sung at the world cup halftime",
+   "tags": [
+    "Soccer",
+    "Music"
+   ]
+  },
+  {
+   "ticker": "KXWCFREEKICKGOAL",
+   "title": "World Cup Free Kick Goal",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWCFTTS",
+   "title": "World Cup Team To Score First",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWCFURTHESTADVANCING",
+   "title": "Furthest Advancing Country from World Cup Region",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWCGAME",
+   "title": "World Cup Game",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWCGAMEGOALS",
+   "title": "World Cup Highest Scoring Game",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWCGBOOTGOALS",
+   "title": "World Soccer Cup Golden Boot Total Goals",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWCGOAL",
+   "title": "World Cup Goal",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWCGOALCOMBO",
+   "title": "Player Group Goals",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWCGOALCOUNT",
+   "title": "World Cup Goal Count",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWCGOALEVERYGAME",
+   "title": "World Cup Goal in Every Game",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWCGOALIEGOAL",
+   "title": "Goalie Goal in World Cup",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWCGOALIEPEN",
+   "title": "Goalie Penalty Goal in World Cup",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWCGOALLEADER",
+   "title": "World Cup Goal Leader",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWCGOALRECORD",
+   "title": "World Cup Goal Record",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWCGOALSALLOWED",
+   "title": "World Cup Goals Allowed",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWCGOALSTREAK",
+   "title": "World Soccer Cup Goal Streak",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWCGOLDENBOOTCLEAT",
+   "title": "Golden Boot Cleats",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWCGROUPBOTTOM",
+   "title": "Group Bottom Finisher",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWCGROUPGOALS",
+   "title": "Group Stage Goals",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWCGROUPORDER",
+   "title": "World Cup Group Exact Order",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWCGROUPPTS",
+   "title": "World Cup Group Points",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWCGROUPQUAL",
+   "title": "World Cup Group Qualifiers",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWCGROUPWIN",
+   "title": "World Cup Group Winner",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWCGROUPWINELIM",
+   "title": "World Cup Group Winners to be Eliminated in Round of 32",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWCGROUPWINNER",
+   "title": "World Cup Group to Win",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWCGS3WINS",
+   "title": "World Cup Group Stage Undefeated",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWCGSGOALS",
+   "title": "World Cup Group Stage Goals",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWCGSUNDEFEATED",
+   "title": "World Cup Group Stage Undefeated",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWCHATTRICK",
+   "title": "World Cup Hat Trick",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWCHOST",
+   "title": "World Soccer Cup Host Country",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWCHOSTKO",
+   "title": "World Cup All Host Nations to Reach Knockout Round",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWCHOSTSTAGE",
+   "title": "World Cup Furthest Stage Advanced to by a Host Nation",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWCHOSTWIN",
+   "title": "World Cup Host Nation to Win",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWCIRAN",
+   "title": "Iran World Cup",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWCKOPENALTIES",
+   "title": "World Cup Matches to go to Penalties",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWCLOCATION",
+   "title": "World Cup Game Location",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWCLONGESTPEN",
+   "title": "World Cup Longest Penalty Shootout",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWCMATCHUP",
+   "title": "World Cup Matchup",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWCMBAPPEGOALLEADER",
+   "title": "Mbappe to Break the World Soccer Cup All-Time Goals Record",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWCMESSIMBAPPE",
+   "title": "Goals Messi and Mbappe",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWCMESSIRONALDO",
+   "title": "Goal Contributions Messi and Ronaldo",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWCMOF",
+   "title": "World Cup Method of Finish",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWCMOV",
+   "title": "World Cup Method of Victory",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWCNOEURSA",
+   "title": "World Cup Any Country not in Europe or South America to Win",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWCOLIMPICO",
+   "title": "World Cup Olimpico Goal",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWCPLAY",
+   "title": "World Cup Play in Game",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWCPLAYERGOALS",
+   "title": "World Cup Player Goals",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWCPREPACK",
+   "title": "World Cup Prepack",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWCQUAL",
+   "title": "World Cup Qualifiers",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWCRECORD",
+   "title": "World Cup Record Breaking",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWCREGIONKO",
+   "title": "World Cup Region Teams to Reach Knockout Stage",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWCROUND",
+   "title": "World Cup Reach Round",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWCSAVE",
+   "title": "World Cup Saves",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWCSCORE",
+   "title": "World Cup Correct Score",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWCSCOREET",
+   "title": "Correct Score after Extra Time",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWCSHOT",
+   "title": "World Cup Shots",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWCSOA",
+   "title": "World Cup Score or Assist",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWCSOG",
+   "title": "World Cup Shot on Goal",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWCSPREAD",
+   "title": "World Cup Spread",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWCSQUAD",
+   "title": "World Cup Squad",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWCSTAGE",
+   "title": "World Cup Furthest Stage Advanced",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWCSTAGEOFELIM",
+   "title": "World Cup Stage of Elimination",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWCSTART",
+   "title": "World Cup Starters",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWCTCORNERS",
+   "title": "World Cup Team Corners",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWCTEAM1STGOAL",
+   "title": "World Cup Country First Goal",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWCTEAMFIRSTGOAL",
+   "title": "World Cup Team First Goal",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWCTEAMGOALS",
+   "title": "World Cup Team Goals",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWCTEAMH2H",
+   "title": "World Cup Team Head to Head",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWCTEAMLEADGOAL",
+   "title": "World Cup Team Top Scorer",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWCTEAMS",
+   "title": "World Cup Team Count",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWCTEAMSHOT",
+   "title": "World Cup Team Shots",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWCTEAMSINGAME",
+   "title": "World Cup Teams in Game",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWCTEAMSOG",
+   "title": "World Cup Team Shots on Goal",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWCTEAMTOTAL",
+   "title": "World Cup Team Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWCTEAMTOTALGOALS",
+   "title": "World Cup Tournament Goals",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWCTOTAL",
+   "title": "World Cup Total",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWCTOTALGOAL",
+   "title": "World Cup Total Goals",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWCTTSF",
+   "title": "World Cup Team To Score First",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWCUSAOPPONENT",
+   "title": "World Cup USA Opponent",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWCW",
+   "title": "Women's World Cup",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWCWINGROUP",
+   "title": "World Cup Win Group",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWCWINMARGIN",
+   "title": "World Cup Winning Margin",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWCWINNERTRAIL",
+   "title": "World Cup Winner to Trail in a Match",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWCWOMEN",
+   "title": "World Cup Women",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWINSTREAKMANU",
+   "title": "Man United Win Streak",
+   "tags": [
+    "Soccer"
+   ]
+  },
+  {
+   "ticker": "KXWPMOTY",
+   "title": "Walter Peyton Man of the Year",
+   "tags": [
+    "Football"
+   ]
+  }
+ ]
+}

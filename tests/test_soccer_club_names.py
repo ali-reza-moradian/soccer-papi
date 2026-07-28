@@ -352,3 +352,55 @@ def test_total_series_survives_a_catalog_failure():
             raise RuntimeError("kalshi 503")
 
     assert _total_series_for(_Boom(), ["KXUCLGAME"], ["KXUCLTOTAL"]) == ["KXUCLTOTAL"]
+
+
+# --------------------------------------------------------------------------- #
+# 5. LEAGUE-EXPANSION near-misses (2026-07-28) — three more ways two venues     #
+#    spell the SAME club, each taken from a build log NEAR-MISS line where the  #
+#    right event was found and then rejected on names.                          #
+# --------------------------------------------------------------------------- #
+EXPANSION_PAIRS = [
+    # (kalshi spelling, polymarket spelling, what differs)
+    ("SL Benfica", "Sport Lisboa e Benfica", "Portuguese conjunction 'e'"),
+    ("Gimnasia La Plata", "Gimnasia y Esgrima de La Plata", "Spanish conjunction 'y'"),
+    ("Mendoza", "CA Gimnasia y Esgrima de Mendoza", "conjunction 'y' + club words"),
+    ("O´Higgins", "O'Higgins FC", "ACUTE ACCENT used as an apostrophe"),
+    ("Copenhagen", "FC København", "city exonym + slashed o"),
+    ("Apollon Limassol", "Apóllon Lemesoú", "city exonym Limassol/Lemesos"),
+    ("Sparta Prague", "AC Sparta Praha", "city exonym Prague/Praha"),
+]
+
+
+@pytest.mark.parametrize("kalshi,poly,why", EXPANSION_PAIRS)
+def test_expansion_near_misses_now_match(kalshi, poly, why):
+    assert sn.same_club_with_alias(kalshi, poly), f"{why}: {sn.explain(kalshi, poly)}"
+
+
+def test_conjunction_particles_are_dropped_not_merely_tolerated():
+    """'e'/'y' must leave the significant token set entirely — the single-letter TRUNCATION veto in
+    ``accepts`` is what they were tripping, and tolerating them downstream would not undo that."""
+    assert "e" not in sn.significant("Sport Lisboa e Benfica")
+    assert "y" not in sn.significant("Gimnasia y Esgrima de La Plata")
+    assert sn.significant("Sport Lisboa e Benfica") == ["sport", "lisboa", "benfica"]
+
+
+def test_truncation_veto_still_fires_for_a_real_kalshi_marker():
+    """Dropping conjunctions must NOT weaken the veto that keeps LA Galaxy off LAFC."""
+    assert not sn.same_club_with_alias("Los Angeles G", "Los Angeles F")
+    assert sn.same_club_with_alias("Los Angeles G", "Los Angeles Galaxy")
+
+
+def test_apostrophe_variants_all_fold_to_the_same_name():
+    """U+00B4 is not a combining mark, so NFKD turned it into a SPACE and split the word."""
+    assert sn.fold("O´Higgins") == sn.fold("O'Higgins") == sn.fold("O’Higgins") == "ohiggins"
+    assert sn.tokens("O´Higgins") == ["ohiggins"]
+
+
+def test_expansion_decoys_are_still_refused():
+    """The same build logged genuine non-matches; none of the three fixes may admit them."""
+    for a, b in (("Westerlo", "Chelsea FC"),          # a different fixture entirely
+                 ("Junin", "CA Sarmiento"),           # Kalshi names the CITY, Poly a different club word
+                 ("Rio Cuarto", "AA Estudiantes"),    # ditto — NOT aliased, we refuse to guess
+                 ("Dinamo Zagreb", "Dinamo Bucuresti"),
+                 ("Sporting CP", "Sporting Gijon")):
+        assert not sn.same_club_with_alias(a, b), f"{a!r} must not match {b!r}"

@@ -417,6 +417,11 @@ genz:
   # Families/match_rules (periods, settlement, twin keys) are competition-AGNOSTIC and unchanged. Empty/
   # absent competitions -> the legacy World Cup path (byte-identical). Friendlies caveat: no extra time /
   # odd sub rules — the existing settlement-period parser + guards already handle the divergence.
+  # EVERY poly_slug_prefix below was READ OFF A REAL PAYLOAD on 2026-07-28 — never guessed. The
+  # discovery sweep enumerated all 1,466 soccer-tagged Kalshi series (95 *GAME), found 26 with games
+  # inside the window, and asked Polymarket for each one's actual fixtures; the example slug beside
+  # each line is the live event that fixed its prefix. tests/test_soccer_leagues.py pins both halves
+  # (keyword -> exactly one Kalshi series, prefix -> the captured slug) against committed fixtures.
   soccer:
     competitions:
       - {name: mls,             kalshi_series: AUTO, poly_slug_prefix: mls,           enabled: true}
@@ -425,6 +430,42 @@ genz:
       # rejected 94 of 95 Kalshi friendlies before the club-name matcher was ever consulted.
       - {name: club_friendlies, kalshi_series: AUTO, poly_slug_prefix: clf,            enabled: true}
       - {name: ucl_qualifying,  kalshi_series: AUTO, poly_slug_prefix: ucl,           enabled: true}
+      # --- LEAGUE EXPANSION 2026-07-28 — present on BOTH venues, one game dumped raw per league ---
+      # UEFA: the Europa/Conference qualifiers run alongside the Champions League ones. NOTE the
+      # Conference League's Poly prefix is 'col' (COnference League) — NOT Colombia, which is 'col1'.
+      # startswith(prefix + '-') keeps them disjoint ('col1-...' never matches 'col-').
+      - {name: uefa_europa_league,     kalshi_series: AUTO, poly_slug_prefix: uel,   enabled: true}   # uel-csk1-qar-2026-07-30
+      - {name: uefa_conference_league, kalshi_series: AUTO, poly_slug_prefix: col,   enabled: true}   # col-al-dil-2026-07-28
+      - {name: argentina_primera,      kalshi_series: AUTO, poly_slug_prefix: arg,   enabled: true}   # arg-ros-rac-2026-07-28
+      - {name: brasileirao,            kalshi_series: AUTO, poly_slug_prefix: bra,   enabled: true}   # bra-flu-bah-2026-07-29
+      - {name: brasileirao_b,          kalshi_series: AUTO, poly_slug_prefix: bra2,  enabled: true}   # bra2-fec-bot-2026-07-28
+      - {name: conmebol_sudamericana,  kalshi_series: AUTO, poly_slug_prefix: sud,   enabled: true}   # sud-tig-nac-2026-07-28
+      - {name: liga_mx,                kalshi_series: AUTO, poly_slug_prefix: mex,   enabled: true}   # mex-jua-pum-2026-07-31
+      - {name: nwsl,                   kalshi_series: AUTO, poly_slug_prefix: nwsl,  enabled: true}   # nwsl-bay-got-2026-07-29
+      - {name: ekstraklasa,            kalshi_series: AUTO, poly_slug_prefix: pol,   enabled: true}   # pol-mot-jag-2026-07-31
+      - {name: eliteserien,            kalshi_series: AUTO, poly_slug_prefix: nor,   enabled: true}   # nor-bog-lil-2026-07-31
+      - {name: usl_championship,       kalshi_series: AUTO, poly_slug_prefix: uslc,  enabled: true}   # uslc-lc-bir-2026-07-29
+      - {name: chinese_super_league,   kalshi_series: AUTO, poly_slug_prefix: chi,   enabled: true}   # chi-hen-ygb-2026-07-31
+      - {name: liga_dimayor,           kalshi_series: AUTO, poly_slug_prefix: col1,  enabled: true}   # col1-cab-llf-2026-07-30
+      - {name: croatia_hnl,            kalshi_series: AUTO, poly_slug_prefix: hr1,   enabled: true}   # hr1-din-sla-2026-08-01
+      - {name: peru_liga_1,            kalshi_series: AUTO, poly_slug_prefix: per1,  enabled: true}   # per1-clc-ccu-2026-07-31
+      - {name: scottish_premiership,   kalshi_series: AUTO, poly_slug_prefix: scop,  enabled: true}   # scop-dun-ran-2026-07-31
+      - {name: uruguay_primera,        kalshi_series: AUTO, poly_slug_prefix: uru1,  enabled: true}   # uru1-tor-wan-2026-07-31
+      - {name: czech_first_league,     kalshi_series: AUTO, poly_slug_prefix: cze1,  enabled: true}   # cze1-asp-fcz-2026-07-31
+      # Bolivia: Polymarket DOES run this league ('bol1-tom-abb-2026-06-20', 'bol1-uvi-gua-2026-06-19'
+      # — the same clubs Kalshi lists), but it had posted no fixture overlapping our window at
+      # discovery time. Enabled with the real prefix so it pairs the moment Poly posts one; until
+      # then it reports an honest zero rather than a guess.
+      - {name: bolivia_primera,        kalshi_series: AUTO, poly_slug_prefix: bol1,  enabled: true}   # bol1-tom-abb-2026-06-20
+      # --- KALSHI-ONLY at discovery (checked, genuinely absent on Polymarket) -> deliberately NOT
+      # listed, so they cost no requests and report nothing. Re-check when Poly widens coverage:
+      #   KXAPFDDHGAME    Paraguay APF Division de Honor (6 games) — Poly carries these CLUBS only via
+      #                   Libertadores/Sudamericana ('lib-2ma-cri-...', 'sud-tri-clo-...'), not the
+      #                   domestic league.
+      #   KXASEANGAME     ASEAN (2 games)                — no Poly soccer event for either fixture.
+      #   KXLIGAEXPGAME   Liga Expansion MX (1 game)     — no Poly soccer event.
+      #   KXCANPLGAME     Canadian Premier League (1)    — no Poly soccer event (a fuzzy 'wta-doubles-…'
+      #                   tennis hit was the only thing search returned; correctly rejected on prefix).
       - {name: world_cup,       kalshi_series: [KXWCGAME], poly_slug_prefix: fifwc,   enabled: false}
   # MLB — a SECOND sport, fully isolated (its own tree/snapshot/heartbeat/arbs/papermaker files). Only
   # the keys below differ from the soccer defaults above; everything else (walk_stake_usd, min_edge_pct,
@@ -494,7 +535,7 @@ maker_rt:
   # max_plausible_roi_pct 8% guard). The maker's real edges are ~1%, so 5% is a wide bug-catcher.
   max_plausible_edge_pct: 5.0
   directions: [rest_poly, rest_kalshi]   # LIVE rest directions (both SMOKE-proven); shared caps + one-in-flight span them
-  reserve_per_direction: 2          # of live.max_open_quotes (8), GUARANTEE 2 slots to EACH enabled direction (raised 1 -> 2 with the slot bump; rest_kalshi can't monopolize)
+  reserve_per_direction: 3          # of live.max_open_quotes (12), GUARANTEE 3 slots to EACH enabled direction (raised 2 -> 3 with the 8 -> 12 slot bump; rest_kalshi can't monopolize)
   debounce_ms: 250                  # quote-engine debounce
   expire_before_kickoff_s: 120      # cancel/expire every quote at kickoff - this
   poly_fee_rate: 0.05               # Polymarket sports taker rate (hedge-fee model)
@@ -529,12 +570,20 @@ maker_rt:
   live:
     enabled: true
     arm_file: data/ops/ARM_MAKER
-    quote_usd_max: 20               # rest-leg notional cap (raised from $5 pilot)
-    max_daily_stake_usd: 300        # sum of ALL legs committed today (fills+hedges+unwinds); breach -> halt+Telegram (raised from $100)
-    max_pair_stake_usd: 100         # PER-PAIR cap: rest + worst-case hedge for ONE bet (must scale with quote_usd_max -- a $20 rest leg pairs to far above $25; TBTOR was $1.02 rest + $15.81 hedge)
-    max_open_quotes: 8              # concurrent resting offers (raised 2 -> 8; daily $/fill/loss caps UNCHANGED bound total exposure). Safe now that cancels verify-or-scream + the pre-placement stack guard prevent ghost stacking.
-    max_fills_per_day: 20           # raised 10 -> 20 (2026-07-28): the best session hit 4 fills in 2 min, so 10 is a throughput ceiling well before the $300 daily-stake cap binds. Stake/loss caps are UNCHANGED and remain the real exposure bound.
-    max_daily_loss_usd: 50          # realized-loss auto-halt (raised from $25: 4x-larger bets mean one bad unwind could otherwise halt the day)
+    # CAPS RAISE 2026-07-28 (user directive). The live panel showed slots pinned 8/8 with a 13-minute
+    # wait for a free slot, i.e. SLOT STARVATION was the binding constraint, not edge availability.
+    # Sizes and slots go up together; the two SAFETY limits (max_daily_loss_usd, max_fills_per_day)
+    # are deliberately UNCHANGED, so a bad day still halts at exactly the same realized loss.
+    quote_usd_max: 70               # rest-leg notional cap (20 -> 70)
+    max_daily_stake_usd: 800        # sum of ALL legs committed today (fills+hedges+unwinds); breach -> halt+Telegram (300 -> 800)
+    # PER-PAIR cap: rest + worst-case hedge for ONE bet. MUST scale with quote_usd_max — a $70 rest
+    # leg at a low price implies a hedge far above $100, so leaving this at 100 would have refused
+    # nearly every quote the bigger rest leg is meant to enable (a cheap rest leg's hedge can be 16x
+    # the leg: TBTOR was $1.02 rest + $15.81 hedge). 350 = 70 rest + up to 280 of hedge.
+    max_pair_stake_usd: 350         # (100 -> 350)
+    max_open_quotes: 12             # concurrent resting offers (8 -> 12; the starvation fix). Safe: cancels verify-or-scream + the pre-placement stack guard prevent ghost stacking, and the daily $/fill/loss caps still bound total exposure.
+    max_fills_per_day: 20           # UNCHANGED (raised 10 -> 20 earlier on 2026-07-28)
+    max_daily_loss_usd: 50          # UNCHANGED — the real exposure bound. Bigger bets do NOT get a bigger loss budget.
     hedge_timeout_ms: 3000          # miss/partial after this -> market-unwind the fill + freeze market
     unwind_on_hedge_fail: true
     # WS-INDEPENDENT FILL AUTHORITY. While ANY live order is open we poll its REST order status AND sweep
@@ -557,9 +606,9 @@ maker_rt:
     enabled: true                   # IN-PLAY LIVE ARMED — fully autonomous, rest-poly, under the rails + SHARED caps
     arm_file: data/ops/ARM_MAKER_INPLAY
     quote_usd_max: 5                # match pre-game (sizing is governed by the SHARED caps.quote_usd_max)
-    max_open_quotes: 1              # INFORMATIONAL — the SHARED live.max_open_quotes (2) governs pre+inplay combined
+    max_open_quotes: 1              # INFORMATIONAL — the SHARED live.max_open_quotes (12) governs pre+inplay combined
     max_fills_per_day: 4            # INFORMATIONAL — the SHARED live.max_fills_per_day (20) governs pre+inplay
-    max_daily_loss_usd: 20          # INFORMATIONAL — the SHARED live.max_daily_loss_usd (25) governs pre+inplay
+    max_daily_loss_usd: 20          # INFORMATIONAL — the SHARED live.max_daily_loss_usd (50) governs pre+inplay
     hedge_timeout_ms: 1500          # miss/partial after this -> market-unwind the fill + freeze market
     freeze_cooloff_s: 10            # place only after the node has been unfrozen AND both-books-fresh this long
     hedge_decline_floor: -0.010     # re-verify at fill: if the walked hedge nets below this, decline + unwind

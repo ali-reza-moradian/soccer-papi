@@ -820,10 +820,38 @@ def save_series_map(m: dict) -> None:
 # Per-competition TITLE keywords that uniquely name the game-winner series in the live Kalshi catalog
 # (verified 2026-07: 'Major League Soccer Game'->KXMLSGAME, 'UEFA Champions League Game'->KXUCLGAME,
 # 'Club Friendlies'->KXCLUBFGAME). Kept tight so 'champions league' can't grab AFC/Women's variants.
+#
+# EVERY entry below was proved against the LIVE catalog on 2026-07-28 (1,466 soccer-tagged series,
+# 95 of them *GAME): each keyword set resolves to EXACTLY ONE ticker — see
+# tests/test_soccer_leagues.py, which re-runs that proof against the committed catalog fixture so a
+# Kalshi title change (or a new series that would make a keyword ambiguous) fails the suite instead
+# of silently re-pointing a competition. The full-game TOTAL series is NOT keyword-matched — Kalshi
+# does not repeat the competition name in totals titles — it is derived from the GAME ticker stem and
+# confirmed against the catalog by _total_series_for.
 _COMP_SERIES_KEYWORDS: dict[str, tuple] = {
     "mls": ("major league soccer", "mls"),
     "ucl_qualifying": ("uefa champions league",),
     "club_friendlies": ("club friendlies", "club friendly"),
+    # --- added 2026-07-28: every remaining league live on BOTH venues ---
+    "uefa_europa_league": ("uefa europa league",),
+    "uefa_conference_league": ("uefa conference league",),
+    "argentina_primera": ("argentina primera division",),
+    "brasileirao": ("brasileiro serie a",),
+    "brasileirao_b": ("brasileiro serie b",),
+    "conmebol_sudamericana": ("conmebol sudamericana",),
+    "liga_mx": ("liga mx",),
+    "nwsl": ("nwsl",),
+    "ekstraklasa": ("ekstraklasa",),
+    "eliteserien": ("eliteserien",),
+    "usl_championship": ("usl championship",),
+    "chinese_super_league": ("chinese super league",),
+    "liga_dimayor": ("liga dimayor",),
+    "croatia_hnl": ("croatia hnl",),
+    "peru_liga_1": ("peru liga 1",),
+    "scottish_premiership": ("scottish premiership",),
+    "uruguay_primera": ("uruguay primera division",),
+    "czech_first_league": ("czech first league",),
+    "bolivia_primera": ("bolivia premier division",),
 }
 
 
@@ -923,11 +951,19 @@ def resolve_kalshi_series(comp: Any, kalshi_client: Any, series_map: dict, log: 
 
 
 _SOCCER_VS_RE = re.compile(r"\bvs\.?\b", re.IGNORECASE)
+# Kalshi's NON-WC game-winner titles are '<A> vs <B> Winner?' — the trailing question is part of the
+# TITLE, not of team B's name. Left in place it rides along on the second name and poisons the match:
+# live 2026-07-28 'Montevideo City vs Wanderers Winner?' yielded team B = 'Wanderers Winner?', and
+# because 'wanderers' is a club-GENERIC token it could not be matched back to the clean
+# yes_sub_title 'Wanderers', so the raw fragment won — and Uruguay's only fixture went unpaired
+# against a Polymarket event ('uru1-tor-wan-2026-07-31') that was right there.
+_SOCCER_TITLE_TAIL_RE = re.compile(r"\s*\bwinner\s*\??\s*$", re.IGNORECASE)
 
 
 def _soccer_names_from_title(title: str) -> Optional[tuple[str, str]]:
-    """Generic '(A, B)' from a soccer market title ('Will A win the A vs B match?' or bare 'A vs B')."""
-    t = str(title or "")
+    """Generic '(A, B)' from a soccer market title ('Will A win the A vs B match?', the non-WC
+    '<A> vs <B> Winner?', or a bare 'A vs B')."""
+    t = _SOCCER_TITLE_TAIL_RE.sub("", str(title or ""))
     m = re.search(r"win the (.+?)\s+match\b", t, re.IGNORECASE)
     core = m.group(1) if m else t
     parts = _SOCCER_VS_RE.split(core, maxsplit=1)
@@ -1046,55 +1082,87 @@ def _soccer_team_match(a: str, b: str, aliases: Optional[dict] = None) -> bool:
     return soccer_names.same_club_with_alias(a, b, aliases if aliases is not None else _load_team_aliases())
 
 
+def poly_search_queries(away: str, home: str) -> list[str]:
+    """The /public-search queries to try for one game, IN ORDER: the combined '<away> <home>' first,
+    then EACH team name ALONE.
+
+    Poly's fuzzy search is not an AND over the words we send: for many real fixtures the combined
+    query returns nothing (or unrelated politics/tennis noise) while either team name alone returns
+    the exact event. Measured live 2026-07-28 on 8 games whose combined query found nothing, the
+    per-team retry recovered 6 — including whole leagues that looked absent:
+
+        'SL Benfica St. Gallen'   -> 0 hits   | 'St. Gallen'   -> uel-ben-stg-2026-07-30
+        'Sparta Prague Zlin'      -> 0 hits   | 'Zlin'         -> cze1-asp-fcz-2026-07-31
+        'Banfield Junin'          -> 0 hits   | 'Banfield'     -> arg-ban-cas-2026-07-28
+        'Valerenga HamKam'        -> 0 hits   | 'Valerenga'    -> nor-vif-ham-2026-07-31
+
+    This ONLY widens the candidate pool. Acceptance is unchanged and still demands slug prefix +
+    date-within-1-day + BOTH team names matching, so a wider search cannot admit a wrong game.
+    De-duplicated, so a one-team game costs exactly one query."""
+    a, h = str(away or "").strip(), str(home or "").strip()
+    return list(dict.fromkeys(q for q in (f"{a} {h}".strip(), a, h) if q))
+
+
 def _resolve_competition_poly(game: "Game", poly_client: Any, log: Any = None) -> Optional[dict]:
     """Find the Polymarket base event for a non-WC game via TARGETED /public-search on the two team
     names (Poly's offset pagination caps below the soccer tag's size, so a full tag sweep is not an
     option). Accept an event only when its slug carries the competition's prefix, its slug DATE is
     within ±1, and its two title teams TOKEN-MATCH ours. Sets game.poly_base_slug; None -> Poly-absent
-    (honest one-sided). Verified: MLS games resolve ('mls-<a>-<b>-<date>'); UCL qualifiers do not."""
+    (honest one-sided).
+
+    Queries are tried in the order :func:`poly_search_queries` gives and we STOP at the first
+    accepted event, so a game the combined query already resolves costs exactly one request and
+    behaves exactly as before; only the games that would otherwise be reported Poly-absent pay for
+    the per-team retries."""
     prefix = str(getattr(game, "poly_prefix", "") or "").lower()
     want_dates = {game.date, _shift_date(game.date, -1), _shift_date(game.date, 1)}
-    try:
-        res = poly_client.search(f"{game.away} {game.home}")
-    except Exception as exc:  # noqa: BLE001
-        if log:
-            log.debug("[GENZ][SOCCER] poly search failed for %s: %s", game.game_id, exc)
-        return None
-    events = res.get("events") if isinstance(res, dict) else res
     aliases = _load_team_aliases()
     near_misses: list[str] = []
-    for e in events or []:
-        if not isinstance(e, dict):
+    seen_slugs: set = set()
+    for query in poly_search_queries(game.away, game.home):
+        try:
+            res = poly_client.search(query)
+        except Exception as exc:  # noqa: BLE001
+            if log:
+                log.debug("[GENZ][SOCCER] poly search %r failed for %s: %s", query, game.game_id, exc)
             continue
-        base = _game_base_slug(str(e.get("slug") or ""))
-        if prefix and not base.startswith(prefix + "-"):
-            continue
-        if not re.search(r"\d{4}-\d{2}-\d{2}$", base) or base[-10:] not in want_dates:
-            continue
-        players = _soccer_names_from_title(e.get("title"))
-        if not players:
-            continue
-        pa, pb = players
-        # Try BOTH orientations; the venues do not agree on home/away ordering.
-        for x, y in ((pa, pb), (pb, pa)):
-            if _soccer_team_match(game.away, x, aliases) and _soccer_team_match(game.home, y, aliases):
-                if log:
-                    sa, sh = soccer_names.score(game.away, x), soccer_names.score(game.home, y)
-                    log.info("[GENZ][SOCCER] MATCH %s: %r->%r (score %.2f/strong %d) + %r->%r "
-                             "(score %.2f/strong %d) -> %s", game.game_id, game.away, x,
-                             sa["score"], sa["strong"], game.home, y, sh["score"], sh["strong"], base)
-                # LEARN the pair when the rules alone could not derive it, so the next build is exact.
-                before = dict(aliases)
-                soccer_names.learn(aliases, game.away, x)
-                soccer_names.learn(aliases, game.home, y)
-                if aliases != before:
-                    _save_team_aliases(aliases)
-                game.poly_base_slug = base
-                game.poly_slug_alts = [base]
-                return e
-        # SAME date + competition but the names did not line up: this is the diagnostic that matters.
-        near_misses.append(f"{base}: {soccer_names.explain(game.away, pa)} | "
-                           f"{soccer_names.explain(game.home, pb)}")
+        events = res.get("events") if isinstance(res, dict) else res
+        for e in events or []:
+            if not isinstance(e, dict):
+                continue
+            base = _game_base_slug(str(e.get("slug") or ""))
+            if base in seen_slugs:                     # already judged under an earlier query
+                continue
+            if prefix and not base.startswith(prefix + "-"):
+                continue
+            if not re.search(r"\d{4}-\d{2}-\d{2}$", base) or base[-10:] not in want_dates:
+                continue
+            players = _soccer_names_from_title(e.get("title"))
+            if not players:
+                continue
+            seen_slugs.add(base)
+            pa, pb = players
+            # Try BOTH orientations; the venues do not agree on home/away ordering.
+            for x, y in ((pa, pb), (pb, pa)):
+                if _soccer_team_match(game.away, x, aliases) and _soccer_team_match(game.home, y, aliases):
+                    if log:
+                        sa, sh = soccer_names.score(game.away, x), soccer_names.score(game.home, y)
+                        log.info("[GENZ][SOCCER] MATCH %s via %r: %r->%r (score %.2f/strong %d) + "
+                                 "%r->%r (score %.2f/strong %d) -> %s", game.game_id, query,
+                                 game.away, x, sa["score"], sa["strong"], game.home, y,
+                                 sh["score"], sh["strong"], base)
+                    # LEARN the pair when the rules alone could not derive it, so the next build is exact.
+                    before = dict(aliases)
+                    soccer_names.learn(aliases, game.away, x)
+                    soccer_names.learn(aliases, game.home, y)
+                    if aliases != before:
+                        _save_team_aliases(aliases)
+                    game.poly_base_slug = base
+                    game.poly_slug_alts = [base]
+                    return e
+            # SAME date + competition but the names did not line up: the diagnostic that matters.
+            near_misses.append(f"{base}: {soccer_names.explain(game.away, pa)} | "
+                               f"{soccer_names.explain(game.home, pb)}")
     if log and near_misses:
         log.warning("[GENZ][SOCCER] NEAR-MISS %s (%s vs %s): %d same-date candidate(s) rejected on "
                     "NAMES — %s", game.game_id, game.away, game.home, len(near_misses),

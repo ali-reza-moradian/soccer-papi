@@ -252,14 +252,22 @@ def discover_ufc_extra_markets(kalshi_client: Any, wanted_suffixes: set, *,
     """Every open market in the sibling series (distance/method/rounds), grouped by the SAME date+fragment
     suffix the fight uses (KXUFCMOV-26JUL18DUUSM -> '26JUL18DUUSM'). Only suffixes in ``wanted_suffixes``
     are kept, so we never fetch method/round markets for fights outside the window. A failed series fetch
-    is logged and skipped — the winner path is unaffected (families are purely additive)."""
+    is logged and skipped — the winner path is unaffected (families are purely additive).
+
+    NAME THE ABSENT SIDE. A sibling series Kalshi simply has not opened yet returns zero markets, and
+    the old ``if log and counts`` said NOTHING in that case — so a card carrying only fight_winner was
+    indistinguishable from a broken selector (2026-08-01: all three sibling series were empty
+    EXCHANGE-WIDE while Polymarket did list 'Fight to Go the Distance?'). Every series is now reported
+    as fetched-or-absent, so the log alone answers 'which venue is missing this family?'."""
     by_suffix: dict[str, list] = {}
     counts: dict[str, int] = {}
+    seen_any: dict[str, int] = {}
     for s in series:
         try:
             for m in kalshi_client.iter_markets(series_ticker=s, status="open"):
                 if not isinstance(m, dict):
                     continue
+                seen_any[s] = seen_any.get(s, 0) + 1
                 suf = _suffix_of(m)
                 if suf in wanted_suffixes:
                     by_suffix.setdefault(suf, []).append(m)
@@ -267,9 +275,13 @@ def discover_ufc_extra_markets(kalshi_client: Any, wanted_suffixes: set, *,
         except Exception as exc:  # noqa: BLE001 - a failed sibling fetch must not abort the build
             if log:
                 log.warning("[UFC] %s discovery failed: %s — that family absent this build.", s, exc)
-    if log and counts:
+    if log:
+        absent = [s for s in series if not seen_any.get(s)]
         log.info("[UFC] sibling markets fetched: %s (grouped onto %d fight suffix(es)).",
-                 counts, len(by_suffix))
+                 counts or "none", len(by_suffix))
+        if absent:
+            log.info("[UFC] KALSHI LISTS NO OPEN MARKETS in %s — those families are one-sided on "
+                     "Polymarket this card (venue gap, not a selector failure).", ", ".join(absent))
     return by_suffix
 
 
