@@ -1,10 +1,10 @@
 """The cycle-budget instrumentation: is a detection cycle still finishing inside its interval?
 
-Measured 2026-07-28 after the 19-league expansion: a soccer cycle prices 120 games / 584 two-way nodes,
-which is 584 Kalshi + 584 Polymarket orderbook reads. Both read clients space requests >= 0.5s apart
-(the public read-limit cushion), so each venue has a hard 292s floor however many workers are pricing —
-against a ~340s observed cycle and a config that still claimed a 20s interval. Nothing in the code
-checked, and the panel's fixed 90s SLOW badge could not tell a healthy 6-minute cadence from a dead loop.
+Measured 2026-07-28 after the 19-league expansion: a soccer cycle takes ~340s against a config that
+still claimed a 20s interval. The per-phase split is the point — pricing all 120 games / 584 two-way
+nodes (1,168 orderbook reads) is only ~51s of it; the other ~290s is the snapshot build and papermaker
+pass. Nothing in the code checked, and the panel's fixed 90s SLOW badge could not tell a healthy
+6-minute cadence from a dead loop.
 
 These pin the two things that make that visible: the heartbeat carries the sport's own cadence, and the
 panel derives its thresholds from it instead of one hardcoded number for four sports.
@@ -48,11 +48,11 @@ def test_heartbeat_omits_cadence_when_unknown(tmp_path):
 
 def test_soccer_interval_is_the_measured_cadence_not_the_old_target():
     """20s was a leftover from the 2-league era: every panel read LIVE while the data was 5 cycles old.
-    Whatever this is set to, it must be able to accommodate the ~292s rate-limit floor."""
+    Whatever this is set to, it has to admit the ~340s a cycle actually takes."""
     cfg = gz_config.load_genz_config()
-    assert cfg.interval_seconds >= 292, (
-        f"interval_seconds={cfg.interval_seconds} is below the 292s rate-limit floor for 584 Kalshi "
-        f"reads at 0.5s spacing — the panel would report a healthy loop as SLOW/STALE forever")
+    assert cfg.interval_seconds >= 300, (
+        f"interval_seconds={cfg.interval_seconds} is below the ~340s a measured soccer cycle takes — "
+        f"the panel would report a healthy loop as SLOW/STALE forever")
 
 
 def test_panel_derives_slow_and_stale_from_the_interval():

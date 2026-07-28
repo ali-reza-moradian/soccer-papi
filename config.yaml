@@ -390,20 +390,19 @@ executor:
 # ===========================================================================
 genz:
   lookahead_hours: 48               # discover WC games kicking off within this window
-  # CADENCE — MEASURED 2026-07-28, not a target. After the 19-league expansion a soccer cycle prices
-  # 120 games / 584 two-way nodes = 584 Kalshi + 584 Polymarket orderbook fetches. Both read clients
-  # space their requests >= 0.5s apart (the public read-limit cushion, src/kalshi.py::_throttle), so each
-  # venue has a HARD 292s floor no matter how many workers price concurrently — and the two run in
-  # parallel, giving a ~292s floor against a ~340s observed cycle (5 consecutive production cycles:
-  # 327/354/334/341/342s, process start to "[GENZ] cycle:"). 86% of the cycle is that cushion.
-  # So max_workers is NOT the constraint and per-competition parallelism would not move it: 12 workers
-  # already contend for one throttled client each. The only real lever is min_interval itself, which
-  # trades a 429/ban risk at two venues for speed — a deliberate decision, not a silent tune.
-  # This value is therefore set to the TRUE cadence (~340s cycle + the runner's 20s sleep), which is what
-  # the panel now derives its SLOW/STALE thresholds from. 20 was a leftover from the 2-league era and made
-  # every panel read "LIVE" while the data was five cycles old.
+  # CADENCE — MEASURED 2026-07-28 (per-phase, in the "[GENZ] cycle timing" log line), not a target.
+  # After the 19-league expansion a soccer cycle runs ~340s (5 consecutive production cycles:
+  # 327/354/334/341/342s) against an interval that still said 20 — a leftover from the 2-league era that
+  # made the panel read "LIVE" while the data was five cycles old.
+  # WHERE THE TIME GOES: pricing all 120 games / 584 two-way nodes (584 Kalshi + 584 Polymarket orderbook
+  # fetches, 12 workers, each client spacing requests >=0.5s) is only ~51s — 15%. The other ~290s is the
+  # SNAPSHOT BUILD + PAPERMAKER pass that run after the heartbeat is written. So neither max_workers nor
+  # the rate-limit cushion is the constraint, and per-competition parallelism of PRICING would buy ~nothing.
+  # This value is set to the true cadence (~340s cycle + the runner's 20s sleep) and is what the panel now
+  # derives its SLOW/STALE thresholds from. Lowering it is a papermaker/snapshot optimisation, not a
+  # pricing one — see the per-phase split before touching anything.
   interval_seconds: 360             # price-loop cadence (measured: ~340s cycle + 20s runner sleep)
-  max_workers: 12                   # concurrent REST price fetches per cycle (NOT the bottleneck — see above)
+  max_workers: 12                   # concurrent REST price fetches per cycle (pricing is 15% — not the bottleneck)
   walk_stake_usd: 200               # stake each book is walked to for the realized (walk-to-stake) fill
   min_edge_pct: 1.0                 # implied-cost edge floor (after costs) to flag/attempt an arb
   max_plausible_roi_pct: 8          # arbs above this ROI (or implied_cost<0.5) are pairing/staleness

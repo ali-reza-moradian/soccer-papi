@@ -527,22 +527,28 @@ def run_cycle(tree: dict[str, Any], md: Any, gz_cfg: gz_config.GenzConfig,
     res = CycleResult(games=len(tree.get("games") or {}), nodes_priced=nodes_priced,
                       arbs_found=len(arbs), would_trade=would_trade, nodes_unpriced=nodes_unpriced,
                       markets_skipped=markets_skipped, rows=rows)
+    snap_s = paper_s = 0.0                      # only the write path builds these; keep the log line safe
     if write:
         if rows:
             # Rotate daily: append to <arbs_prefix>_YYYYMMDD.csv (unless a path is given explicitly).
             append_arbs(rows, arbs_path or paths.arbs_path_for(now))
-        # cycle_s here is elapsed-to-this-point (pricing + arb detection = effectively the whole cycle;
-        # only the snapshot/papermaker writes follow). The authoritative total is the timing log line.
+        # cycle_s here is elapsed-to-this-point — pricing + arb detection ONLY. The snapshot build and the
+        # papermaker pass follow and are the BULK of the cycle (measured: ~45s here vs ~340s total), so
+        # this is a floor, not the cycle time. The authoritative total is the timing log line below.
         write_heartbeat(res, now=now, path=heartbeat_path or paths.heartbeat_path,
                         interval_s=float(getattr(gz_cfg, "interval_seconds", 0) or 0) or None,
                         cycle_s=time.monotonic() - _t0)
         # Full-market snapshot: EVERY priced market (arb + non-arb) for the dashboard.
         rows_by_key = {(r.get("game"), r.get("market_key")): r for r in rows}
+        _t_snap = time.monotonic()
         write_snapshot(build_snapshot(tree, markets, priced, rows_by_key, now, sport=paths.sport,
                                       horizon_hours=horizon), snapshot_path or paths.snapshot_path)
+        snap_s = time.monotonic() - _t_snap
         # PAPER MAKER (dry-run): synthetic maker quotes on the PRE-GAME markets — measures the maker-side
         # edge; NEVER places an order or touches the executor.
+        _t_paper = time.monotonic()
         papermaker.run(eligible, priced, md, now, gz_cfg, log, paths=paths)
+        paper_s = time.monotonic() - _t_paper
     if log:
         n_inplay = sum(1 for r in rows if r.get("inplay"))
         log.info("[GENZ] cycle: %d game(s), %d node(s) priced (%d unpriced), %d market(s) skipped, "
@@ -557,8 +563,9 @@ def run_cycle(tree: dict[str, Any], md: Any, gz_cfg: gz_config.GenzConfig,
         interval = float(getattr(gz_cfg, "interval_seconds", 0) or 0)
         over = f" — OVER the {interval:.0f}s interval by {total_s - interval:.0f}s" \
             if interval and total_s > interval else (f" (fits the {interval:.0f}s interval)" if interval else "")
-        log.info("[GENZ] cycle timing: %.1fs total, %.1fs pricing (%.0f%%), %.1f game/s, %.1f node/s%s",
-                 total_s, price_s, (price_s / total_s * 100.0) if total_s > 0 else 0.0,
+        log.info("[GENZ] cycle timing: %.1fs total = %.1fs pricing + %.1fs snapshot + %.1fs papermaker "
+                 "+ %.1fs other · %.1f game/s, %.1f node/s%s",
+                 total_s, price_s, snap_s, paper_s, max(0.0, total_s - price_s - snap_s - paper_s),
                  (res.games / total_s) if total_s > 0 else 0.0,
                  ((res.nodes_priced + res.nodes_unpriced) / total_s) if total_s > 0 else 0.0, over)
     return res
