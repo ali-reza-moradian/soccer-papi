@@ -394,13 +394,16 @@ genz:
   # After the 19-league expansion a soccer cycle runs ~340s (5 consecutive production cycles:
   # 327/354/334/341/342s) against an interval that still said 20 — a leftover from the 2-league era that
   # made the panel read "LIVE" while the data was five cycles old.
-  # WHERE THE TIME GOES: pricing all 120 games / 584 two-way nodes (584 Kalshi + 584 Polymarket orderbook
-  # fetches, 12 workers, each client spacing requests >=0.5s) is only ~51s — 15%. The other ~290s is the
-  # SNAPSHOT BUILD + PAPERMAKER pass that run after the heartbeat is written. So neither max_workers nor
-  # the rate-limit cushion is the constraint, and per-competition parallelism of PRICING would buy ~nothing.
+  # WHERE THE TIME GOES (exact, from the per-phase log line):
+  #   331.2s total = 49.9s pricing + 0.1s snapshot + 281.1s papermaker
+  # Pricing all 120 games / 584 two-way nodes (584 Kalshi + 584 Polymarket orderbook fetches, 12 workers,
+  # each client spacing requests >=0.5s) is 15%. The PAPERMAKER — a dry-run shadow measurement that places
+  # nothing — is 85% of the soccer detection cycle. So neither max_workers nor the rate-limit cushion is
+  # the constraint, and parallelising PRICING per competition would buy almost nothing.
   # This value is set to the true cadence (~340s cycle + the runner's 20s sleep) and is what the panel now
-  # derives its SLOW/STALE thresholds from. Lowering it is a papermaker/snapshot optimisation, not a
-  # pricing one — see the per-phase split before touching anything.
+  # derives its SLOW/STALE thresholds from. If the cadence has to come down, the only thing worth touching
+  # is the papermaker pass — and the honest question there is whether a shadow measurement should cost 85%
+  # of the loop that finds real arbs.
   interval_seconds: 360             # price-loop cadence (measured: ~340s cycle + 20s runner sleep)
   max_workers: 12                   # concurrent REST price fetches per cycle (pricing is 15% — not the bottleneck)
   walk_stake_usd: 200               # stake each book is walked to for the realized (walk-to-stake) fill
