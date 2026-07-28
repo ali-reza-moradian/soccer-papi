@@ -411,6 +411,51 @@ def test_auto_flatten_disabled_by_zero_still_halts(tmp_path):
     assert ex.orphan is not None and ex.caps.halted is True
 
 
+def test_daily_caps_survive_a_hand_edited_file_with_a_bom(tmp_path, monkeypatch):
+    """Repairing the fill counter by hand on 2026-07-28 wrote the file with PowerShell's Out-File, which
+    prepends a BOM. json.load raised at position 0, the failure was swallowed, and the maker started the
+    day at zero and re-persisted it — $329.96 of committed stake gone and the whole daily budget reopened.
+    Reading utf-8-sig costs nothing and accepts both shapes."""
+    monkeypatch.setattr(mrt_config, "OPS_DIR", str(tmp_path))
+    monkeypatch.setattr(mrt_config, "GENZ_DIR", str(tmp_path))
+    from src.genz.maker_rt.state import utcnow
+    payload = ('{"day": "%s", "stake_today": 329.9584, "fills_today": 7, "pnl_today": 1.4586}'
+               % utcnow().strftime("%Y%m%d"))
+    (tmp_path / "maker_rt_daily_caps.json").write_bytes(b"\xef\xbb\xbf" + payload.encode("utf-8"))
+
+    ex, _, _, _ = _cska_executor(tmp_path)
+    assert ex.caps.stake_today == pytest.approx(329.9584)
+    assert ex.caps.fills_today == 7
+    assert ex.caps.pnl_today == pytest.approx(1.4586)
+
+
+def test_unreadable_daily_caps_screams_instead_of_silently_reopening_the_budget(tmp_path, monkeypatch):
+    """A file we cannot read means this process trades with a fresh stake/loss budget. That may be
+    unavoidable; being quiet about it is not."""
+    monkeypatch.setattr(mrt_config, "OPS_DIR", str(tmp_path))
+    monkeypatch.setattr(mrt_config, "GENZ_DIR", str(tmp_path))
+    (tmp_path / "maker_rt_daily_caps.json").write_text("{not json at all", encoding="utf-8")
+
+    class _Log:
+        def __init__(self):
+            self.errors = []
+
+        def info(self, m, *a):
+            pass
+        warning = info
+
+        def error(self, m, *a):
+            self.errors.append(m % a if a else m)
+
+    log = _Log()
+    from src.genz.maker_rt.caps import LiveCaps
+    cfg = mrt_config.MakerRtConfig()
+    cfg.live.enabled = True
+    PregameLiveExecutor(cfg, gate=None, order_client=None, hedger=None, caps=LiveCaps(cfg.live),
+                        poly=_Poly(), telegram=None, state=None, log=log)
+    assert any("COULD NOT RESTORE" in e and "REOPENED" in e for e in log.errors), log.errors
+
+
 def test_auto_flatten_failure_fails_closed(tmp_path):
     """If the sweep cannot PROVE flat, we are still naked — halt exactly as before."""
     ex, kex, res = _orphan_case(tmp_path, cap=120.0, flattens=False)

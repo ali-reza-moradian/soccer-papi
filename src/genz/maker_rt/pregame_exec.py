@@ -295,7 +295,13 @@ class PregameLiveExecutor:
         if not self._daily_caps_path or not os.path.exists(self._daily_caps_path):
             return
         try:
-            with open(self._daily_caps_path, "r", encoding="utf-8") as fh:
+            # utf-8-SIG, not utf-8: a file that has been hand-edited on Windows very likely carries a BOM
+            # (PowerShell's Out-File/`>` write one by default), and json.load chokes on it at position 0.
+            # That is not hypothetical — it happened on 2026-07-28 while repairing the fill counter, and
+            # because the failure was silent the process started the day at zero and re-persisted the
+            # zeros, wiping $329.96 of committed stake and reopening the entire daily budget. utf-8-sig
+            # reads BOM and BOM-less files identically.
+            with open(self._daily_caps_path, "r", encoding="utf-8-sig") as fh:
                 data = json.load(fh)
             today = utcnow().strftime("%Y%m%d")
             if not isinstance(data, dict) or str(data.get("day")) != today:
@@ -308,8 +314,15 @@ class PregameLiveExecutor:
                 self.log.warning("[MAKER_RT][LIVE] restored today's daily caps across restart: "
                                  "stake $%.2f, fills %d, pnl $%.2f (cap $%.0f).", self.caps.stake_today,
                                  self.caps.fills_today, self.caps.pnl_today, self.caps.max_daily_stake_usd)
-        except Exception:  # noqa: BLE001 — a corrupt/locked file must never block startup
-            pass
+        except Exception as exc:  # noqa: BLE001 — a corrupt/locked file must never block startup
+            # ...but it must never be SILENT either. Failing to read this file means the day restarts with
+            # a fully-reopened stake/loss budget, which is the exact failure the file exists to prevent —
+            # the one thing worse than not having the guard is thinking you have it.
+            if self.log:
+                self.log.error("[MAKER_RT][LIVE] COULD NOT RESTORE today's daily caps from %s (%s) — this "
+                               "process starts with stake/fills/pnl at ZERO and will re-persist them, so "
+                               "today's spent budget is REOPENED. Check that file.",
+                               self._daily_caps_path, exc)
 
     def persist_daily_caps(self) -> None:
         """Atomically write today's caps counters (best-effort — never blocks trading)."""
