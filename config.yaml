@@ -390,8 +390,20 @@ executor:
 # ===========================================================================
 genz:
   lookahead_hours: 48               # discover WC games kicking off within this window
-  interval_seconds: 20              # price-loop cycle target (run --loop)
-  max_workers: 12                   # concurrent REST price fetches per cycle
+  # CADENCE — MEASURED 2026-07-28, not a target. After the 19-league expansion a soccer cycle prices
+  # 120 games / 584 two-way nodes = 584 Kalshi + 584 Polymarket orderbook fetches. Both read clients
+  # space their requests >= 0.5s apart (the public read-limit cushion, src/kalshi.py::_throttle), so each
+  # venue has a HARD 292s floor no matter how many workers price concurrently — and the two run in
+  # parallel, giving a ~292s floor against a ~340s observed cycle (5 consecutive production cycles:
+  # 327/354/334/341/342s, process start to "[GENZ] cycle:"). 86% of the cycle is that cushion.
+  # So max_workers is NOT the constraint and per-competition parallelism would not move it: 12 workers
+  # already contend for one throttled client each. The only real lever is min_interval itself, which
+  # trades a 429/ban risk at two venues for speed — a deliberate decision, not a silent tune.
+  # This value is therefore set to the TRUE cadence (~340s cycle + the runner's 20s sleep), which is what
+  # the panel now derives its SLOW/STALE thresholds from. 20 was a leftover from the 2-league era and made
+  # every panel read "LIVE" while the data was five cycles old.
+  interval_seconds: 360             # price-loop cadence (measured: ~340s cycle + 20s runner sleep)
+  max_workers: 12                   # concurrent REST price fetches per cycle (NOT the bottleneck — see above)
   walk_stake_usd: 200               # stake each book is walked to for the realized (walk-to-stake) fill
   min_edge_pct: 1.0                 # implied-cost edge floor (after costs) to flag/attempt an arb
   max_plausible_roi_pct: 8          # arbs above this ROI (or implied_cost<0.5) are pairing/staleness
@@ -597,6 +609,14 @@ maker_rt:
     # the scarce max_open_quotes slots forever. The live digest once showed one order held a slot for 46
     # min, behind best, while 3,042 candidates were refused (slot starvation). 0 disables.
     max_quote_age_s: 900
+    # BOUNDED AUTO-FLATTEN ($). When a fill is left naked and the unwind can't prove us flat, the old
+    # answer was always the same: halt everything and wait for a human. On 2026-07-28 that cost three
+    # hours of quoting over a $25 position that was already one cent from flat. Now: if the WORST CASE
+    # (the whole notional — what it costs if the flatten sells for nothing) is at or under this, sweep it
+    # out at a capped price, prove flat against the venue, book it, and keep trading. Anything larger
+    # still halts exactly as before, and a flatten that can't prove flat halts too (fails closed).
+    # 120 covers a full-size pair (quote_usd_max 70 + slippage) without covering a runaway.
+    auto_flatten_max_usd: 120
   # LIVE-INPLAY — the SECOND, INDEPENDENT live gate, for IN-PLAY markets only (the pre-game `live` gate
   # above is separate and unchanged). BUILT, LOCKED: an in-play live order requires BOTH enabled AND its
   # OWN arm file (data/ops/ARM_MAKER_INPLAY) AND the startup self-check. Rails are STRICTER than pre-game

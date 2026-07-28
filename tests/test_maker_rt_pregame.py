@@ -109,6 +109,13 @@ class _KalshiOC:
     def fills_since(self, min_ts):
         return list(self.fills)
 
+    def resting_orders(self, ticker=None):
+        """OUR live orders on ``ticker`` — what the pre-unwind sweep cancels so self-trade prevention
+        can't kill the sell (2026-07-28 CSKA)."""
+        return [{"order_id": r["oid"], "ticker": r["ticker"], "client_order_id": f"mrt-{r['oid']}"}
+                for r in self.rests
+                if r["oid"] not in self.cancels and (ticker is None or r["ticker"] == ticker)]
+
 
 class _KalshiExec:
     """KalshiExec stand-in for rest_kalshi unwind + portfolio position reads."""

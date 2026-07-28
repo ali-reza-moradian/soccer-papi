@@ -394,6 +394,7 @@ def run_cycle(tree: dict[str, Any], md: Any, gz_cfg: gz_config.GenzConfig,
     detected arb to genz_arbs.csv and writes the heartbeat. Pure w.r.t. injected md/kalshi/poly.
     ``paths`` selects the sport's isolated runtime files (default = the sport on gz_cfg / soccer)."""
     now = now or datetime.now(timezone.utc)
+    _t0 = time.monotonic()
     paths = paths or gz_config.paths_for_sport(getattr(gz_cfg, "sport", "soccer"))
     markets = collect_markets(tree)
 
@@ -420,7 +421,9 @@ def run_cycle(tree: dict[str, Any], md: Any, gz_cfg: gz_config.GenzConfig,
                 log.info("[GENZ] %s %s: phase=%s (kickoff %s) — dropped (beyond in-play horizon).",
                          mkt.game, mkt.market_key, mkt.phase, mkt.kickoff)
 
+    _t_price = time.monotonic()
     priced = price_markets(md, pre_game + inplay, gz_cfg)  # price pre-game AND in-play (collection)
+    price_s = time.monotonic() - _t_price
     nodes_priced = sum(1 for pv in priced.values() if pv.priced)
     nodes_unpriced = sum(1 for pv in priced.values() if not pv.priced)
 
@@ -528,7 +531,11 @@ def run_cycle(tree: dict[str, Any], md: Any, gz_cfg: gz_config.GenzConfig,
         if rows:
             # Rotate daily: append to <arbs_prefix>_YYYYMMDD.csv (unless a path is given explicitly).
             append_arbs(rows, arbs_path or paths.arbs_path_for(now))
-        write_heartbeat(res, now=now, path=heartbeat_path or paths.heartbeat_path)
+        # cycle_s here is elapsed-to-this-point (pricing + arb detection = effectively the whole cycle;
+        # only the snapshot/papermaker writes follow). The authoritative total is the timing log line.
+        write_heartbeat(res, now=now, path=heartbeat_path or paths.heartbeat_path,
+                        interval_s=float(getattr(gz_cfg, "interval_seconds", 0) or 0) or None,
+                        cycle_s=time.monotonic() - _t0)
         # Full-market snapshot: EVERY priced market (arb + non-arb) for the dashboard.
         rows_by_key = {(r.get("game"), r.get("market_key")): r for r in rows}
         write_snapshot(build_snapshot(tree, markets, priced, rows_by_key, now, sport=paths.sport,
@@ -541,6 +548,19 @@ def run_cycle(tree: dict[str, Any], md: Any, gz_cfg: gz_config.GenzConfig,
         log.info("[GENZ] cycle: %d game(s), %d node(s) priced (%d unpriced), %d market(s) skipped, "
                  "%d arb(s) (%d in-play, shadow-only), %d would-trade.", res.games, res.nodes_priced,
                  res.nodes_unpriced, res.markets_skipped, res.arbs_found, n_inplay, res.would_trade)
+        # CYCLE BUDGET. The configured interval is a TARGET, not a measurement — after the 19-league
+        # expansion nothing checked whether a cycle still fits inside it, and it does not: the answer has
+        # to be a number in the log, per cycle, not something inferred from the gaps between lines.
+        # Pricing is the whole cycle (it is one HTTP round-trip per venue leg), so it is reported apart
+        # from everything else.
+        total_s = time.monotonic() - _t0
+        interval = float(getattr(gz_cfg, "interval_seconds", 0) or 0)
+        over = f" — OVER the {interval:.0f}s interval by {total_s - interval:.0f}s" \
+            if interval and total_s > interval else (f" (fits the {interval:.0f}s interval)" if interval else "")
+        log.info("[GENZ] cycle timing: %.1fs total, %.1fs pricing (%.0f%%), %.1f game/s, %.1f node/s%s",
+                 total_s, price_s, (price_s / total_s * 100.0) if total_s > 0 else 0.0,
+                 (res.games / total_s) if total_s > 0 else 0.0,
+                 ((res.nodes_priced + res.nodes_unpriced) / total_s) if total_s > 0 else 0.0, over)
     return res
 
 
@@ -598,15 +618,24 @@ def append_arbs(rows: list[dict[str, Any]], path: Optional[str] = None) -> None:
             w.writerow({k: r.get(k, "") for k in ARBS_COLUMNS})
 
 
-def write_heartbeat(res: CycleResult, *, now: datetime, path: Optional[str] = None) -> None:
+def write_heartbeat(res: CycleResult, *, now: datetime, path: Optional[str] = None,
+                    interval_s: Optional[float] = None, cycle_s: Optional[float] = None) -> None:
+    """Write the per-sport heartbeat. ``interval_s``/``cycle_s`` ride along so the PANEL can judge
+    freshness against THIS sport's own cadence instead of one hardcoded number: a 90s SLOW badge is
+    noise for a 90s-interval sport (ufc) and far too lax for a 20s one (soccer)."""
     path = path or gz_config.HEARTBEAT_PATH
     os.makedirs(os.path.dirname(path), exist_ok=True)
+    payload = {"schema": SNAPSHOT_SCHEMA_VERSION,
+               "last_cycle_utc": now.strftime("%Y-%m-%dT%H:%M:%SZ"), "games": res.games,
+               "nodes_priced": res.nodes_priced, "nodes_unpriced": res.nodes_unpriced,
+               "markets_skipped": res.markets_skipped, "arbs_found": res.arbs_found,
+               "would_trade": res.would_trade}
+    if interval_s is not None:
+        payload["interval_s"] = round(float(interval_s), 1)
+    if cycle_s is not None:
+        payload["cycle_s"] = round(float(cycle_s), 1)
     with open(path, "w", encoding="utf-8") as fh:
-        json.dump({"schema": SNAPSHOT_SCHEMA_VERSION,
-                   "last_cycle_utc": now.strftime("%Y-%m-%dT%H:%M:%SZ"), "games": res.games,
-                   "nodes_priced": res.nodes_priced, "nodes_unpriced": res.nodes_unpriced,
-                   "markets_skipped": res.markets_skipped, "arbs_found": res.arbs_found,
-                   "would_trade": res.would_trade}, fh, indent=2)
+        json.dump(payload, fh, indent=2)
 
 
 # --------------------------------------------------------------------------- #

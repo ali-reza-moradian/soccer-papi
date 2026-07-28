@@ -217,14 +217,26 @@ function resolveGame(cur,games){
 }
 function selectGame(id){curGame=id;writeHash();tabs();filter();table();}   // chip OR game-cell click
 
+// Freshness thresholds for the ACTIVE sport, in seconds. A single hardcoded pair (90/300) was wrong in
+// both directions once the sports diverged: ufc runs a 90s interval, so 91s old was never "slow", while
+// soccer at a 20s interval could be 4 cycles behind and still read LIVE. Derive them from the sport's own
+// cadence, which the engine now publishes on its heartbeat (interval_s). Fall back to the old numbers
+// when an older heartbeat has no interval_s.
+function freshLimits(hb){
+  var iv=(hb&&hb.interval_s!=null)?Number(hb.interval_s):null;
+  if(!iv||!isFinite(iv)||iv<=0)return {slow:90,stale:300};
+  // 2 intervals = one missed cycle (SLOW); 4 = the loop is not running (STALE). Floored at the old
+  // 90/300 so no fast sport becomes LESS sensitive than it is today.
+  return {slow:Math.max(90,Math.round(iv*2)), stale:Math.max(300,Math.round(iv*4))};
+}
 function health(){
   var dot=document.getElementById('dot'),st=document.getElementById('hstate'),age=document.getElementById('hage'),b=document.getElementById('stale');
   var ts=(HB&&HB.last_cycle_utc)?Date.parse(HB.last_cycle_utc):(SNAP&&SNAP.cycle_utc?Date.parse(SNAP.cycle_utc):null);
   if(!ts){dot.className='dot alarm';st.textContent='NO DATA';age.textContent='';return;}
-  var s=Math.max(0,Math.floor((Date.now()-ts)/1000));
+  var s=Math.max(0,Math.floor((Date.now()-ts)/1000)),lim=freshLimits(HB);
   age.textContent=s<60?s+'s ago':s<3600?Math.floor(s/60)+'m ago':Math.floor(s/3600)+'h ago';
-  if(s>300){dot.className='dot alarm';st.textContent='STALE';b.classList.add('show');}
-  else if(s>90){dot.className='dot warn';st.textContent='SLOW';b.classList.remove('show');}
+  if(s>lim.stale){dot.className='dot alarm';st.textContent='STALE';b.classList.add('show');}
+  else if(s>lim.slow){dot.className='dot warn';st.textContent='SLOW';b.classList.remove('show');}
   else{dot.className='dot';st.textContent='LIVE';b.classList.remove('show');}
   // SCHEMA guard: a long-lived loop on old bytecode writes an old/missing schema -> loud OLD-CODE banner.
   document.getElementById('schema').classList.toggle('show', schemaStale(SNAP, HB, EXPECTED_SCHEMA));

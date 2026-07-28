@@ -30,6 +30,12 @@ class BookStore:
         # CONNECTION freshness (separate from book-change): a QUIET book on a HEALTHY socket is FRESH.
         self.conn_activity: dict = {}  # connection ("poly"|"kalshi") -> last ANY-protocol-activity ts
         self.conn_of: dict = {}       # identifier -> its connection
+        # CONFLATION COUNTERS. Book events land on the socket callback and mutate the book in place; the
+        # quote loop reads whatever the book says on its next tick. So many events between two ticks
+        # COLLAPSE into one repricing pass — that is the conflation, and it is structural, not a policy.
+        # Counting it is the only way to know whether the loop is keeping up at the current market count:
+        # events_applied/ticks is how many book updates each pass absorbed.
+        self.events_applied: int = 0
 
     def _touch(self, identifier: str, now_ts: float, mid: Optional[float], conn: str) -> None:
         """Record a book CHANGE: last-change ts + connection activity + (if known) the mid history."""
@@ -97,6 +103,7 @@ class BookStore:
         Records per-token freshness + mid history (for the in-play rails)."""
         prints: list = []
         now_ts = time.time() if now_ts is None else now_ts
+        self.events_applied += len(events or [])
         for e in events or []:
             k, token = e.get("kind"), e.get("token")
             if not token:
@@ -135,6 +142,7 @@ class BookStore:
         per-ticker freshness + mid history (YES-side mid; NO mid is its complement)."""
         prints: list = []
         now_ts = time.time() if now_ts is None else now_ts
+        self.events_applied += len(events or [])
         for e in events or []:
             k = e.get("kind")
             ticker = e.get("ticker")

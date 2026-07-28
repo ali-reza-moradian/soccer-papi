@@ -259,6 +259,75 @@ def kalshi_settle_dollars(v: Any) -> float:
         return 0.0
 
 
+def realized_from_kalshi_fills(fills: list, settlement: Any = None) -> Optional[float]:
+    """VENUE-TRUTH realized dollars for one Kalshi ticker, from our own fills (+ settlement if it settled
+    while we still held it). PURE — the caller does the reads.
+
+    Everything is netted in YES SPACE, off ``book_side`` — the one field on a v2 fill that is
+    unambiguous. ``bid`` is a buy of YES (cash out, ``count x yes_price``), ``ask`` is a sell of YES
+    (cash in), and ``fee_cost`` is always a debit. The ``action``/``outcome_side`` pair is NOT a
+    substitute: the CSKA closing fill reports ``action: sell, outcome_side: no, no_price_dollars:
+    0.7700`` — read literally that says we RECEIVED $88.16 for selling something, when what actually
+    happened is we sold our 114.49 YES for $26.33. ``book_side: ask`` says so plainly. Only when
+    ``book_side`` is absent (a v1-shaped row) do we fall back to the action/outcome pair, which on those
+    rows is coherent.
+
+    This is what makes "book at the actual venue outcome" a computation rather than a guess. The
+    2026-07-28 CSKA leg: bought 114.49 @ $0.22 (fee $0) = -$25.1878, sold 114.49 @ $0.23 with a $1.4194
+    taker fee = +$24.9133, settled for nothing -> -$0.2745. The bot had booked -$25.1878.
+
+    Returns None when there is nothing to compute from."""
+    if not fills:
+        return None
+    total = 0.0
+    seen = False
+    for f in fills:
+        if not isinstance(f, dict):
+            continue
+        cnt = _fp(f, "count")
+        if cnt is None or cnt <= 0:
+            continue
+        book_side = str(f.get("book_side") or "").lower()
+        if book_side in ("bid", "ask"):
+            sold, px = book_side == "ask", f.get("yes_price_dollars")
+        else:                                       # v1 shape: action + the outcome's own price
+            outcome = str(f.get("outcome_side") or f.get("side") or "yes").lower()
+            sold = str(f.get("action") or "buy").lower() == "sell"
+            px = f.get("no_price_dollars") if outcome == "no" else f.get("yes_price_dollars")
+        try:
+            price = float(px)
+        except (TypeError, ValueError):
+            continue
+        total += (cnt * price) if sold else -(cnt * price)
+        try:
+            total -= abs(float(f.get("fee_cost") or 0.0))
+        except (TypeError, ValueError):
+            pass
+        seen = True
+    if not seen:
+        return None
+    if isinstance(settlement, dict):
+        rev = settlement.get("revenue")
+        if rev is None:
+            rev = settlement.get("settled_value") or settlement.get("payout")
+        if rev is not None:
+            total += kalshi_settle_dollars(rev)
+    return round(total, 4)
+
+
+def _fp(row: dict, name: str) -> Optional[float]:
+    """A count field across API generations: bare v1 name or the v2 ``_fp`` fixed-point string."""
+    for cand in (name, f"{name}_fp"):
+        v = row.get(cand)
+        if v in (None, ""):
+            continue
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
 def sane_settled(net: float, cost: float, *, max_net_usd: float = SETTLED_MAX_NET_USD_DEFAULT,
                  roi_ceiling: float = SETTLED_ROI_CEILING, untracked: bool = False) -> tuple[bool, str]:
     """Guard a ``trade_settled`` net/cost before it can touch lifetime pnl. Returns (ok, reason).

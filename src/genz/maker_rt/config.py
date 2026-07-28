@@ -42,6 +42,7 @@ RUNTIME_FILES: dict[str, tuple[str, str]] = {
     "orphan":        ("ops",  "maker_rt_ORPHAN.json"),
     "settled_ledger": ("ops", "maker_rt_settled_ledger.json"),
     "expected_positions": ("ops", "maker_rt_expected_positions.json"),
+    "provisional_marks": ("ops", "maker_rt_provisional_marks.json"),
     "daily_caps":    ("ops",  "maker_rt_daily_caps.json"),
     "stop_all":      ("ops",  "STOP_ALL"),
 }
@@ -155,6 +156,13 @@ class LiveConfig:
     # When position reconciliation finds an ORPHAN, market-sell it to flat before halting (default False =
     # halt + scream only; a human flattens). Even when true, live stays HALTED for manual review.
     auto_flatten: bool = False
+    # BOUNDED AUTO-FLATTEN ($). An orphan whose WORST CASE (its full notional — what it costs if the
+    # flatten sells for nothing) is at or under this is swept out at a capped price, proved flat against
+    # the venue, booked, and quoting RESUMES; a larger one halts for a human exactly as before. Halting
+    # the whole bot is the right answer to unbounded risk and the wrong answer to eleven cents: the
+    # 2026-07-28 CSKA orphan was a $25 position that stopped trading for three hours. A flatten that
+    # cannot prove flat still halts (fails closed). 0 disables it (always halt).
+    auto_flatten_max_usd: float = 120.0
     # WS-INDEPENDENT FILL AUTHORITY: while ANY live order is open, poll its REST order status (and sweep
     # the account fill history) every this many seconds. The private websocket fill channel is only an
     # accelerator — this poll is the detector of record and needs no socket to be connected.
@@ -342,12 +350,13 @@ def load_maker_rt_config(config_path: Optional[str] = None,
     lc = LiveConfig()
     for name in ("enabled", "arm_file", "quote_usd_max", "max_open_quotes", "max_fills_per_day",
                  "max_daily_loss_usd", "max_daily_stake_usd", "max_pair_stake_usd", "hedge_timeout_ms",
-                 "unwind_on_hedge_fail", "auto_flatten", "fill_poll_s", "max_quote_age_s",
-                 "kalshi_feed_grace_s"):
+                 "unwind_on_hedge_fail", "auto_flatten", "auto_flatten_max_usd", "fill_poll_s",
+                 "max_quote_age_s", "kalshi_feed_grace_s"):
         if live_blk.get(name) is not None:
             setattr(lc, name, live_blk[name])
     lc.enabled = bool(lc.enabled)
     lc.auto_flatten = bool(lc.auto_flatten)
+    lc.auto_flatten_max_usd = float(lc.auto_flatten_max_usd)
     lc.max_quote_age_s = float(lc.max_quote_age_s)
     lc.fill_poll_s = float(lc.fill_poll_s)
     lc.quote_usd_max = float(lc.quote_usd_max)

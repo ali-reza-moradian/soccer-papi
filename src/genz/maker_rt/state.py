@@ -344,6 +344,30 @@ class MakerState:
                 if row.get("settled_cost_usd") not in (None, ""):
                     self.settled_cost_lifetime += float(row["settled_cost_usd"])
                 self.persist_tuning()                           # settled truth is precious — persist NOW
+        elif ev == "mark_corrected":
+            # A position we had booked at a WORST-CASE mark has closed/settled and the venue told us what
+            # it really came to. ``realized_pnl_usd`` here is the ACTUAL outcome (the executor applies the
+            # delta to the daily counter separately), so it enters lifetime realized on exactly the same
+            # terms as a trade_settled row. It rides the UNTRACKED bucket because a leg that reached this
+            # path was NAKED — its outcome is luck, not maker edge, and must not flatter the hedged number.
+            if row.get("realized_pnl_usd") not in (None, ""):
+                from .settle import sane_settled
+                ok, why = sane_settled(row["realized_pnl_usd"], row.get("settled_cost_usd", 0.0) or 0.0,
+                                       max_net_usd=self.settled_max_net_usd, untracked=True)
+                if not ok:
+                    if self.log:
+                        crit = getattr(self.log, "critical", None) or self.log.error
+                        crit("[MAKER_RT][SETTLE][CRITICAL] REFUSED mark_corrected %s (%s): net $%s — NOT "
+                             "counted. %s", row.get("game"), why, row.get("realized_pnl_usd"),
+                             row.get("reason"))
+                    self._append_csv({**row, "event": "mark_corrected_refused"}, now)
+                    return
+                self.settled_pnl_lifetime += float(row["realized_pnl_usd"])
+                self.settled_pnl_untracked_lifetime += float(row["realized_pnl_usd"])
+                self.settled_trades += 1
+                if row.get("settled_cost_usd") not in (None, ""):
+                    self.settled_cost_lifetime += float(row["settled_cost_usd"])
+                self.persist_tuning()
         self._append_csv(row, now)
 
     def record_achievable(self, sport: str, phase: str, value: Optional[float], now: datetime,

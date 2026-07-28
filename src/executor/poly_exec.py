@@ -59,6 +59,32 @@ def is_wallet_mismatch_error(msg: str) -> bool:
     return any(h in m for h in _WALLET_MISMATCH_HINTS)
 
 
+def market_buy_amounts(price: float, shares: float) -> tuple[float, float]:
+    """Quantize (limit price, share count) so the CLOB will ACCEPT a market/FAK BUY.
+
+    A BUY's ``makerAmount`` is the USDC leg (price x shares) and the venue caps it at **2 decimals**;
+    ``takerAmount`` (shares) is capped at 4. The order builder does NOT enforce that: on a 0.001-tick
+    market its rounding config allows a 5-decimal maker amount, so the order signs cleanly here and is
+    REJECTED at the venue with ``invalid amounts, the market buy orders maker amount supports a max
+    accuracy of 2 decimals``.
+
+    That is not hypothetical. Kalshi fills FRACTIONAL contract counts (``count_fp: "114.49"``), so the
+    first fractional rest-kalshi fill produced a hedge of 114.49 shares; at ANY price with more than 2
+    significant decimals in the product (0.76 x 114.49 = 87.0124) the hedge 400s, the fill is left naked,
+    and the chain falls through to an unwind. That is the 2026-07-28 17:21Z CSKA/Trnava incident.
+
+    A WHOLE-CENT price times a WHOLE-SHARE count is exactly 2 decimals for every price and every tick
+    size, so that is what we send. The price is rounded UP to the cent because a BUY limit is a CEILING
+    (execution still happens at resting ask prices) — rounding it down would make the order
+    non-marketable on a 0.001-tick book. Callers that pass a gate-approved cap already pass a whole cent
+    (``hedge._apply_cap`` floors to the tick), so the ceiling is a no-op there and the cap is never
+    exceeded. The share count is floored: never buy more hedge than the fill needs. The sub-share
+    remainder is dust below the venue's minimum tradable size — see PregameLiveExecutor's dust rule."""
+    p = math.ceil(max(0.0, float(price)) * 100.0 - 1e-9) / 100.0
+    p = min(0.99, max(0.01, p))
+    return p, float(math.floor(float(shares) + 1e-9))
+
+
 _VALID_TICKS = ("0.1", "0.01", "0.001", "0.0001")
 
 
@@ -283,7 +309,11 @@ class PolyExec:
                          order_type: str = "FAK") -> dict[str, Any]:
         """HEDGE (rest_kalshi direction): market-BUY ``shares`` of ``token_id`` with a MARKETABLE limit that
         sweeps UP to ``best_ask + 2 ticks`` (so a thin/moving book still lifts the size) using FAK. Mirrors
-        place_market_sell for the taker complement leg. Returns the normalized result."""
+        place_market_sell for the taker complement leg. Returns the normalized result.
+
+        Amounts go through :func:`market_buy_amounts` (whole-cent price x whole-share count) because the
+        venue rejects a market BUY whose USDC maker amount carries more than 2 decimals — see that
+        function for the CSKA incident this prevents."""
         tick_size, neg_risk = self._tick_and_negrisk(token_id)
         try:
             tick = float(tick_size)
@@ -294,6 +324,12 @@ class PolyExec:
             asks = book.get("asks") or []
             best_ask = float(asks[0][0]) if asks else None
             price = min(1.0 - tick, round((best_ask + 2 * tick) if best_ask is not None else 1.0 - tick, 6))
+        requested = float(shares)
+        price, shares = market_buy_amounts(price, requested)
+        if shares <= 0:                          # sub-share dust: below the smallest amount the venue
+            return {"status": "none", "shares": 0.0, "usd": 0.0,   # can price at all -> not an order
+                    "avg_price": None, "order_id": None,
+                    "raw": {"skipped": "sub_share_size", "requested_shares": requested}}
         from py_clob_client_v2.clob_types import OrderArgs, OrderType, PartialCreateOrderOptions
         from py_clob_client_v2.order_builder.constants import BUY
 

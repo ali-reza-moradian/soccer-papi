@@ -34,6 +34,8 @@ STATUS = {
     "locked_loss": ("🔴", "ERROR"),
     "settled":   ("🏁", "SETTLED"),
     "unwound":   ("🟠", "UNWOUND"),
+    "auto_flattened": ("🟠", "AUTO-FLATTENED"),
+    "corrected": ("📘", "CORRECTED"),
     "halted":    ("🔴", "STOPPED"),
     "problem":   ("⚠️", "PROBLEM"),
 }
@@ -249,11 +251,12 @@ def format_event(kind: str, *, sport: Any = None, game: Any = None, market_key: 
                  open_now: Any = None, max_open: Any = None, fills_today: Any = None,
                  stake_today: Any = None, stake_cap: Any = None, today_pnl: Any = None,
                  lifetime_pnl: Any = None, cost: Any = None, winner: Any = None,
-                 payout: Any = None, roi_pct: Any = None, **_ignore: Any) -> str:
+                 payout: Any = None, roi_pct: Any = None, was: Any = None, name: Any = None,
+                 sold: Any = None, **_ignore: Any) -> str:
     """Build the plain-language alert for ``kind``. Missing facts degrade gracefully. Never emits a
-    ticker or UUID — pass the human name via side/teams."""
+    ticker or UUID — pass the human name via side/teams (or ``name`` when the caller already has it)."""
     tag = _sport_tag(sport)
-    name = bet_name(sport, game, market_key, side, teams)
+    name = name or bet_name(sport, game, market_key, side, teams)
     match = matchup(sport, game, market_key, side, teams)
 
     if kind == "placed":
@@ -337,6 +340,18 @@ def format_event(kind: str, *, sport: Any = None, game: Any = None, market_key: 
     if kind == "unwound":
         return (f"{_status(kind)} · {tag} · {match} · couldn't hedge in time, sold back\n"
                 f"   Cost me {money(cost)} (that's the safety net working — no open risk)")
+
+    if kind == "auto_flattened":
+        who = str(name or "").strip() or match
+        return (f"{_status(kind)} · {who} · a leftover position was small enough to clear myself, so I "
+                f"closed it instead of stopping\n"
+                f"   Cost me {money(cost)} · I'm holding nothing on it now and I'm still trading")
+
+    if kind == "corrected":
+        who = str(name or "").strip() or match
+        return (f"{_status(kind)} · {who} · I'd assumed the worst while this was open; the exchange has "
+                f"now told me what it really came to\n"
+                f"   Booked {signed_money(was)} → actually {signed_money(pnl)}")
 
     if kind == "halted":
         return f"{_status(kind)} · {str(detail or humanize_reason(reason))}"

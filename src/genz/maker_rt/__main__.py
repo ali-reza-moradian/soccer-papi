@@ -286,9 +286,21 @@ async def _run(cfg: Any, log: Any) -> int:
     last_reconcile = 0.0
     last_settle = 0.0
     feed_up = {"kalshi": False, "poly_user": False}   # DOWN->UP edge detector for the reconnect poll
+    # EVENT-LOOP LAG. Every pass is supposed to take debounce_ms; anything beyond that is time the loop
+    # spent NOT repricing, which at the current market count is the difference between quoting the book
+    # and quoting a memory of it. Measured, not assumed: a max and a p50 per heartbeat, alongside how
+    # many book events each pass absorbed (the conflation ratio). Cheap enough to leave on forever.
+    loop_lags: list = []
+    loop_ticks = 0
+    last_tick_mono = time.monotonic()
+    events_at_last_hb = 0
     try:
         while True:
             now, now_ts = utcnow(), time.time()
+            _mono = time.monotonic()
+            loop_lags.append(max(0.0, (_mono - last_tick_mono) - cfg.debounce_ms / 1000.0) * 1000.0)
+            last_tick_mono = _mono
+            loop_ticks += 1
             # GRACEFUL STOP: the supervisor drops data/ops/STOP_ALL (or a SIGTERM/SIGBREAK arrives) —
             # return 0 so the finally cancels every live order BEFORE the supervisor can force-kill us.
             stop_all = os.path.exists(stop_all_path())
@@ -349,6 +361,15 @@ async def _run(cfg: Any, log: Any) -> int:
                 state.write_summary(mode, sockets, now)
                 if now_ts - last_achv_log >= 60.0:            # a compact per-sport achievable heartbeat
                     last_achv_log = now_ts
+                    if loop_lags:
+                        ordered = sorted(loop_lags)
+                        applied = store.events_applied - events_at_last_hb
+                        events_at_last_hb = store.events_applied
+                        log.info("[MAKER_RT][LOOP] %d ticks, lag p50 %.1fms max %.1fms (target %dms) · "
+                                 "%d book event(s) absorbed = %.1f per tick (conflated) · %d markets",
+                                 loop_ticks, ordered[len(ordered) // 2], ordered[-1], cfg.debounce_ms,
+                                 applied, applied / max(1, loop_ticks), len(universe))
+                        loop_lags, loop_ticks = [], 0
                     if pregame_exec is not None:
                         lv = pregame_exec.snapshot()
                         log.info("[MAKER_RT][LIVE] feed_ok=%s open=%d stake=$%.2f/%.0f fills=%d pnl=$%.2f "
