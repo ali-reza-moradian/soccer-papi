@@ -395,6 +395,8 @@ def digest_line(minutes: float, *, placed: int, cancelled: int, fills: int, open
              f"drop{'s' if int(poly_flaps) != 1 else ''} ({poly_down_s:.0f}s) — REST poll covered fills"
              ) if poly_flaps else ""
     # Reconnect ledger: "tried N, came back M". M < N on a settled digest == a feed that is still down.
+    _human = {"poly_user": "my Polymarket fill feed", "poly_market": "the Polymarket price feed",
+              "kalshi": "the Kalshi feed"}
     rec = ""
     for _name, _pair in sorted((reconnects or {}).items()):
         try:
@@ -403,7 +405,9 @@ def digest_line(minutes: float, *, placed: int, cancelled: int, fills: int, open
             continue
         if _att:
             mark = "✅" if _ok >= _att else "❗"
-            rec += f"\n   {mark} {_name} reconnects: {_ok}/{_att} recovered"
+            label = _human.get(_name, _name)
+            rec += (f"\n   {mark} {label} dropped {_att}x and came back {_ok}x"
+                    + ("" if _ok >= _att else " — still down"))
     decl = (f"\n   🛡️ {int(prehedge_declines)} fill{'s' if int(prehedge_declines) != 1 else ''} refused a "
             f"hedge that would have lost money (unwound instead)") if prehedge_declines else ""
     why = ""

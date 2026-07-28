@@ -378,15 +378,28 @@ def test_digest_reports_reconnects_and_prehedge_declines():
                               reconnects={"poly_user": (3, 3), "kalshi": (1, 0)},
                               prehedge_declines=1)
     assert "Polymarket fill feed was flaky: 3 drops" in line
-    assert "poly_user reconnects: 3/3 recovered" in line
-    assert "❗ kalshi reconnects: 0/1 recovered" in line        # the "still down" signature
+    assert "my Polymarket fill feed dropped 3x and came back 3x" in line
+    assert "❗ the Kalshi feed dropped 1x and came back 0x — still down" in line
     assert "refused a hedge that would have lost money" in line
+    assert "poly_user" not in line and "kalshi:" not in line   # plain language, no internal feed ids
 
 
 def test_digest_omits_the_new_lines_when_nothing_happened():
     line = alerts.digest_line(15, placed=4, cancelled=2, fills=1, open_now=1, max_open=8)
-    assert "reconnects" not in line and "refused a hedge" not in line
+    assert "came back" not in line and "refused a hedge" not in line
     assert "fill feed was flaky" not in line
+
+
+def test_orphan_cleared_telegram_carries_no_ticker(tmp_path):
+    """Plain-language rule: a raw ticker/token never goes to Telegram (log-only)."""
+    ex = _latched(tmp_path)
+    ex._kalshi_position = lambda tk: 0.0
+    sent = []
+    ex._send_telegram = sent.append
+    assert ex.verify_latched_orphan(_DT) is True
+    assert len(sent) == 1
+    assert "KXMLBGAME" not in sent[0] and "PHIMIA" not in sent[0]
+    assert "trading again" in sent[0]
 
 
 # --------------------------------------------------------------------------- #

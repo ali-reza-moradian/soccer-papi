@@ -1798,11 +1798,12 @@ class PregameLiveExecutor:
                 os.replace(self._orphan_path, self._orphan_path + ".verified_flat.bak")
         except Exception:  # noqa: BLE001 — clearing state must never crash the loop
             pass
-        if self.log:
+        if self.log:                                      # ticker/token stays LOG-ONLY (plain-language rule)
             self.log.warning("[MAKER_RT][LIVE] ORPHAN CLEARED (%s) — venue reads FLAT; live RESUMED. %s",
                              why, data)
-        self._send_telegram("🟢 RESUMED · the stray position I was holding for is gone from the exchange "
-                            f"({why}) — I checked and I'm flat, so I'm trading again.")
+        self._send_telegram("🟢 RESUMED · the stray position I was paused over is gone from the exchange "
+                            "(it settled while I was away). I checked with the exchange and I'm holding "
+                            "nothing, so I'm trading again.")
 
     def verify_latched_orphan(self, now: Any = None) -> bool:
         """Re-check a ``pending_verify`` orphan against the venue and CLEAR it when we are provably flat.
