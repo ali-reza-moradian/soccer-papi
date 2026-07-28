@@ -192,6 +192,18 @@ class LiveCaps:
         if self.pnl_today <= -self.max_daily_loss_usd:
             self._halt("max_daily_loss_usd")
 
+    def adjust_pnl(self, usd: float) -> None:
+        """Restate today's pnl WITHOUT counting a fill (signed: + improves the day).
+
+        For a correction to an ALREADY-counted trade — a provisional worst-case mark rebooked at what the
+        venue actually paid. Routing that through ``on_fill`` would spend one of the day's scarce
+        max_fills_per_day slots on a bookkeeping entry: the CSKA restatement pushed fills_today 7 -> 8
+        without a single new order being placed. The daily-loss rail is still re-checked, because a
+        correction can move the day in either direction."""
+        self.pnl_today += float(usd)
+        if self.pnl_today <= -self.max_daily_loss_usd:
+            self._halt("max_daily_loss_usd")
+
     # -- halt ----------------------------------------------------------------
     def _halt(self, reason: str) -> None:
         if self.halted:

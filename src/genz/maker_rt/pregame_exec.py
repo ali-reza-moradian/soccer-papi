@@ -2059,7 +2059,7 @@ class PregameLiveExecutor:
             # carries the provisional, so it gets the DELTA (it converges on truth). The lifetime realized
             # ledger never saw this position at all — a naked leg produces no hedged trade_settled row —
             # so it gets the FULL venue-truth number, in the untracked bucket where naked outcomes belong.
-            self.caps.on_fill(delta)
+            self.caps.adjust_pnl(delta)          # a RESTATEMENT, not a new fill — see LiveCaps.adjust_pnl
             self.persist_daily_caps()
             cost = round(abs(float(m.get("shares") or 0.0) * float(m.get("price") or 0.0)), 4)
             row = {"event": "mark_corrected", "mode": "live", "sport": m.get("sport") or "",

@@ -312,6 +312,7 @@ def test_orphan_booked_at_worst_case_is_rebooked_at_venue_truth(tmp_path):
     assert TICKER in ex._provisional
 
     # A human cashes it out. The venue now knows the answer; nothing else changed.
+    fills_before = ex.caps.fills_today
     ex.kalshi = _TruthKalshi(CSKA_FILLS, CSKA_SETTLEMENT)
     ex.kalshi.positions[TICKER] = 0.0
     rows = ex.settle_provisional_marks(_DT)
@@ -322,6 +323,8 @@ def test_orphan_booked_at_worst_case_is_rebooked_at_venue_truth(tmp_path):
     assert ex.caps.pnl_today == pytest.approx(TRUE_PNL, abs=1e-3)
     assert TICKER not in ex._provisional, "a corrected mark must never be applied twice"
     assert ex.settle_provisional_marks(_DT) == []
+    assert ex.caps.fills_today == fills_before, \
+        "a bookkeeping restatement must not spend one of the day's max_fills_per_day slots"
 
 
 def test_a_still_open_position_keeps_its_conservative_mark(tmp_path):
