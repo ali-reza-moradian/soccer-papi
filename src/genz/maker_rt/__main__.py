@@ -294,6 +294,10 @@ async def _run(cfg: Any, log: Any) -> int:
     loop_ticks = 0
     last_tick_mono = time.monotonic()
     events_at_last_hb = 0
+    # WHAT blocks it, not just how much. Everything below runs SYNCHRONOUS REST on the event loop, so a
+    # slow venue read is loop lag by definition; attributing it is the difference between a number and a
+    # cause. (Quote refresh is pure in-memory book math and never blocks on I/O.)
+    blockers = {"fill_poll": 0.0, "reconcile": 0.0, "settle": 0.0}
     try:
         while True:
             now, now_ts = utcnow(), time.time()
@@ -335,20 +339,28 @@ async def _run(cfg: Any, log: Any) -> int:
                 if (now_ts - last_fill_poll >= pregame_exec.fill_poll_s
                         or pregame_exec.needs_fill_poll()):
                     last_fill_poll = now_ts
+                    # These are SYNCHRONOUS REST calls on the event loop, so their duration IS loop lag —
+                    # attribute it rather than leaving a bare max in the log to be guessed at.
+                    _b = time.monotonic()
                     pregame_exec.poll_open_orders(store, now, now_ts)
                     pregame_exec.poll_kalshi_fills(store, now, now_ts)
+                    blockers["fill_poll"] = max(blockers["fill_poll"], (time.monotonic() - _b) * 1000.0)
                 if now_ts - last_reconcile >= RECONCILE_EVERY_S:     # POSITION RECONCILIATION (orphan guard)
                     last_reconcile = now_ts
+                    _b = time.monotonic()
                     try:
                         pregame_exec.reconcile_positions(now)
                     except Exception as exc:  # noqa: BLE001
                         log.warning("[MAKER_RT][LIVE] reconciliation failed: %s", exc)
+                    blockers["reconcile"] = max(blockers["reconcile"], (time.monotonic() - _b) * 1000.0)
                 if now_ts - last_settle >= SETTLE_EVERY_S:           # SETTLED-P&L (venue-truth realized pnl)
                     last_settle = now_ts
+                    _b = time.monotonic()
                     try:
                         pregame_exec.reconcile_settlements(now)
                     except Exception as exc:  # noqa: BLE001
                         log.warning("[MAKER_RT][LIVE] settlement reconcile failed: %s", exc)
+                    blockers["settle"] = max(blockers["settle"], (time.monotonic() - _b) * 1000.0)
                 state.live = pregame_exec.snapshot(now_ts)
             poly_user_up = bool(pm_user is not None and pm_user.connected)
             sockets = {"poly_market": pm.connected, "poly_user": poly_user_up, "kalshi": ks.connected}
@@ -365,11 +377,17 @@ async def _run(cfg: Any, log: Any) -> int:
                         ordered = sorted(loop_lags)
                         applied = store.events_applied - events_at_last_hb
                         events_at_last_hb = store.events_applied
+                        worst = max(blockers, key=blockers.get)
                         log.info("[MAKER_RT][LOOP] %d ticks, lag p50 %.1fms max %.1fms (target %dms) · "
-                                 "%d book event(s) absorbed = %.1f per tick (conflated) · %d markets",
+                                 "%d book event(s) absorbed = %.1f per tick (conflated) · %d markets · "
+                                 "slowest blocking sync REST: %s %.0fms (fill_poll %.0f/reconcile %.0f/"
+                                 "settle %.0f)",
                                  loop_ticks, ordered[len(ordered) // 2], ordered[-1], cfg.debounce_ms,
-                                 applied, applied / max(1, loop_ticks), len(universe))
+                                 applied, applied / max(1, loop_ticks), len(universe),
+                                 worst, blockers[worst], blockers["fill_poll"], blockers["reconcile"],
+                                 blockers["settle"])
                         loop_lags, loop_ticks = [], 0
+                        blockers = {"fill_poll": 0.0, "reconcile": 0.0, "settle": 0.0}
                     if pregame_exec is not None:
                         lv = pregame_exec.snapshot()
                         log.info("[MAKER_RT][LIVE] feed_ok=%s open=%d stake=$%.2f/%.0f fills=%d pnl=$%.2f "
