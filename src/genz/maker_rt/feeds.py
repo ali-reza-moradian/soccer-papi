@@ -52,8 +52,27 @@ class _BaseFeed:
         self.on_prints = on_prints or (lambda p: None)
         self.on_update = on_update or (lambda: None)
         self.log = log
-        self.connected = False
+        self._connected = False
         self._stop = False
+        # RECONNECT HEALTH (surfaced in the digest): ``attempts`` counts retries scheduled after a socket
+        # failure; ``success`` counts the re-establishments that actually followed one. attempts > success
+        # for any sustained period is the signature of a feed that is down and NOT coming back — the thing
+        # we could not see on 2026-07-28 when poly_user dropped 3x overnight.
+        self.reconnect_attempts = 0
+        self.reconnect_success = 0
+        self._awaiting_reconnect = False
+
+    @property
+    def connected(self) -> bool:
+        return self._connected
+
+    @connected.setter
+    def connected(self, value: Any) -> None:
+        value = bool(value)
+        if value and not self._connected and self._awaiting_reconnect:
+            self.reconnect_success += 1                  # a retry actually came back up
+            self._awaiting_reconnect = False
+        self._connected = value
 
     def stop(self) -> None:
         self._stop = True
@@ -68,8 +87,12 @@ class _BaseFeed:
                 raise
             except Exception as exc:  # noqa: BLE001 - any socket error -> reconnect
                 self.connected = False
+                self.reconnect_attempts += 1
+                self._awaiting_reconnect = True
                 if self.log:
-                    self.log.warning("[MAKER_RT] %s socket error: %s — reconnect in %.0fs", self.name, exc, backoff)
+                    self.log.warning("[MAKER_RT] %s socket error: %s — reconnect in %.0fs "
+                                     "(attempt #%d, %d recovered)", self.name, exc, backoff,
+                                     self.reconnect_attempts, self.reconnect_success)
                 await asyncio.sleep(backoff)
                 backoff = min(backoff * 2, 30.0)
 

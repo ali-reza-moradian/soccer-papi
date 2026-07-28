@@ -12,6 +12,7 @@ open (see LiveGate). One in-flight hedge at a time is enforced by the caller.
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
@@ -48,19 +49,36 @@ def kalshi_actual_fee(res: Any, filled: int, price: float) -> float:
 def mark_hedge(ask_ladder: list, size: float, hedge_venue: str,
                poly_rate: float = 0.05) -> Optional[dict]:
     """Walk ``ask_ladder`` for ``size`` shares (VWAP) and add the venue taker fee. Returns
-    {avg_price, shares, fee, cost, cost_per_share} or None if the book is empty."""
+    {avg_price, shares, fee, cost, cost_per_share, requested, fully_filled} or None if the book is empty.
+
+    ``requested``/``fully_filled`` are part of the CONTRACT, not decoration: a walk that ran out of book
+    returns the VWAP of the SHALLOW part it could fill, which is CHEAPER than the price a real sweep for
+    the full size would pay. A caller that reads ``avg_price``/``cost_per_share`` without checking
+    ``fully_filled`` is pricing a hedge it cannot actually get — that is exactly how the 2026-07-28 01:21Z
+    PHIMIA fill passed the pre-hedge gate on a ~5c partial walk and then swept to 7c for a $1.01/share
+    guaranteed loss."""
     w = bookmath.walk_book(bookmath.valid_asks(ask_ladder), size)
     if w.filled <= 0:
         return None
     fee = hedge_taker_fee(hedge_venue, w.avg_price, poly_rate) * w.filled
     cost = w.cost + fee
     return {"avg_price": w.avg_price, "shares": w.filled, "fee": fee, "cost": cost,
-            "cost_per_share": cost / w.filled}
+            "cost_per_share": cost / w.filled,
+            "requested": float(size), "fully_filled": bool(w.fully_filled)}
 
 
 def locked_net(quote_price: float, hedge_cost_per_share: float) -> float:
     """The locked per-share net edge: 1 − rest fill price − hedge cost/share (fee-inclusive)."""
     return 1.0 - float(quote_price) - float(hedge_cost_per_share)
+
+
+def _apply_cap(limit: float, cap: Optional[float]) -> float:
+    """Clamp a marketable hedge limit to ``cap`` (the price the pre-hedge gate approved), FLOORED to a
+    1c tick so the venue always gets a valid, never-more-permissive price. ``cap`` None -> unchanged."""
+    if cap is None:
+        return float(limit)
+    capped = min(float(limit), float(cap))
+    return max(0.0, math.floor(capped * 100.0) / 100.0)          # floor to tick == never round UP into a loss
 
 
 def hedge_mid(view) -> Optional[float]:
@@ -115,6 +133,7 @@ class LiveHedger:
             return HedgeResult("error", detail={"reason": "no_size_or_client"})
         ticker, k_side = hedge.get("ticker"), hedge.get("side", "yes")
         limit = min(0.99, float(hedge.get("best_ask") or 0.5) + self.buffer)   # marketable limit
+        limit = _apply_cap(limit, hedge.get("max_price"))       # never pay more than the gate approved
         try:
             res = self.kalshi.place_order(ticker, k_side, size, limit,
                                           time_in_force="immediate_or_cancel")
@@ -149,8 +168,12 @@ class LiveHedger:
         if size <= 0 or self.poly is None:
             return HedgeResult("error", detail={"reason": "no_size_or_client"})
         token, best_ask = hedge.get("token"), hedge.get("best_ask")
+        cap = hedge.get("max_price")
         try:
-            res = self.poly.place_market_buy(token, size)
+            # A capped hedge passes its LIMIT explicitly; uncapped (price=None) keeps the client's own
+            # best_ask + 2 ticks marketable default.
+            res = self.poly.place_market_buy(token, size) if cap is None \
+                else self.poly.place_market_buy(token, size, price=_apply_cap(1.0, cap))
         except Exception as exc:  # noqa: BLE001 - a placement error -> treat as a miss
             res = {"status": "error", "shares": 0, "error": str(exc)}
         filled = float((res or {}).get("shares") or 0.0) if isinstance(res, dict) else 0.0

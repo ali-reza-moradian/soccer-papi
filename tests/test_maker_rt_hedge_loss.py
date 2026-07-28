@@ -217,8 +217,11 @@ def test_daily_caps_persist_and_restore_same_day(tmp_path):
     ex2, _ = _exec(tmp_path)
     assert ex2.caps.stake_today == pytest.approx(137.50)
     assert ex2.caps.fills_today == 1 and ex2.caps.pnl_today == pytest.approx(-0.42)
-    # the first midnight-roll of the SAME day must NOT wipe the restored counters.
-    ex2.roll_day(_DT)
+    # The first roll_day tick after a restart must NOT wipe the restored counters. Use the REAL current
+    # UTC day: persistence is keyed on utcnow(), so a hardcoded date here silently turns this into a
+    # cross-day rollover test (which correctly zeroes) the moment the wall clock moves past it.
+    from src.genz.maker_rt.state import utcnow
+    ex2.roll_day(utcnow())
     assert ex2.caps.stake_today == pytest.approx(137.50) and ex2.caps.fills_today == 1
 
 

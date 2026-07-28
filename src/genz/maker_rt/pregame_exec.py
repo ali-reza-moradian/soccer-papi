@@ -26,6 +26,7 @@ Every live action -> events CSV (mode 'live') + Telegram.
 """
 from __future__ import annotations
 
+import math
 import os
 from dataclasses import dataclass
 from typing import Any, Optional
@@ -135,8 +136,10 @@ class PregameLiveExecutor:
         # TELEGRAM digest (routine quote/reprice/cancel collapse; fills/hedges/pause/halt/errors instant).
         self.digest_min = float(getattr(cfg, "telegram_digest_min", 15.0))
         self._digest = {"quotes": 0, "cancels": {}, "fills": 0, "refuse_suppressed": 0, "best_edge": 0.0,
-                        "kalshi_flaps": 0, "kalshi_down_s": 0.0, "binding": {}}
+                        "kalshi_flaps": 0, "kalshi_down_s": 0.0, "poly_flaps": 0, "poly_down_s": 0.0,
+                        "prehedge_declines": 0, "binding": {}}
         self._digest_since = 0.0
+        self._feed_health: dict = {}     # feed name -> (reconnect_attempts, reconnect_success)
         # BINDING-CONSTRAINT diagnostic: which limit set each quote's SIZE (quote_usd_max | pair_cap |
         # hedge_depth | book_depth | venue_minimum). Cumulative counts drive the panel so we can tell
         # whether raising caps would grow fills or whether depth / the pilot minimum is the ceiling — a
@@ -218,10 +221,34 @@ class PregameLiveExecutor:
 
     # -- daily roll ----------------------------------------------------------
     def roll_day(self, now: Any) -> None:
-        """Reset the per-day in-play circuit AND the shared caps' daily counters at UTC midnight."""
+        """Reset the per-day in-play circuit AND the shared caps' daily counters at UTC midnight.
+
+        The reset is announced LOUDLY on purpose. A silent $155.60 -> $0.00 at 00:00Z is indistinguishable
+        in the heartbeat from the persistence bug this system already had once, and on 2026-07-28 it was
+        read as exactly that (it was not — no restart was involved, see ``_load_daily_caps``). Saying
+        'new UTC day' at the moment of the reset is what makes the two cases tellable apart."""
         day = now.strftime("%Y%m%d")
         if day == self._day:
             return
+        # STARTUP PRIMING vs a REAL rollover. ``self._day`` is "" until the first tick, so the first call
+        # is only priming — it must stay silent and, critically, must not look like a reset: on a restart
+        # ``_load_daily_caps`` has already restored today's counters and pinned ``caps._day``, which makes
+        # the caps.roll() below a no-op. Announcing here would invent the very false alarm this is for.
+        priming = not self._day
+        rolling = getattr(self.caps, "_day", None) != day        # True only when caps really will reset
+        prior_stake = float(getattr(self.caps, "stake_today", 0.0) or 0.0)
+        prior_fills = int(getattr(self.caps, "fills_today", 0) or 0)
+        prior_pnl = float(getattr(self.caps, "pnl_today", 0.0) or 0.0)
+        if not priming and rolling:
+            if self.log:
+                self.log.warning("[MAKER_RT][LIVE] NEW UTC DAY %s -> %s — daily counters reset BY SCHEDULE "
+                                 "(not a restart): stake $%.2f -> $0.00, fills %d -> 0, pnl $%.2f -> $0.00.",
+                                 self._day, day, prior_stake, prior_fills, prior_pnl)
+            if prior_stake or prior_fills:
+                self._send_telegram(
+                    f"🕛 New day (00:00 UTC) · yesterday finished with {prior_fills} fills, "
+                    f"{alerts.money(prior_stake)} staked, {alerts.signed_money(prior_pnl)}. "
+                    "Daily counters now start from zero — this is the scheduled reset, not a restart.")
         self._day = day
         self.inplay_fills_today = 0
         self.inplay_pause_until = 0.0
@@ -1134,6 +1161,9 @@ class PregameLiveExecutor:
         if venue == "kalshi":                                # surface WS flakiness in the routine digest
             self._digest["kalshi_flaps"] = self._digest.get("kalshi_flaps", 0) + 1
             self._digest["kalshi_down_s"] = self._digest.get("kalshi_down_s", 0.0) + dur
+        elif venue == "poly_user":                           # our FILL feed — its downtime is the riskiest
+            self._digest["poly_flaps"] = self._digest.get("poly_flaps", 0) + 1
+            self._digest["poly_down_s"] = self._digest.get("poly_down_s", 0.0) + dur
         if self.log:
             self.log.warning("[MAKER_RT] %s flap #%d — down %.1fs (cumulative %.0fs).",
                              venue, self.flaps[venue], dur, self.flap_secs[venue])
@@ -1244,16 +1274,30 @@ class PregameLiveExecutor:
         # DECLINE (same code path, both directions): the walked hedge can't lock a net above the decline
         # floor, OR the walked pair already costs >= $1.00/share (a guaranteed loss before fees), OR there
         # is no readable hedge book. Do NOT leg in — unwind the WHOLE rest fill (verified) + log hedge_declined.
-        if self._prehedge_declines(locked, fill_price, hedge_px_est):
+        decline = self._prehedge_decline_reason(locked, fill_price, hedge_px_est,
+                                                marked_shares=(re_mark or {}).get("shares"),
+                                                requested_shares=matched)
+        if decline:
+            if self.log:
+                walked = float((re_mark or {}).get("shares") or 0.0)
+                self.log.error("[MAKER_RT][LIVE] PRE-HEDGE DECLINE (%s) %s: rest %.4f x%.2f, walked hedge "
+                               "%s for %.2f/%.2f sh, locked_net %s — NOT hedging; unwinding the rest fill.",
+                               decline, self._name_for(lo), fill_price, matched,
+                               ("%.4f" % hedge_px_est) if hedge_px_est is not None else "n/a",
+                               walked, matched, ("%.4f" % locked) if locked is not None else "n/a")
+            self._digest["prehedge_declines"] = self._digest.get("prehedge_declines", 0) + 1
             return self._unwind_and_record(lo, matched, fill_price, locked, "hedge_declined", now)
-        # FIRE the hedge on the COMPLEMENT venue (rest_poly -> Kalshi IOC; rest_kalshi -> Poly FAK).
+        # FIRE the hedge on the COMPLEMENT venue (rest_poly -> Kalshi IOC; rest_kalshi -> Poly FAK), with an
+        # EXPLICIT price cap so the executed hedge can never be worse than the one the gate just approved.
+        cap = self._hedge_price_cap(fill_price, hedge_venue, lo.poly_rate)
         if hedge_venue == "polymarket":
             res = self.hedger.hedge_poly({"price": fill_price, "size": matched},
-                                         {"token": hl.get("token"), "best_ask": getattr(hv, "best_ask", None)})
+                                         {"token": hl.get("token"), "best_ask": getattr(hv, "best_ask", None),
+                                          "max_price": cap})
         else:
             res = self.hedger.hedge({"token_id": lo.token, "side": "BUY", "price": fill_price, "size": matched},
                                     {"ticker": hl.get("ticker"), "side": hl.get("side", "yes"),
-                                     "best_ask": getattr(hv, "best_ask", None)})
+                                     "best_ask": getattr(hv, "best_ask", None), "max_price": cap})
         status = getattr(res, "status", "error")
         hedged = float(getattr(res, "hedged_shares", 0.0) or 0.0)
         hedge_avg = getattr(res, "hedge_avg_price", None)
@@ -1300,21 +1344,69 @@ class PregameLiveExecutor:
                                        hedge_oid=hedge_oid)
 
     @staticmethod
-    def _prehedge_declines(locked_net_est: Optional[float], fill_price: float,
-                           hedge_price_est: Optional[float]) -> bool:
-        """THE shared pre-hedge gate (identical for BOTH directions). Return True — DO NOT HEDGE, unwind
-        the rest fill instead — when the pair cannot profitably lock:
-          * the walked achievable locked net is below ``HEDGE_DECLINE_FLOOR`` (or unreadable/None), OR
-          * the walked pair (rest fill price + hedge avg, per share) already costs >= $1.00 — a guaranteed
-            loss BEFORE fees, so no fee model can rescue it.
-        Pure so it is unit-tested directly against the (a)/(b) production numbers."""
+    def _prehedge_decline_reason(locked_net_est: Optional[float], fill_price: float,
+                                 hedge_price_est: Optional[float],
+                                 marked_shares: Optional[float] = None,
+                                 requested_shares: Optional[float] = None) -> Optional[str]:
+        """THE shared pre-hedge gate (identical for BOTH directions), as a REASON. Returns None to hedge,
+        else the reason to DECLINE (do not hedge; unwind the rest fill instead):
+          * ``no_hedge_book``   — nothing readable, so no profit can be proven;
+          * ``hedge_too_thin``  — the walk did NOT cover the whole fill. A shallow walk's VWAP is the price
+            of the few shares that WERE there, not of the sweep we are about to send, so it systematically
+            UNDER-states the real cost. Declining on short depth is what the 01:21Z PHIMIA loss needed:
+            the gate priced ~5c off a partial ladder and the real FAK paid 7c ($1.01/share, -1.35%);
+          * ``below_floor``     — the achievable locked net is under ``HEDGE_DECLINE_FLOOR``;
+          * ``dollar_pair``     — rest fill + hedge already costs >= $1.00/share, a guaranteed loss BEFORE
+            fees, so no fee model can rescue it.
+        Pure so it is unit-tested directly against the production numbers."""
         if locked_net_est is None:
-            return True                                          # no readable hedge -> can't prove a profit
+            return "no_hedge_book"                               # no readable hedge -> can't prove a profit
+        # DEPTH COVERAGE FIRST: an optimistic partial walk must never be read as a full-size hedge price.
+        if requested_shares is not None and marked_shares is not None:
+            if float(marked_shares) < float(requested_shares) - HEDGE_SHARE_TOL:
+                return "hedge_too_thin"
         if float(locked_net_est) < HEDGE_DECLINE_FLOOR:
-            return True
+            return "below_floor"
         if hedge_price_est is not None and (float(fill_price) + float(hedge_price_est)) >= 1.0 - 1e-9:
-            return True                                          # rest + hedge >= $1/share == guaranteed loss
-        return False
+            return "dollar_pair"                                 # rest + hedge >= $1/share == guaranteed loss
+        return None
+
+    @staticmethod
+    def _prehedge_declines(locked_net_est: Optional[float], fill_price: float,
+                           hedge_price_est: Optional[float],
+                           marked_shares: Optional[float] = None,
+                           requested_shares: Optional[float] = None) -> bool:
+        """Boolean form of ``_prehedge_decline_reason`` (True == DO NOT HEDGE)."""
+        return PregameLiveExecutor._prehedge_decline_reason(
+            locked_net_est, fill_price, hedge_price_est, marked_shares, requested_shares) is not None
+
+    @staticmethod
+    def _hedge_price_cap(fill_price: float, hedge_venue: str, poly_rate: float = 0.05) -> float:
+        """The HIGHEST hedge price whose fee-inclusive locked net still meets ``HEDGE_DECLINE_FLOOR`` —
+        sent to the venue as the hedge order's LIMIT.
+
+        Without this the hedger picks its own limit from a book it re-fetches at hedge time
+        (``best_ask + 2 ticks`` on Poly), so a book that moved between the gate and the order could be
+        swept at ANY price — the gate approved ~5c and the sweep paid 7c. Capping means a moved book fills
+        less (or nothing) and falls through to the existing VERIFIED unwind, instead of locking a loss.
+
+        Solves ``1 - fill - p - fee(p) = floor`` EXACTLY for each venue's taker-fee curve, because an
+        approximation here is not free: rounding the cap down by even one tick turns a hedge we want into
+        a miss + unwind, and rounding it up re-opens the loss this cap exists to prevent.
+          * Kalshi  fee = 0.07*p*(1-p)      -> 0.07p² - 1.07p + room = 0 (take the low root)
+          * Poly    fee = rate*min(p, 1-p)  -> two branches, joined at p = 0.5"""
+        room = 1.0 - float(fill_price) - HEDGE_DECLINE_FLOOR
+        if room <= 0.0:
+            return 0.0
+        if str(hedge_venue).lower() in ("polymarket", "poly"):
+            rate = float(poly_rate)
+            cap = room / (1.0 + rate)                            # cheap side: fee = rate*p
+            if cap > 0.5:                                        # dear side: fee = rate*(1-p)
+                cap = (room - rate) / (1.0 - rate) if rate < 1.0 else room
+        else:
+            disc = 1.07 ** 2 - 4.0 * 0.07 * room
+            cap = room if disc < 0 else (1.07 - math.sqrt(disc)) / (2.0 * 0.07)
+        return max(0.0, min(0.99, cap))
 
     @staticmethod
     def _pair_is_profit(fill_price: float, hedge_avg: Any, locked: Optional[float]) -> bool:
@@ -1674,7 +1766,8 @@ class PregameLiveExecutor:
 
     def _load_orphan(self) -> None:
         """Re-latch a persisted orphan at startup: an unresolved naked position must NOT be cleared by a
-        restart. Cleared only by deleting the file after a manual flatten."""
+        restart. The latch is marked ``pending_verify`` so ``verify_latched_orphan`` can retire it against
+        VENUE TRUTH — see that method for why an un-retirable latch is an availability bug."""
         import json
         if not self._orphan_path or not os.path.exists(self._orphan_path):
             return
@@ -1682,14 +1775,76 @@ class PregameLiveExecutor:
             with open(self._orphan_path, "r", encoding="utf-8") as fh:
                 data = json.load(fh)
             if isinstance(data, dict) and data:
+                data["pending_verify"] = True     # re-check against the venue before trusting it forever
                 self.orphan = data
                 self.caps.halted = True
                 self.caps.halt_reason = "orphan_position"
                 if self.log:
-                    self.log.error("[MAKER_RT][LIVE] STARTUP: persisted ORPHAN re-latched — live HALTED. %s",
-                                   data)
+                    self.log.error("[MAKER_RT][LIVE] STARTUP: persisted ORPHAN re-latched — live HALTED "
+                                   "(pending venue verification). %s", data)
         except Exception:  # noqa: BLE001
             pass
+
+    def _clear_orphan(self, why: str, now: Any = None) -> None:
+        """Retire a latched orphan that VENUE TRUTH says is not a position, and resume live quoting.
+        The file is renamed (never silently deleted) so the incident stays auditable."""
+        data = self.orphan
+        self.orphan = None
+        if self.caps.halt_reason == "orphan_position":
+            self.caps.halted = False
+            self.caps.halt_reason = None
+        try:
+            if self._orphan_path and os.path.exists(self._orphan_path):
+                os.replace(self._orphan_path, self._orphan_path + ".verified_flat.bak")
+        except Exception:  # noqa: BLE001 — clearing state must never crash the loop
+            pass
+        if self.log:
+            self.log.warning("[MAKER_RT][LIVE] ORPHAN CLEARED (%s) — venue reads FLAT; live RESUMED. %s",
+                             why, data)
+        self._send_telegram("🟢 RESUMED · the stray position I was holding for is gone from the exchange "
+                            f"({why}) — I checked and I'm flat, so I'm trading again.")
+
+    def verify_latched_orphan(self, now: Any = None) -> bool:
+        """Re-check a ``pending_verify`` orphan against the venue and CLEAR it when we are provably flat.
+
+        WHY THIS EXISTS: an orphan latch survives restarts on purpose, but nothing used to retire it, and
+        ``reconcile_positions`` returns early whenever ``self.orphan`` is set — so a latch could never be
+        re-examined by the process. On 2026-07-28 the PHIMIA leg SETTLED at 01:56Z (+$8.16, fully hedged);
+        the 02:06Z restart re-latched the orphan written at 01:21Z mid-chain and the bot stayed halted and
+        idle for ~11h with healthy feeds. A settled/flat instrument is NOT a naked position.
+
+        FAILS CLOSED: an unreadable position (network/auth error) leaves the halt in place. Returns True
+        when the orphan was cleared."""
+        o = self.orphan
+        if not isinstance(o, dict) or not o.get("pending_verify"):
+            return False
+        inst = o.get("token")
+        if not inst:
+            return False
+        held = self._instrument_shares(inst)
+        if held is None:                                  # unreadable -> keep the halt (fail closed)
+            return False
+        if held > HEDGE_SHARE_TOL:                        # genuinely still holding -> confirmed orphan
+            o.pop("pending_verify", None)
+            if self.log:
+                self.log.error("[MAKER_RT][LIVE] latched ORPHAN CONFIRMED by venue: %s holds %.2f sh — "
+                               "live stays HALTED.", inst, held)
+            return False
+        self._clear_orphan(f"{inst} reads flat ({held:.2f} sh)", now)
+        return True
+
+    def _instrument_shares(self, inst: str) -> Optional[float]:
+        """Shares actually held for an instrument, from whichever venue owns it. A Kalshi ticker is
+        alphanumeric/dashed; a Poly token id is a long decimal string. Returns None if unreadable."""
+        is_poly = str(inst).isdigit()
+        try:
+            if is_poly:
+                bal = self.poly.conditional_balance(inst)
+                return None if bal is None else abs(float(bal))
+            pos = self._kalshi_position(inst)
+            return None if pos is None else abs(float(pos))
+        except Exception:  # noqa: BLE001 — unreadable -> caller keeps the halt
+            return None
 
     def _load_traded_tokens(self) -> None:
         """Reload the persisted watch-set at startup (best-effort; a corrupt/locked file never blocks
@@ -2002,7 +2157,11 @@ class PregameLiveExecutor:
         sweep would flag EVERY one of those as an orphan and instantly halt live quoting on a false
         positive. Only the tokens this maker actually placed on can be a maker orphan."""
         if self.orphan is not None:
-            return self.orphan
+            # A latch carried in from a previous process gets ONE venue re-check per cycle; if the
+            # instrument reads flat (e.g. it settled while we were down) the halt is retired and this
+            # reconcile continues normally. A confirmed or unreadable latch still short-circuits.
+            if not self.verify_latched_orphan(now):
+                return self.orphan
         open_toks = {lo.token for lo in self.open_orders.values()}
         suspects: dict = {}
         flat_toks: list = []
@@ -2253,7 +2412,8 @@ class PregameLiveExecutor:
         d = self._digest
         cancelled = sum(d["cancels"].values())
         kflaps = int(d.get("kalshi_flaps", 0) or 0)
-        if d["quotes"] or cancelled or d["fills"] or kflaps:
+        pflaps = int(d.get("poly_flaps", 0) or 0)
+        if d["quotes"] or cancelled or d["fills"] or kflaps or pflaps:
             best = d.get("best_edge", 0.0)
             binding = d.get("binding") or {}
             top_binding = max(binding.items(), key=lambda kv: kv[1])[0] if binding else None
@@ -2267,6 +2427,9 @@ class PregameLiveExecutor:
                                       max_open=self.caps.max_open_quotes,
                                       best_edge_pct=(best if best else None),
                                       kalshi_flaps=kflaps, kalshi_down_s=float(d.get("kalshi_down_s", 0.0)),
+                                      poly_flaps=pflaps, poly_down_s=float(d.get("poly_down_s", 0.0)),
+                                      reconnects=dict(self._feed_health),
+                                      prehedge_declines=int(d.get("prehedge_declines", 0) or 0),
                                       binding=top_binding, stake_today=round(self.caps.stake_today, 2),
                                       stake_cap=self.caps.max_daily_stake_usd,
                                       today_pnl=round(self.caps.pnl_today, 4), why_no_fills=why)
@@ -2278,7 +2441,16 @@ class PregameLiveExecutor:
 
     def _reset_digest(self) -> None:
         self._digest = {"quotes": 0, "cancels": {}, "fills": 0, "refuse_suppressed": 0, "best_edge": 0.0,
-                        "kalshi_flaps": 0, "kalshi_down_s": 0.0, "binding": {}}
+                        "kalshi_flaps": 0, "kalshi_down_s": 0.0, "poly_flaps": 0, "poly_down_s": 0.0,
+                        "prehedge_declines": 0, "binding": {}}
+
+    def note_feed_health(self, feeds: dict) -> None:
+        """Record live reconnect attempt/success totals from the feed objects for the digest."""
+        for name, feed in (feeds or {}).items():
+            if feed is None:
+                continue
+            self._feed_health[name] = (int(getattr(feed, "reconnect_attempts", 0) or 0),
+                                       int(getattr(feed, "reconnect_success", 0) or 0))
 
     def sample_metrics(self, store: Any, now_ts: float) -> None:
         """Each loop: sample whether each LIVE quote is currently AT BEST (our price >= live best bid)."""

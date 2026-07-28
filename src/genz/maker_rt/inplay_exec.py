@@ -121,8 +121,11 @@ class InplayLiveExecutor:
             re_mark = hedge_mod.mark_hedge(hv.ask_ladder, fe.size, hedge_venue, poly_rate) if hv else None
             locked = hedge_mod.locked_net(fe.quote_price, re_mark["cost_per_share"]) if re_mark else None
             floor = float(getattr(self.li, "hedge_decline_floor", -0.010))
-            if locked is None or locked < floor:
-                return self._decline_and_unwind(fe, ctx, now, locked, floor)
+            # A walk that ran short prices only the shallow part of the book, NOT the sweep we would send
+            # (the 01:21Z PHIMIA loss) — short depth is a decline, same as an unreadable book.
+            thin = bool(re_mark) and not re_mark.get("fully_filled", True)
+            if locked is None or thin or locked < floor:
+                return self._decline_and_unwind(fe, ctx, now, (None if thin else locked), floor)
             res = self.hedger.hedge(self._fill_dict(fe), self._hedge_spec(ctx.get("lookup", {}), hv, hedge_venue))
             return self._record_hedge(fe, ctx, now, res, locked)
         finally:

@@ -375,11 +375,14 @@ def _pair_risk(rest_price: Any, rest_shares: Any, hedge_price: Any, hedge_shares
 def digest_line(minutes: float, *, placed: int, cancelled: int, fills: int, open_now: int,
                 max_open: int, best_edge_pct: Optional[float] = None,
                 kalshi_flaps: int = 0, kalshi_down_s: float = 0.0,
+                poly_flaps: int = 0, poly_down_s: float = 0.0,
+                reconnects: Optional[dict] = None, prehedge_declines: int = 0,
                 binding: Optional[str] = None, stake_today: Optional[float] = None,
                 stake_cap: Optional[float] = None, today_pnl: Optional[float] = None,
                 why_no_fills: Optional[str] = None) -> str:
     """The periodic plain-language roll-up. Line 1: activity + best edge. Line 2: current state + daily
-    usage. Line 3 (when there were 0 fills): WHY, in plain words. Kalshi WS flakiness is surfaced too."""
+    usage. Then, when they happened: feed flakiness, reconnect attempt/success totals, pre-hedge declines,
+    and (on 0 fills) WHY in plain words."""
     edge = f" · best edge seen {best_edge_pct:.1f}%" if best_edge_pct is not None else ""
     l1 = f"📊 {int(minutes)}m summary · {placed} offers placed · {fills} taken{edge}"
     used = (f" · today {money(stake_today)}/{money(stake_cap)} used"
@@ -388,8 +391,23 @@ def digest_line(minutes: float, *, placed: int, cancelled: int, fills: int, open
     l2 = f"\n   Currently offering {open_now}/{max_open}{used} · {fills} fills{pnl}"
     flap = (f"\n   ⚠️ Kalshi feed was flaky: {int(kalshi_flaps)} drop{'s' if int(kalshi_flaps) != 1 else ''} "
             f"({kalshi_down_s:.0f}s) — REST poll covered fills") if kalshi_flaps else ""
+    pflap = (f"\n   ⚠️ Polymarket fill feed was flaky: {int(poly_flaps)} "
+             f"drop{'s' if int(poly_flaps) != 1 else ''} ({poly_down_s:.0f}s) — REST poll covered fills"
+             ) if poly_flaps else ""
+    # Reconnect ledger: "tried N, came back M". M < N on a settled digest == a feed that is still down.
+    rec = ""
+    for _name, _pair in sorted((reconnects or {}).items()):
+        try:
+            _att, _ok = int(_pair[0]), int(_pair[1])
+        except (TypeError, ValueError, IndexError):
+            continue
+        if _att:
+            mark = "✅" if _ok >= _att else "❗"
+            rec += f"\n   {mark} {_name} reconnects: {_ok}/{_att} recovered"
+    decl = (f"\n   🛡️ {int(prehedge_declines)} fill{'s' if int(prehedge_declines) != 1 else ''} refused a "
+            f"hedge that would have lost money (unwound instead)") if prehedge_declines else ""
     why = ""
     if fills == 0 and (why_no_fills or placed):
         reason = why_no_fills or "nobody crossed our price yet"
         why = f"\n   Why no fills: {reason}"
-    return l1 + l2 + flap + why
+    return l1 + l2 + flap + pflap + rec + decl + why

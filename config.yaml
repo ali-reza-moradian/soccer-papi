@@ -530,7 +530,7 @@ maker_rt:
     max_daily_stake_usd: 300        # sum of ALL legs committed today (fills+hedges+unwinds); breach -> halt+Telegram (raised from $100)
     max_pair_stake_usd: 100         # PER-PAIR cap: rest + worst-case hedge for ONE bet (must scale with quote_usd_max -- a $20 rest leg pairs to far above $25; TBTOR was $1.02 rest + $15.81 hedge)
     max_open_quotes: 8              # concurrent resting offers (raised 2 -> 8; daily $/fill/loss caps UNCHANGED bound total exposure). Safe now that cancels verify-or-scream + the pre-placement stack guard prevent ghost stacking.
-    max_fills_per_day: 10
+    max_fills_per_day: 20           # raised 10 -> 20 (2026-07-28): the best session hit 4 fills in 2 min, so 10 is a throughput ceiling well before the $300 daily-stake cap binds. Stake/loss caps are UNCHANGED and remain the real exposure bound.
     max_daily_loss_usd: 50          # realized-loss auto-halt (raised from $25: 4x-larger bets mean one bad unwind could otherwise halt the day)
     hedge_timeout_ms: 3000          # miss/partial after this -> market-unwind the fill + freeze market
     unwind_on_hedge_fail: true
@@ -555,7 +555,7 @@ maker_rt:
     arm_file: data/ops/ARM_MAKER_INPLAY
     quote_usd_max: 5                # match pre-game (sizing is governed by the SHARED caps.quote_usd_max)
     max_open_quotes: 1              # INFORMATIONAL — the SHARED live.max_open_quotes (2) governs pre+inplay combined
-    max_fills_per_day: 4            # INFORMATIONAL — the SHARED live.max_fills_per_day (10) governs pre+inplay
+    max_fills_per_day: 4            # INFORMATIONAL — the SHARED live.max_fills_per_day (20) governs pre+inplay
     max_daily_loss_usd: 20          # INFORMATIONAL — the SHARED live.max_daily_loss_usd (25) governs pre+inplay
     hedge_timeout_ms: 1500          # miss/partial after this -> market-unwind the fill + freeze market
     freeze_cooloff_s: 10            # place only after the node has been unfrozen AND both-books-fresh this long

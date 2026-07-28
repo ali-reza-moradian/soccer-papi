@@ -25,6 +25,7 @@ from typing import Any, Callable, Optional
 # a row is REFUSED, logged CRITICAL, and never enters lifetime pnl.
 SETTLED_ROI_CEILING = 0.50               # |net/cost| above this (50%) is implausible for a hedged pair
 SETTLED_MAX_NET_USD_DEFAULT = 100.0      # |net| above one pair's stake cap is implausible (config overrides)
+SETTLE_SHARE_TOL = 0.5                   # < 1 contract of leg imbalance is rounding, not a naked position
 
 
 @dataclass
@@ -102,26 +103,31 @@ class SettledPnlReconciler:
             if key in self._settled_keys:
                 continue
             try:
-                row = self._reconcile_pair(p, settlements, now)
+                rows = self._reconcile_pair(p, settlements, now)
             except Exception as exc:  # noqa: BLE001 — one bad market must not stop the sweep
                 if self.log:
                     self.log.warning("[MAKER_RT][SETTLE] reconcile failed for %s: %s", key, exc)
-                row = None
-            if row is not None:
+                rows = None
+            if not rows:
+                continue
+            # A market yields the HEDGED pair row and, when the legs were unequal, an UNTRACKED row for
+            # the naked excess. Each is sanity-guarded on its OWN terms (a naked row's ROI is legitimately
+            # far outside a hedged pair's ceiling), and the market is marked settled either way.
+            self._settled_keys.add(key)
+            for row in rows:
+                untracked = bool(row.get("untracked"))
                 ok, why = sane_settled(row.get("realized_pnl_usd", 0.0),
                                        row.get("settled_cost_usd", 0.0),
-                                       max_net_usd=self.max_pair_stake_usd)
+                                       max_net_usd=self.max_pair_stake_usd, untracked=untracked)
                 if not ok:
                     # REFUSE at the source: a bug (bad unit / mispaired legs) produced an implausible
-                    # settled net. Mark the market settled so we don't re-scream it every pass, but NEVER
-                    # emit or record it — it must not reach lifetime pnl. A human reconciles by hand.
-                    self._settled_keys.add(key)
+                    # settled net. NEVER emit or record it — it must not reach lifetime pnl. A human
+                    # reconciles by hand.
                     _log_critical(self.log, "[MAKER_RT][SETTLE][CRITICAL] REFUSED implausible trade_settled "
                                   "%s (%s): net $%s cost $%s — NOT counted. %s", key, why,
                                   row.get("realized_pnl_usd"), row.get("settled_cost_usd"),
                                   row.get("reason"))
                     continue
-                self._settled_keys.add(key)
                 self.record(row, now)
                 emitted.append(row)
         return emitted
@@ -152,9 +158,12 @@ class SettledPnlReconciler:
                 out[s.get("ticker") or s.get("market_ticker")] = s
         return out
 
-    def _reconcile_pair(self, p: dict, settlements: dict, now: Any) -> Optional[dict]:
+    def _reconcile_pair(self, p: dict, settlements: dict, now: Any) -> Optional[list]:
         """Net both legs once the Kalshi leg has settled. The Poly complement (the OPPOSITE outcome of the
-        same event) redeems 1:1 iff the Kalshi leg LOST — so one settlement read resolves both legs."""
+        same event) redeems 1:1 iff the Kalshi leg LOST — so one settlement read resolves both legs.
+
+        Returns a LIST of rows: the hedged-pair row plus, when the legs were unequal, one ``untracked``
+        row per naked excess (see the split note below). None means 'not settled yet, retry'."""
         k = p.get("kalshi") or {}
         pl = p.get("poly") or {}
         st = settlements.get(k.get("ticker"))
@@ -193,15 +202,47 @@ class SettledPnlReconciler:
             k_won = k_settle >= k_shares - 0.5
         poly_settle = poly_shares if not k_won else 0.0   # complement wins iff the Kalshi leg lost
         settled_ts = p.get("settled_ts") or _settle_ts(st, now)
-        legs = [
-            SettledLeg("kalshi", k.get("ticker") or "", k_side, k_shares,
-                       float(k.get("cost") or 0.0), k_settle),
-            SettledLeg("polymarket", pl.get("token") or "", "buy", poly_shares,
-                       float(pl.get("cost") or 0.0), poly_settle),
-        ]
-        return settled_row(sport=p.get("sport") or "", game=p.get("game") or "",
-                           market_key=p.get("market_key") or "", legs=legs, settled_ts=settled_ts,
-                           market_id=k.get("ticker"))
+        k_cost, poly_cost = float(k.get("cost") or 0.0), float(pl.get("cost") or 0.0)
+        common = dict(sport=p.get("sport") or "", game=p.get("game") or "",
+                      market_key=p.get("market_key") or "", settled_ts=settled_ts,
+                      market_id=k.get("ticker"))
+        # HEDGED vs NAKED SPLIT. The two legs are only a hedge up to ``paired`` shares; any excess on one
+        # side is an UNHEDGED position that happens to ride the same event. Booking the blend as one
+        # hedged row misreports the maker's edge by orders of magnitude: on 2026-07-28 PHIMIA settled
+        # 122 Kalshi vs 130.393 Poly and the 8.393 naked Poly shares (cost $0.40) redeemed $8.39 — so a
+        # +$0.17 hedged pair (+0.14%) was published as "+$8.16, ROI +6.68%". Same rule as the UFC ghost:
+        # luck is real money but it is NOT edge, so it rides the ``untracked`` bucket.
+        paired = min(k_shares, poly_shares)
+        rows: list = []
+        if paired > SETTLE_SHARE_TOL:
+            rows.append(settled_row(legs=[
+                SettledLeg("kalshi", k.get("ticker") or "", k_side, paired,
+                           _prorate(k_cost, paired, k_shares), _prorate(k_settle, paired, k_shares)),
+                SettledLeg("polymarket", pl.get("token") or "", "buy", paired,
+                           _prorate(poly_cost, paired, poly_shares),
+                           _prorate(poly_settle, paired, poly_shares)),
+            ], **common))
+        for venue, inst, side, shares, cost, settle in (
+                ("kalshi", k.get("ticker") or "", k_side, k_shares, k_cost, k_settle),
+                ("polymarket", pl.get("token") or "", "buy", poly_shares, poly_cost, poly_settle)):
+            excess = shares - paired
+            if excess <= SETTLE_SHARE_TOL:
+                continue
+            rows.append(settled_row(legs=[SettledLeg(venue, inst, side, excess,
+                                                     _prorate(cost, excess, shares),
+                                                     _prorate(settle, excess, shares))],
+                                    untracked=True,
+                                    extra_reason=f"({excess:g} sh unhedged excess over the {paired:g}-sh "
+                                                 f"pair — luck, not maker edge)",
+                                    **common))
+        return rows
+
+
+def _prorate(total: float, part: float, whole: float) -> float:
+    """Split ``total`` (a cost or a settlement value) in proportion to ``part``/``whole`` shares."""
+    if whole is None or float(whole) <= 1e-9:
+        return 0.0
+    return float(total) * (float(part) / float(whole))
 
 
 def kalshi_settle_dollars(v: Any) -> float:
