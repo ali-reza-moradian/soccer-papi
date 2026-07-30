@@ -1,7 +1,9 @@
 # AUDIT CLOSEOUT — reconcile of `AUDIT_REPORT.md` against HEAD
 
 **Audit snapshot:** 2026-07-29 ~19:11Z (see [AUDIT_REPORT.md](AUDIT_REPORT.md)).
-**Reconciled against:** `8ecc400` (2026-07-30), then closed out by **PHASE 1**.
+**Reconciled against:** `8ecc400` (2026-07-30), then closed out by **PHASE 1**, then **PHASE 2 (speed)**
+— see [§5 below](#5-phase-2-speed--measured) for the measured before/after and for what phase 2 could
+NOT prove.
 **Method:** every ID re-verified **by reading the code at HEAD**, not by line number — the audit's line
 references had shifted (`pregame_exec.py` had grown to 2,974 lines across the post-audit commits). A row
 says FIXED only when the mechanism the finding describes is absent from the code.
@@ -29,9 +31,11 @@ and stay OPEN — they are listed with their own rows so nothing is lost.
 
 | | FIXED | PARTIAL | OPEN | N/A | total |
 |---|---|---|---|---|---|
-| F1–F13 | 4 | 4 | 5 | 0 | 13 |
-| N1–N36 | 17 | 2 | 16 | 1 | 36 |
-| **all** | **21** | **6** | **21** | **1** | **49** |
+| F1–F13 | 6 | 4 | 3 | 0 | 13 |
+| N1–N36 | 18 | 3 | 14 | 1 | 36 |
+| **all** | **24** | **7** | **17** | **1** | **49** |
+
+Phase 2 moved five rows: F10 and F12 and N18 to FIXED, F11 and N20 to PARTIAL. At the end of phase 1 this read 21 / 6 / 21.
 
 At `8ecc400` this read 14 FIXED / 4 PARTIAL / 30 OPEN. Phase 1 closed **16 rows outright** (F1, F4, F5,
 F6, N3, N4, N5, N7, N9, N10, N13, N21, N22, N23, N24, N26), **resolved N16 by decision**, and closed the
@@ -63,9 +67,9 @@ set, the complement increment, or the cancel-path delta check each fails its tes
 | **F7** place-fail skip list not persisted | P2 | **OPEN** | `_place_fail_until` / `_place_fail_n` are plain dicts cleared by `roll_day` and absent from the startup load set. Every restart re-POSTs closed markets once. Deferred (P2 — the terminal backoff still works within a process). |
 | **F8** test pollution of `executor.log` | P2 | **OPEN** | `src/executor/cli.py::_logger` still attaches an unguarded `FileHandler(exec_config.LOG_PATH)`; `tests/conftest.py` patches only maker_rt's `GENZ_DIR`/`OPS_DIR`. Blindness only; maker_rt state is protected by the two-layer guard. Deferred. |
 | **F9** orphan classes + precision | P1 | **PARTIAL@acb36a2** | Precision hole 1 **fixed**: `_avg_price_cents_to_dollars` boundary is now `c >= 1.0`, so a 1-cent unwind fill no longer books as $1.00. Residual OPEN: `hedge.py` still sizes with `int(round(...))` (over-buys ≤0.5 sh — N32); bounded auto-flatten still reaches only class (c), and the class-(b) reconciliation path still uses the legacy `auto_flatten` bool that halts even on success. |
-| **F10** sync I/O on the async loop | P1 | **OPEN** | Still one `await` in the loop; zero `to_thread`. Attribution *was* added (`blockers` map in `__main__`, `f173721`/`a7ff472`) so the stall is measured and named per subsystem, but nothing has moved off the loop. Speed roadmap. |
-| **F11** papermaker dominates the cycle | P1 | **OPEN** | `papermaker.py` still calls `_best_bid` before the unchanged-quote short-circuit. `6316b89`/`1bce816` corrected the *attribution* (the 85% is the papermaker, not the snapshot) but did not plumb `best_bid` through `PricedVenue`. Speed roadmap. |
-| **F12** capacity + log bloat | P1 | **PARTIAL@2ba6b46** | The 300s `REFUSE_LOG_EVERY_S` throttle exists and suppressed hits are counted. Residual OPEN exactly as described: the CSV `expire` row at the slot-refusal site is still unthrottled (the 117k rows/day), and `refuse_suppressed` is still incremented and never read into the digest line. Markets roadmap. |
+| **F10** sync I/O on the async loop | P1 | **FIXED@PHASE2** | The fill poll — the audit's dominant stall — is BATCHED (<=3 list calls instead of one GET per open order) and runs on a worker thread; so do cancel retries. Measured 16.0% of loop wall time -> 0.3%; lag p99 1,948ms -> 589ms; 134 -> 165 ticks/min. Only the READS moved: routing a fill, hedging it, freeing a slot and mutating caps are all still loop-threaded, and an order placed after a batch was taken is never judged by it. `_watch_offloop_stall` screams if the worker goes silent. See [§5](#5-phase-2-speed--measured). |
+| **F11** papermaker dominates the cycle | P1 | **PARTIAL@PHASE2** | `best_bid` IS plumbed through `PricedVenue` now (`bid_read` distinguishes 'the venue says there are no bids' from 'nobody asked'), and the paper maker makes zero bid-only fetches — pinned by test. Residual OPEN: the wall-clock benefit is UNPROVEN, and the audit's own attribution does not survive the data — two identically-shaped warm cycles cost 953s and 0.3s under the same pre-fix code. See [§5](#5-phase-2-speed--measured). |
+| **F12** capacity + log bloat | P1 | **FIXED@PHASE2** | `_refuse` returns whether it RECORDED, and the caller gates its CSV `expire` row on that — so the row rides the same 300s throttle as the log line it sits beside. Measured across two comparable 29-min windows: live `expire` rows 53,716 -> 594 (-98.9%) while genuine `quote` rows ROSE 19 -> 38, so the drop is the throttle and not a quieter market. `refuse_suppressed` — counted since the day it was added and never once read — is now in the digest line. |
 | **F13** no edge feedback loop | P1 | **OPEN** | `achievable_net` still lands only in measurement sinks; repo-wide grep finds no reader. No `maker_rt.sports:` per-sport live switch. Markets roadmap. |
 
 ---
@@ -103,9 +107,9 @@ set, the complement increment, or the cancel-path delta check each fails its tes
 
 | ID | Status | Verified at HEAD |
 |----|--------|------------------|
-| **N18** cancel-retry storm | OPEN | `_cancel` retries a FILLED-but-uncancellable order every tick with a sync DELETE+GET, unthrottled. |
+| **N18** cancel-retry storm | **FIXED@PHASE2** | The FIRST attempt on an order stays inline and immediate (that is the ~107/hour path whose latency matters — a reprice cannot place until its cancel is confirmed). Every attempt after it backs off geometrically from a 5s floor to a 120s ceiling, and the retry's DELETE plus its confirming reads run off-loop with the LOOP deciding on the result. Inside the window there is NO venue I/O at all; the shared fill poll is what watches the order. `force=True` on every sweep (shutdown, in-play halt, feed-down, halt-after-partial) so a backoff can never strand a resting order. Verified live: `attempt 1 … next retry in 5s` then `attempt 2 … next retry in 10s`. The 4,909/hour volume reduction itself is NOT yet measured — the storm is bursty and neither window caught one. |
 | **N19** reconcile is surplus-only | OPEN | `reconcile_positions` flags only `unexplained > 0.5`; an under-held expected leg is invisible until settlement. |
-| **N20** restart queue loss | OPEN | Every exit cancels all resting orders; `_find_resting` re-adopt is unused. |
+| **N20** restart queue loss | **PARTIAL@PHASE2** | The wrapper waits 1s after a deliberate exit-0 deploy (a HEAD change that already cancelled every resting order, 11-21x/day) and keeps the full 5s for a crash or the singleton's exit 3, where backing off is the point. Residual OPEN: `_find_resting` re-adoption at boot is still unused. |
 | **N21** terminal-"closed" substring match | **FIXED@PHASE1** | `_terminal_place_failure` decides terminality from what the VENUE said, not from English: an explicit error code (parsed from `code`/`error`/`message`) against `TERMINAL_PLACE_CODES`, or one of those full snake_case codes in the body. A transport failure is checked FIRST and can never be terminal (`TRANSPORT_HINTS`), because no network error is evidence about the state of a market. 'Remote end closed connection' no longer blacklists a live candidate for 24h. |
 | **N22** sweep low-water advanced on a venue error | **FIXED@PHASE1** | `KalshiOrderClient.fills_since` returns **`None`** on a read failure and `[]` only when the account genuinely had no fills; `poll_kalshi_fills` returns without advancing `_last_fills_sweep_ts` on `None`, so the interval is re-read instead of being stepped over forever. |
 | **N23** in-play circuit skips `locked=None` | **FIXED@PHASE1** | Every result dict carries `realized_net` (per share): `locked` for a hedged pair, `-cost/shares` for a decline or unwind, `(flatten - first-sweep cost)/shares` for an auto-flatten, `-est_loss/shares` for `unwind_FAILED`, and `locked` for dust — an in-play fill we declined and could not even close is not neutral. `_apply_inplay_circuit` reads it, so a no-hedge-book decline that market-unwound at -16% now trips the -2% day-halt and persists it. `None` remains only for `book_refused`, which already halts everything via the quarantine. |
@@ -169,6 +173,11 @@ Two consequences worth stating plainly:
 (F12, F13, N14, N15), money 4–7 — re-measure before scaling; the audit's ≈10/13/33 clean-fill gates
 per sport stand, and phase 1 raises no cap.
 
+> **Superseded for speed by PHASE 2** — F10, F12 and N18 are closed and F11/N20 are partial; see
+> [§5](#5-phase-2-speed--measured). What phase 2 leaves on the speed roadmap: audit Speed 6 (whose
+> WS-callback premise the measurement weakens — `ws_cb` costs 0ms), H3, and the newly-largest
+> remaining synchronous block, the 5-minute position reconciliation.
+
 **Individually deferred:** F2, F7, F8, F9-residual, N11, N12-residual, N18, N19, N20, N25, N27, N28,
 N29, N30, N32-residual, N33, N34-residual, N35, N36.
 
@@ -196,3 +205,107 @@ to remember — the same lesson as `fp_num`. Pinned by
 **One measurement worth carrying forward:** `cancel NOT confirmed` fires up to **4,909 times an hour**
 (1.36/s), each with a synchronous DELETE + GET on the event loop. That is N18, still OPEN, and it is now
 the largest single unaddressed contributor to the F10 loop stall.
+
+---
+
+## 5. PHASE 2 (speed) — measured
+
+**Ships in:** `9ee4646` (instrument first) then `e4a057b` (the fixes). Split deliberately: a BEFORE
+baseline has to be taken with the new instrumentation but the OLD behaviour, and one commit would have
+left nothing to compare against.
+
+**Method.** Two 29-minute windows on the same live process, same 159–160 market universe, both armed
+and quoting: BEFORE 14:38–15:07Z (3,876 ticks), AFTER 15:08–15:37Z (4,941 ticks). Buckets are sum +
+count + max per window (`maker_rt/loopstats.py`); `cancel` and `telegram` are NESTED inside their
+caller's bucket, so the parts deliberately do not add up to the tick.
+
+| metric | BEFORE | AFTER | |
+|---|---|---|---|
+| loop lag p50 | 75.2ms | 64.1ms | target 250ms |
+| loop lag **p99** | **1,948ms** | **589ms** | **−70%** |
+| loop lag max | 5,602ms | 6,558ms | *worse — see below* |
+| **ticks/min** | **134** | **165** | **+23% more passes in the same wall time** |
+| `fill_poll` | 276.9s (16.0% of wall) | 5.8s (0.3%) | **−98%** |
+| `telegram` | 0.7s, max 346ms | 0.02s, max 7ms | |
+| `heartbeat` | 39.5s | 34.2s | |
+| `quotes` | 393.6s (22.7%) | 394.1s (21.9%) | unchanged — not in scope |
+| `ws_cb` | 0.0s / 883 calls | 0.0s / 1,320 calls | **not a cost at all** |
+| live `expire` CSV rows | 53,716 | 594 | **−98.9%** (and `quote` rows rose 19 → 38) |
+
+### What this proves
+
+* **F10 is the win.** The audit's dominant stall — one synchronous per-order GET for every open order,
+  every 10s — went from 16.0% of wall time to 0.3%. The reads did not get faster; they left the loop.
+  `fill_poll`'s AFTER call count (4,941) is the per-tick DRAIN, not the cadence poll, so its max of
+  3,420ms is a fill being hedged ON the loop — which is the design, not a leak.
+* **The batch is real, and its precondition was verified against the live account before shipping:**
+  Poly `GET /data/orders` carries `size_matched` (a STRING) and Kalshi resting rows carry
+  `fill_count_fp`. That is the audit's **open question 6, answered** — 12 per-order GETs collapse to 2
+  list calls. A row that cannot answer "how much is matched?" still falls back to its authoritative
+  per-order read, enforced per ROW rather than per venue.
+* **F12 is clean:** −98.9% of live `expire` rows across comparable windows while genuine `quote` rows
+  went UP, so the drop is the throttle and not a quieter market.
+* **`ws_cb` was a suspected cost and is not one** — 1,320 callbacks, 0ms. Worth knowing before anyone
+  spends a session on audit Speed 6.
+
+### What this does NOT prove — stated because the numbers do not support it
+
+* **N18's storm reduction is unmeasured.** Both windows contained 9–11 `cancel NOT confirmed` lines;
+  the 4,909/hour storm is bursty and peaks in the evening, and neither window caught one. What IS
+  verified live is the mechanism — the log shows the ladder working: `attempt 1 … next retry in 5s`
+  then `attempt 2 … next retry in 10s`, off-loop, with no venue I/O in between.
+* **F11's wall-clock benefit is unproven, and the audit's attribution for it does not survive the
+  data.** The soccer cycle did fall (337s → 161s, papermaker 181s → ~0s), but the papermaker left its
+  expensive regime at ~14:00Z — **three hours before the fix deployed** — and stayed cheap. Worse, the
+  premise itself does not hold: a warm cycle (1 quote, 575 requotes, ~3,300 nodes evaluated) cost 953s
+  at 13:37, and an identically-shaped warm cycle cost 0.3s at 14:53 under the same pre-fix code. So
+  "85% of the cycle is a redundant serial bid re-download" fits some cycles and is contradicted by
+  others. The fix is still correct — it removes a call that can only cost time, and falls back safely
+  when the bid is not plumbed — but F11 stays **OPEN pending a post-fix expensive-regime cycle**.
+* **Max lag got worse (5,602 → 6,558ms)** and reconcile's max doubled (2,125 → 4,241ms). Both live in
+  buckets phase 2 did not touch: a placement POST (`quotes`) and the 5-minute position reconciliation.
+  With the fill poll gone, **reconciliation is now the largest single remaining synchronous block** and
+  is the obvious next candidate.
+
+### Row changes
+
+| ID | was | now |
+|----|-----|-----|
+| **F10** sync I/O on the async loop | OPEN | **FIXED@PHASE2** — fill poll batched onto ≤3 list calls and moved to a worker thread; cancel retries too. Decisions all stay loop-threaded. |
+| **F11** papermaker dominates the cycle | OPEN | **PARTIAL@PHASE2** — `best_bid` is plumbed through `PricedVenue` and the paper maker makes zero bid-only fetches (pinned by test). Wall-clock benefit unproven; see above. |
+| **F12** capacity + log bloat | PARTIAL@2ba6b46 | **FIXED@PHASE2** — the CSV `expire` row rides the same 300s throttle as its log line, and `refuse_suppressed` is in the digest. |
+| **N18** cancel-retry storm | OPEN | **FIXED@PHASE2** — geometric backoff from a 5s floor to a 120s ceiling, no venue I/O inside the window, retry DELETE off-loop. `force=True` on every sweep so a backoff can never strand a resting order. |
+| **N20** restart queue loss | OPEN | **PARTIAL@PHASE2** — the wrapper waits 1s after a deliberate exit-0 deploy (5s kept for a crash / the singleton's exit 3). Order re-adoption at boot stays deferred. |
+
+### Two defects phase 2 found that the audit did not
+
+1. **A latched orphan could never retire over a HELD position.** `_orphan_detected` asks "do we hold
+   MORE than we expect?" (`_reverify_explained`); `verify_latched_orphan` asked "do we hold ANY?". On
+   2026-07-30 a reconciliation sweep and a fill landed in the same second — halt at 04:33:18, the same
+   shares registered as an EXPECTED leg and booked LOCKED **+$1.56** at 04:33:20 (Kalshi 51.97 /
+   Polymarket 51.96 of the complement, both venues agreeing it was hedged) — and the bot then sat
+   HALTED and idle for **ten hours**, which is also why phase 2 could not be measured until it was
+   fixed. Both directions now use the same predicate. Unexplained shares, shares in EXCESS of the
+   expected leg, and an unreadable position all still hold the halt.
+2. **The test suite wrote into live `data/genz`.** `run_cycle(write=True)` takes its snapshot and
+   papermaker paths from `paths_for_sport`, not from an argument, so the suite could clobber the
+   panel's snapshot — observed live: `papermaker_summary.json` holding a test fixture's
+   `day: 20260630, quotes: 6` — and one full-suite run in roughly eight failed on `WinError 32` racing
+   the scanner for the same file. `tests/conftest.py` now isolates the scanner's artifacts the way it
+   already isolated the maker's. (`SportPaths` is a frozen dataclass built at IMPORT time, so patching
+   `GENZ_DIR` alone does not move it.)
+
+### One risk phase 2 introduced, and its guard
+
+Moving the fill authority off the loop trades a LOUD failure for a SILENT one: a venue read that hangs
+used to freeze the whole loop (impossible to miss) and would now just stop the primary fill detector
+while quoting, repricing and the heartbeat all kept working. `_watch_offloop_stall` screams (log +
+Telegram, throttled 5 min) when no batch has landed for four cadences. Any future off-loop move needs
+the same watchdog.
+
+### Deferred, unchanged
+
+Audit Speed 6 (hedge chain as an async task + WS callbacks enqueue-and-return) — and note `ws_cb`
+measured at 0ms, so its premise is weaker than the audit assumed. **H3** (concurrent genz price
+fan-out): skipped deliberately — pricing is already concurrent at 12 workers, the cost is the client's
+0.5s per-request throttle, and making that thread-safe tightens the shared-IP Kalshi read budget.
