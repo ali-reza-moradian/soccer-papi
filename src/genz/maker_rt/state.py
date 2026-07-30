@@ -42,7 +42,13 @@ CSV_COLUMNS = [
     "rest_venue", "hedge_venue", "quote_price", "size", "floor", "at_best", "hedge_ask",
     "net_at_quote", "achievable_net", "rails_ok", "queue_ahead", "trigger", "quote_age_s",
     "hedge_avg", "hedge_fee", "locked_net", "realized_pnl_usd", "hedge_order_id", "fill_ts",
-    "drift_1", "drift_5", "drift_30", "reason",
+    "drift_1", "drift_5", "drift_30",
+    # N28: the hedge's WALKED locked net (%) at the moment this row was written. Paired with
+    # ``quote_age_s`` it is what makes "were we picked off?" answerable — the stale-quote question is a
+    # correlation between how long a quote rested and how far the HEDGE had moved by the time it was
+    # taken, and until now neither column was populated on a live row.
+    "hedge_locked_now",
+    "reason",
 ]
 
 
@@ -121,13 +127,44 @@ class _Bucket:
         }
 
     def achievable(self) -> dict:
+        """The achievable-net ladder for this bucket.
+
+        UNITS, stated because they were mixed (N27): ``p50``/``p90`` are FRACTIONS of a share (0.0105 =
+        1.05%) while ``median_net_at_fill`` and ``locked_net_p50`` in the same summary are PERCENTS —
+        two edge numbers side by side, differing by 100x, with nothing in the payload saying so. The
+        ``*_pct`` fields are the canonical ones; the bare ``p50``/``p90`` stay for the existing panel
+        build and are deprecated. ``share_ge_*`` are shares of samples (0..1), never percents."""
         pct = lambda c: round(c / self.achv_n, 4) if self.achv_n else 0.0   # noqa: E731
+        p50, p90 = _pctl(self.achv_reservoir, 0.5), _pctl(self.achv_reservoir, 0.9)
         return {
             "n": self.achv_n, "gated": self.achv_gated,           # n = rails_ok samples in the ladder
-            "p50": _pctl(self.achv_reservoir, 0.5), "p90": _pctl(self.achv_reservoir, 0.9),
+            "p50": p50, "p90": p90,                               # DEPRECATED (fractions) — use *_pct
+            "p50_pct": round(p50 * 100.0, 4) if p50 is not None else None,
+            "p90_pct": round(p90 * 100.0, 4) if p90 is not None else None,
+            "units": {"p50_pct": "percent", "p90_pct": "percent", "share_ge_*": "share_of_samples"},
             "share_ge_0": pct(self.achv_ge0), "share_ge_25bp": pct(self.achv_ge25),
             "share_ge_50bp": pct(self.achv_ge50), "share_ge_100bp": pct(self.achv_ge100),
         }
+
+    def achievable_state(self) -> dict:
+        """The ladder's RAW counters + reservoir, for persistence across restarts (N27)."""
+        return {"n": self.achv_n, "gated": self.achv_gated, "ge0": self.achv_ge0,
+                "ge25": self.achv_ge25, "ge50": self.achv_ge50, "ge100": self.achv_ge100,
+                "reservoir": list(self.achv_reservoir)}
+
+    def load_achievable_state(self, d: dict) -> None:
+        """Restore a persisted ladder. Counts and the reservoir travel together, so the percentiles
+        stay consistent with the n they are drawn from."""
+        if not isinstance(d, dict):
+            return
+        self.achv_n = int(d.get("n") or 0)
+        self.achv_gated = int(d.get("gated") or 0)
+        self.achv_ge0 = int(d.get("ge0") or 0)
+        self.achv_ge25 = int(d.get("ge25") or 0)
+        self.achv_ge50 = int(d.get("ge50") or 0)
+        self.achv_ge100 = int(d.get("ge100") or 0)
+        r = d.get("reservoir")
+        self.achv_reservoir = [float(x) for x in r][:_RESERVOIR_CAP] if isinstance(r, list) else []
 
 
 def _pool(buckets: list) -> dict:
@@ -240,6 +277,17 @@ class MakerState:
         self.settled_pnl_untracked_lifetime = float(obj.get("settled_pnl_untracked_lifetime", 0.0) or 0.0)
         self.settled_cost_lifetime = float(obj.get("settled_cost_lifetime", 0.0) or 0.0)
         self.settled_trades = int(obj.get("settled_trades", 0) or 0)
+        # ACHIEVABLE LADDERS (N27). Restarts run ~10-21x/day, and the ladder is the ONLY evidence that
+        # says whether a sport's market bears the target at all — resetting it every deploy meant it
+        # could never reach an n worth reading. Restored per (sport, phase) with its counts and its
+        # reservoir together, so the percentiles stay consistent with the n they are drawn from.
+        for key, d in (obj.get("achievable") or {}).items():
+            try:
+                sport, _, phase = str(key).partition("|")
+                if sport and phase:
+                    self._bucket(sport, phase).load_achievable_state(d)
+            except Exception:  # noqa: BLE001 — a corrupt ladder entry must never block startup
+                continue
 
     def persist_tuning(self) -> None:
         """Write the cross-restart counters (atomic, best-effort — never blocks trading)."""
@@ -253,6 +301,8 @@ class MakerState:
             "settled_pnl_untracked_lifetime": round(self.settled_pnl_untracked_lifetime, 4),
             "settled_cost_lifetime": round(self.settled_cost_lifetime, 4),
             "settled_trades": self.settled_trades,
+            "achievable": {f"{sp}|{ph}": b.achievable_state()
+                           for (sp, ph), b in self.buckets.items() if b.achv_n},
         })
 
     def maybe_persist_tuning(self, now_ts: float) -> None:
@@ -422,6 +472,17 @@ class MakerState:
         return False
 
     # -- summary + heartbeat -------------------------------------------------
+    def _caps_num(self, name: str, fallback: float) -> float:
+        """A daily counter from the LIVE caps snapshot, falling back to the since-restart number.
+
+        ``self.live`` is the executor's own snapshot of ``LiveCaps``, so this reads the same counters
+        the daily rails enforce rather than a second set that happens to share their names."""
+        v = (self.live or {}).get(name)
+        try:
+            return float(v) if v is not None else float(fallback)
+        except (TypeError, ValueError):
+            return float(fallback)
+
     def _by_sport(self) -> dict:
         sports: dict = {}
         for (sport, _phase), b in self.buckets.items():
@@ -445,7 +506,22 @@ class MakerState:
             "median_net_at_fill": _median(self.fill_nets),
             "drift_median_1": _median(self.drift1), "drift_median_5": _median(self.drift5),
             "drift_median_30": _median(self.drift30),
-            "pnl_today": round(self.pnl_today, 4), "restarts_today": self.restarts_today,
+            "restarts_today": self.restarts_today,
+            # F2 — THE DAILY TRIO, FROM THE RAIL THAT ENFORCES IT. ``n_fills``/``pnl_today`` on this
+            # object reset with the PROCESS (~10-21 restarts/day), so a panel reading them saw a day
+            # that started at the last deploy while the caps that actually halt trading were counting
+            # from midnight. The alerts were always truthful (they read caps); only the panel was not.
+            # ``*_since_restart`` keeps the old numbers under a name that says what they are.
+            "fills_today": self._caps_num("fills_today", self.n_fills),
+            "stake_today": self._caps_num("stake_today", 0.0),
+            "pnl_today": round(self._caps_num("pnl_today", self.pnl_today), 4),
+            "fills_since_restart": self.n_fills,
+            "pnl_since_restart": round(self.pnl_today, 4),
+            "windows": {"fills_today": "utc_day (LiveCaps)", "stake_today": "utc_day (LiveCaps)",
+                        "pnl_today": "utc_day (LiveCaps)", "quotes": "since_restart",
+                        "fills": "since_restart", "median_net_at_fill": "since_restart (percent)",
+                        "locked_net_p50": "last<=20 locked fills (percent)",
+                        "settled_pnl_lifetime": "lifetime (venue-truth)"},
             # SETTLED (VENUE-TRUTH) realized pnl — the authoritative lifetime number (both legs netted),
             # distinct from pnl_today (the fill-time locked estimate).
             "settled_pnl_lifetime": round(self.settled_pnl_lifetime, 4),
@@ -472,7 +548,18 @@ class MakerState:
             "locked_net_window": len(self.recent_locked_nets),
             "gates": dict(self.gates), "live": dict(self.live),
             "by_sport": self._by_sport(), "by_phase": self._by_phase(),
+            # THE MEASUREMENT GATE on the panel (see gates.py). Cheap: it reads the day's own CSV rows,
+            # and it is the number any cap-raise conversation has to start from.
+            "measurement_gates": self._measurement_gates(),
         }
+
+    def _measurement_gates(self) -> dict:
+        """Per-sport clean-hedged-fill counts vs the audit's gates. Never raises into the summary."""
+        try:
+            from .gates import report
+            return report()
+        except Exception:  # noqa: BLE001 — a reporting helper must never break the heartbeat
+            return {}
 
     def write_summary(self, mode: str, sockets: dict, now: datetime,
                       path: Optional[str] = None) -> None:
@@ -481,7 +568,13 @@ class MakerState:
     def heartbeat(self, mode: str, sockets: dict, open_quotes: int, now: datetime) -> dict:
         hb = {"ts": now.strftime("%Y-%m-%dT%H:%M:%SZ"), "schema": SCHEMA, "mode": mode,
               "sockets": dict(sockets), "open_quotes": open_quotes,
-              "fills_today": self.n_fills, "pnl_today": round(self.pnl_today, 4),
+              # F2: the DAILY trio comes from LiveCaps (what the rails count), and the since-restart
+              # numbers keep a name that says which window they are — they were called "today".
+              "fills_today": self._caps_num("fills_today", self.n_fills),
+              "stake_today": self._caps_num("stake_today", 0.0),
+              "pnl_today": round(self._caps_num("pnl_today", self.pnl_today), 4),
+              "fills_since_restart": self.n_fills,
+              "pnl_since_restart": round(self.pnl_today, 4),
               "settled_pnl_lifetime": round(self.settled_pnl_lifetime, 4),
               "settled_pnl_hedged_lifetime": round(self.settled_pnl_lifetime
                                                    - self.settled_pnl_untracked_lifetime, 4),

@@ -533,6 +533,26 @@ papermaker:
 # ===========================================================================
 maker_rt:
   max_games: 30                     # nearest-by-kickoff games to quote across BOTH sports combined
+  # PER-SPORT UNIVERSE MAP (H4). max_games alone is ONE nearest-by-kickoff queue and soccer's fixture
+  # density wins it outright: the observed universe was 92% soccer (120 of 130 markets), tennis 5, mlb 5,
+  # ufc 0 — and the next UFC card sat at queue position 172, so it became quotable only on fight day.
+  # These sum to 30, i.e. the SAME total universe, redistributed. A sport not listed here is not capped
+  # per-sport; max_games still bounds the union.
+  max_games_per_sport:
+    soccer: 18
+    mlb: 6
+    tennis: 4
+    ufc: 2
+  # PER-SPORT LIVE/SHADOW SWITCHES (F13). ALL TRUE = today's behaviour exactly; this ships the mechanism,
+  # not a policy change. A sport set false stops placing REAL orders but keeps evaluating and quoting
+  # SHADOW, so its achievable ladder and quote rows keep accumulating — which is the whole point: the
+  # measurement that would justify turning it back on does not stop when you stop risking on it.
+  # Change these only against the --gates report (see maker_rt --gates), never on a hunch.
+  sports:
+    soccer: {live: true, live_inplay: true}
+    mlb:    {live: true, live_inplay: true}
+    tennis: {live: true, live_inplay: true}
+    ufc:    {live: true, live_inplay: true}
   quote_usd: 100                    # shadow quote notional per node/direction
   # Min net edge a hedged maker combo must clear at the quote price. LOWERED 1.0% -> 0.6% to raise fill
   # frequency: FILLS are the bottleneck, not edge availability (rails-clean achievable data shows ~9% of
@@ -603,6 +623,14 @@ maker_rt:
     # the leg: TBTOR was $1.02 rest + $15.81 hedge). 350 = 70 rest + up to 280 of hedge.
     max_pair_stake_usd: 350         # (100 -> 350)
     max_open_quotes: 12             # concurrent resting offers (8 -> 12; the starvation fix). Safe: cancels verify-or-scream + the pre-placement stack guard prevent ghost stacking, and the daily $/fill/loss caps still bound total exposure.
+    # PER-GAME CONCENTRATION CAP (N15). max_open_quotes counts ORDERS and does not care that six of them
+    # are one match's totals ladder: on 2026-07-29 a single match absorbed 112 placements across six
+    # correlated lines, and one goal moves all six together — that is not six bets, it is one bet sized
+    # six times. This is a TIGHTENING, not a raise: 12 slots still exist, but no game may hold more than
+    # 3 of them, and sizing subtracts what the game already has committed (allowance defaults to
+    # max_open_per_game x max_pair_stake_usd = 3 x $350 = $1,050 of projected pair per game).
+    max_open_per_game: 3
+    max_game_stake_usd: 0           # 0 = derive from max_open_per_game x max_pair_stake_usd
     max_fills_per_day: 20           # UNCHANGED (raised 10 -> 20 earlier on 2026-07-28)
     max_daily_loss_usd: 50          # UNCHANGED — the real exposure bound. Bigger bets do NOT get a bigger loss budget.
     hedge_timeout_ms: 3000          # miss/partial after this -> market-unwind the fill + freeze market

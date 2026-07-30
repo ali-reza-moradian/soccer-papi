@@ -106,6 +106,9 @@ def _kalshi_exec(tmp_path, venue, *, caps=None):
 def _ck(ticker, key_suffix, side="yes"):
     c = _cand_kalshi(ticker=ticker, side=side)
     c.key = ("mlb", f"G{key_suffix}", "ml2", "Home", "rest-kalshi")
+    # ``.game`` has to AGREE with the key's game component, or these read as eight quotes on one match
+    # to the per-game concentration cap (N15) — which is exactly what that cap exists to refuse.
+    c.game = f"G{key_suffix}"
     return c
 
 

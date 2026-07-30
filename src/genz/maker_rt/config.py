@@ -186,6 +186,17 @@ class LiveConfig:
     # rest-kalshi quotes) after it has been continuously down this long. A reconnect inside the grace
     # preserves queue position. 0 disables the debounce (cancel on the first observed drop).
     kalshi_feed_grace_s: float = 20.0
+    # PER-GAME CONCENTRATION CAP: at most this many resting quotes on ONE game at a time (N15). The
+    # ``max_open_quotes`` cap counts orders; it does not care that six of them are the SAME match's
+    # totals ladder. One match absorbed 112 placements across six correlated lines, and a single goal
+    # moves every one of them together — so twelve slots on one game is one bet, sized twelve times.
+    # 0 disables the cap.
+    max_open_per_game: int = 3
+    # The $ ONE GAME may have committed across all its resting quotes. 0 = DERIVE it as
+    # ``max_open_per_game x max_pair_stake_usd`` (the executor does that from the LIVE LiveCaps, which is
+    # the runtime authority for caps — deriving it here would freeze the value at config-load time and
+    # quietly disagree with a cap changed later). Set > 0 to pin an explicit allowance instead.
+    max_game_stake_usd: float = 0.0
 
 
 #: PER-PHASE CAP KEYS THAT ARE NOT ENFORCED, mapped to the shared ``live`` cap that actually governs.
@@ -263,6 +274,18 @@ class InplayConfig:
 class MakerRtConfig:
     """Typed view of the ``maker_rt:`` block (missing keys -> safe defaults)."""
     max_games: int = 20                    # nearest-by-kickoff games to quote across both sports
+    # PER-SPORT UNIVERSE MAP (H4). ``max_games`` alone is a single nearest-by-kickoff queue across every
+    # sport, and soccer's fixture density wins it outright: the observed universe was 92% soccer (120 of
+    # 130 markets) while UFC sat at queue position 172 and was never quotable until fight day. Taking the
+    # nearest N games WITHIN each sport ends that. A sport absent from the map is NOT capped per-sport;
+    # ``max_games`` still applies to the union as a backstop, so an unlisted sport can never grow the
+    # universe past the global cap. Empty map -> exactly the old single-queue behaviour.
+    max_games_per_sport: dict = field(default_factory=dict)
+    # PER-SPORT LIVE/SHADOW SWITCHES (F13). {sport: {live: bool, live_inplay: bool}} — a sport switched
+    # false still evaluates, quotes SHADOW and records achievable/quote rows, so turning live off does
+    # NOT stop the measurement that would justify turning it back on. Absent sport / empty map -> live
+    # (today's behaviour exactly). This is how "measure tennis, stop risking on it" gets expressed.
+    sports: dict = field(default_factory=dict)
     quote_usd: float = 100.0               # shadow quote notional per node/direction
     target_net: float = 0.010              # min net edge the maker combo must clear at the quote price
     # SANITY CEILING: a computed edge above this (%) is almost certainly a PRICING/PAIRING bug (wrong
@@ -318,6 +341,18 @@ class MakerRtConfig:
     inplay: InplayConfig = field(default_factory=InplayConfig)
     live: LiveConfig = field(default_factory=LiveConfig)
     live_inplay: InplayLiveConfig = field(default_factory=InplayLiveConfig)
+
+    def sport_live(self, sport: Any, phase: str = "pre") -> bool:
+        """May ``sport`` place REAL orders in ``phase``? (F13.)
+
+        Absent from the map -> True, so an unlisted or brand-new sport behaves exactly as it does today
+        and this can never silently disarm something by omission. A sport switched off is NOT removed
+        from the universe: it still evaluates, quotes SHADOW and records its achievable ladder, because
+        the whole point of switching a sport off is to keep measuring the thing you stopped risking on."""
+        s = (self.sports or {}).get(str(sport))
+        if not isinstance(s, dict):
+            return True
+        return bool(s.get("live_inplay", True) if phase == "inplay" else s.get("live", True))
 
 
 def _raw(config_path: Optional[str] = None) -> dict[str, Any]:
@@ -375,6 +410,21 @@ def load_maker_rt_config(config_path: Optional[str] = None,
             "[MAKER_RT] config maker_rt.tennis_max_poly_leg is DEPRECATED — use "
             "maker_rt.poly_leg_cap: {tennis: %.2f, ...}; honoring it for tennis.", cap["tennis"])
     cfg.poly_leg_cap = cap
+    # PER-SPORT UNIVERSE MAP (H4) and PER-SPORT LIVE SWITCHES (F13). Both default to empty, which is
+    # exactly today's behaviour: one nearest-by-kickoff queue, every sport live.
+    if isinstance(blk.get("max_games_per_sport"), dict):
+        cfg.max_games_per_sport = {str(k): max(0, int(v)) for k, v in blk["max_games_per_sport"].items()}
+    else:
+        cfg.max_games_per_sport = dict(cfg.max_games_per_sport)
+    if isinstance(blk.get("sports"), dict):
+        sports: dict = {}
+        for name, sub in blk["sports"].items():
+            sub = sub if isinstance(sub, dict) else {}
+            sports[str(name)] = {"live": bool(sub.get("live", True)),
+                                 "live_inplay": bool(sub.get("live_inplay", True))}
+        cfg.sports = sports
+    else:
+        cfg.sports = dict(cfg.sports)
     if blk.get("drift_marks_s"):
         cfg.drift_marks_s = tuple(int(x) for x in blk["drift_marks_s"])
     if blk.get("kalshi_maker_fee_series"):
@@ -398,9 +448,11 @@ def load_maker_rt_config(config_path: Optional[str] = None,
     for name in ("enabled", "arm_file", "quote_usd_max", "max_open_quotes", "max_fills_per_day",
                  "max_daily_loss_usd", "max_daily_stake_usd", "max_pair_stake_usd", "hedge_timeout_ms",
                  "unwind_on_hedge_fail", "auto_flatten", "auto_flatten_max_usd", "fill_poll_s",
-                 "max_quote_age_s", "kalshi_feed_grace_s"):
+                 "max_quote_age_s", "kalshi_feed_grace_s", "max_open_per_game", "max_game_stake_usd"):
         if live_blk.get(name) is not None:
             setattr(lc, name, live_blk[name])
+    lc.max_open_per_game = int(lc.max_open_per_game)
+    lc.max_game_stake_usd = float(lc.max_game_stake_usd)
     lc.enabled = bool(lc.enabled)
     lc.auto_flatten = bool(lc.auto_flatten)
     lc.auto_flatten_max_usd = float(lc.auto_flatten_max_usd)

@@ -260,6 +260,7 @@ def _rest_poly(ex, poly, *, n=6, matched=0.0):
     for i in range(n):
         c = _cand(token=f"TOK{i}")
         c.key = ("mlb", f"G{i}", "ml2", "Home", "rest-poly")
+        c.game = f"G{i}"                       # distinct games: this fixture is about batching, not concentration
         ex.place_or_reprice(c, _PDEC(), None, _STORE, NOW, 100.0, "pre")
         lo = ex.open_orders[c.key]
         poly.open[lo.order_id] = {"id": lo.order_id, "status": "LIVE", "size_matched": matched,

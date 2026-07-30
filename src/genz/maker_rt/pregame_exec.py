@@ -146,6 +146,10 @@ class _LiveOrder:
     kalshi_side: str = ""              # YES|NO when rest_venue == "kalshi" (rest_ref[2])
     teams: str = ""                   # 'AWAY vs HOME' — for the human alert name
     client_order_id: str = ""          # our coid (Kalshi mrt-*) — re-resolves the order in the resting list
+    #: The projected pair cost this order RESERVED against the daily cap when it was placed (N14). Held
+    #: on the order so the release is by construction the same number as the hold — a reservation
+    #: released with a recomputed value drifts, and a drifting reservation is a cap that slowly lies.
+    projected_pair: float = 0.0
 
 
 class PregameLiveExecutor:
@@ -180,6 +184,12 @@ class PregameLiveExecutor:
         # This is the fix for the slot deadlock: rest-poly's reserved slot must not block rest-kalshi from
         # the physically-free slot when rest-poly has nothing to place.
         self._viable_directions: set = set(self.directions)
+        # PER-GAME CONCENTRATION (N15) + the PER-SPORT live switches (F13).
+        _live = getattr(cfg, "live", None)
+        self.max_open_per_game = int(getattr(_live, "max_open_per_game", 0) or 0)
+        self.max_game_stake_usd = float(getattr(_live, "max_game_stake_usd", 0.0) or 0.0)
+        #: {sport: {live, live_inplay}} — resolved through cfg.sport_live so an absent sport stays LIVE.
+        self._sport_live = getattr(cfg, "sport_live", None)
         # SLOT AGE-OUT: a resting order this old is repriced-or-cancelled so no order holds a slot forever
         # (the live digest showed one order held a slot for 46 min, behind best, while 3,042 candidates
         # were refused). The driver reprices if still viable; otherwise the age-out cancel frees the slot.
@@ -262,6 +272,7 @@ class PregameLiveExecutor:
                                                    HEDGE_EXECUTION_FLOOR))
         # WS-INDEPENDENT FILL AUTHORITY: REST is the primary detector, the socket is an accelerator.
         self.fill_poll_s = float(getattr(getattr(cfg, "live", None), "fill_poll_s", 10.0))
+        self.reconcile_every_s = 300.0       # the loop's own cadence, mirrored for the stall watchdog
         self._force_fill_poll = False        # set by a cancel that failed because the order FILLED
         self._routing_raced_fill = False     # re-entrancy guard: _cancel -> fill route -> _cancel
         # OFF-LOOP venue I/O (N18 cancel retries + F10 batched fill poll). One thread, de-duplicated by
@@ -274,6 +285,7 @@ class PregameLiveExecutor:
         self._cancel_next_ts: dict = {}
         self._cancel_reason: dict = {}
         self._cancel_logged_at: dict = {}    # throttles the 'cancel NOT confirmed' WARNING (22,942/day)
+        self._hedge_drift_repriced = 0       # quotes pulled because the HEDGE moved under them (N28)
         self._cancel_retries = 0             # off-loop retry DELETEs issued (panel/diagnostic)
         self._cancel_suppressed = 0          # tick-level cancel attempts skipped by the backoff
         # OFF-LOOP STALENESS WATCHDOG. Moving the fill poll to a worker traded a LOUD failure for a
@@ -282,6 +294,7 @@ class PregameLiveExecutor:
         # watches the clock on it and screams if no batch has been APPLIED for several cadences.
         self._fill_poll_submitted_ts = 0.0
         self._fill_poll_applied_ts = 0.0
+        self._reconcile_applied_ts = 0.0
         self._offloop_stall_alerted_ts = 0.0
         self._last_fills_sweep_ts = 0.0      # unix-seconds low-water mark for the /portfolio/fills sweep
         self._seen_fill_ids: set = set()     # fill_id dedupe across sweeps + the socket
@@ -553,12 +566,27 @@ class PregameLiveExecutor:
     def inplay_armed(self) -> bool:
         return self._armed(getattr(self.cfg, "live_inplay", None))
 
+    def sport_live(self, sport: Any, phase: str = "pre") -> bool:
+        """PER-SPORT live switch (F13). Absent from the map -> live, so this can never disarm a sport by
+        omission. A sport switched OFF still evaluates and quotes SHADOW everywhere else in the stack —
+        turning a sport off is a decision to stop RISKING on it, not to stop MEASURING it, and the
+        measurement is what would justify turning it back on."""
+        if not callable(self._sport_live):
+            return True
+        try:
+            return bool(self._sport_live(sport, phase))
+        except Exception:  # noqa: BLE001 — an unreadable switch must not silently disarm a live sport
+            return True
+
     def eligible(self, c: Any, phase: str, now_ts: float = 0.0) -> bool:
-        """Live-eligible iff the direction is enabled (config maker_rt.directions), its FILL feed is UP,
-        caps not halted, AND the phase's own gate is armed. rest-poly needs the Poly USER socket; rest-kalshi
-        needs the Kalshi WS (its fill channel). In-play additionally requires: not in-play-halted AND not
-        inside the first-fill pause. (The driver enforces the freeze/stale/persistence/cool-off rails first.)"""
+        """Live-eligible iff the direction is enabled (config maker_rt.directions), the SPORT's live
+        switch is on, its FILL feed is UP, caps not halted, AND the phase's own gate is armed. rest-poly
+        needs the Poly USER socket; rest-kalshi needs the Kalshi WS (its fill channel). In-play
+        additionally requires: not in-play-halted AND not inside the first-fill pause. (The driver
+        enforces the freeze/stale/persistence/cool-off rails first.)"""
         if c.direction not in self.directions or self.caps.halted:
+            return False
+        if not self.sport_live(getattr(c, "sport", ""), phase):
             return False
         feed_ok = self.feed_ok if c.direction == "rest-poly" else self.kalshi_feed_ok
         if not feed_ok:
@@ -687,10 +715,23 @@ class PregameLiveExecutor:
             floor = getattr(dec, "floor", None)
             crosses = best_ask is not None and cur > best_ask - tick + 1e-9
             below_floor = floor is not None and cur > floor + 1e-9      # resting ABOVE floor -> nets < target
-            if crosses or below_floor:
+            # HEDGE DRIFT (N28): the rest book can sit perfectly still while the HEDGE ladder moves out
+            # from under us. ``below_floor`` cannot see that — its floor is solved at the hedge's best
+            # ask, not at the walked cost for our size. This is the CERBVB pickoff trigger.
+            drifted = (not (crosses or below_floor)) and self.hedge_drift_breaches_floor(existing, store)
+            if crosses or below_floor or drifted:
                 # MANDATORY reprice: the resting price is now UNECONOMIC (crosses the live book / under
-                # target). Cancel + replace immediately.
-                if not self._cancel(c.key, now, "reprice_cross" if crosses else "reprice_floor", store, now_ts):
+                # target / can no longer be hedged at the floor). Cancel + replace immediately.
+                _why = "reprice_cross" if crosses else ("reprice_floor" if below_floor else "hedge_drift")
+                if drifted:
+                    self._hedge_drift_repriced += 1
+                    if self.log:
+                        self.log.info("[MAKER_RT][LIVE] HEDGE-DRIFT reprice %s: resting %.4f can no longer "
+                                      "be hedged at the floor (walked locked net %.3f%% < %.3f%%) after "
+                                      "%.0fs — pulling it.", self._name_for(existing), cur,
+                                      100.0 * (self.hedge_drift(existing, store) or 0.0),
+                                      100.0 * self.hedge_execution_floor, now_ts - existing.placed_ts)
+                if not self._cancel(c.key, now, _why, store, now_ts):
                     return
             else:
                 if abs(cur - price) < tick - 1e-9:
@@ -712,9 +753,13 @@ class PregameLiveExecutor:
         # hedge/book depth). The venue minimum is a FLOOR: if even the minimum doesn't fit, REFUSE — never
         # clamp DOWN to the minimum (that bug pinned every quote at 5 shares against a $20 cap).
         from .caps import plan_size
+        # The daily headroom now honours OUTSTANDING reservations, not just money already spent (N14),
+        # and the game headroom is what this match has left of its own allowance (N15) — sizing sees both
+        # before it picks a number, so the ladder cannot creep past either one line at a time.
         plan = plan_size(price, hedge_ask, quote_usd_max=self.caps.quote_usd_max,
                          max_pair_stake_usd=self.caps.max_pair_stake_usd,
-                         daily_stake_headroom=self.caps.max_daily_stake_usd - self.caps.stake_today,
+                         daily_stake_headroom=self.caps.daily_stake_headroom(),
+                         game_stake_headroom=self.game_stake_headroom(c.game),
                          hedge_depth=hedge_depth, book_depth=book_depth, venue_minimum=vmin)
         if plan["refused"]:
             self._note_binding_count("below_venue_minimum")
@@ -733,6 +778,10 @@ class PregameLiveExecutor:
         ok, reason = self.caps.can_place(projected)
         if ok and not self._reservation_ok(c.direction):     # per-direction slot fairness (global cap passed)
             ok, reason = False, "reserve_per_direction"
+        # PER-GAME CONCENTRATION (N15) — checked for a NEW order only; a reprice replaces one of this
+        # game's existing quotes and so cannot raise its concentration.
+        if ok and existing is None and not self._game_slot_ok(c.game):
+            ok, reason = False, "max_open_per_game"
         if not ok:
             # The CSV row rides the SAME 300s throttle as the log line — see _refuse's return contract.
             if self._refuse(c, phase, price, reason, projected, now_ts):
@@ -763,12 +812,16 @@ class PregameLiveExecutor:
                         rest_venue=c.rest_venue,
                         kalshi_side=(c.rest_ref[2] if c.rest_venue == "kalshi" else ""),
                         teams=getattr(c, "teams", ""),
-                        client_order_id=str(res.get("client_order_id") or ""))
+                        client_order_id=str(res.get("client_order_id") or ""),
+                        # What this order RESERVED against the daily + per-game allowances (N14/N15).
+                        # It rides on the order so the release is by construction the same number as the
+                        # hold — without it the reservation is held forever and the budget only shrinks.
+                        projected_pair=float(projected))
         self.open_orders[c.key] = lo
         self._place_fail_n.pop(c.key, None)            # a successful place clears the refusal streak
         self._slot_wait_since.pop(c.key, None)         # got its slot -> no longer waiting
         self._track_rested(lo)                         # reconcile this instrument for flatness (persisted)
-        self.caps.on_open()
+        self.caps.on_open(projected)
         kind = "reprice" if existing is not None else "quote"
         self._record(c, kind, now, phase, price=price, size=size, hedge_ask=hedge_ask, order_id=oid)
         self._note_binding(c, price, size, hedge_ask, plan["binding"], hedge_depth, book_depth, phase)
@@ -870,6 +923,92 @@ class PregameLiveExecutor:
         protected = set(self._viable_directions) | {direction}     # only protect reserves of viable dirs
         return direction_slot_ok(direction, open_by_direction, protected,
                                  self.caps.max_open_quotes, self.reserve_per_direction)
+
+    # -- hedge-drift reprice (N28 / the CERBVB stale-quote pickoff) -----------
+    def hedge_drift(self, lo: _LiveOrder, store: Any) -> Optional[float]:
+        """The CURRENT fee-inclusive locked net of this resting order, WALKED for its own size — or None
+        when the hedge book cannot be read.
+
+        Not ``best_ask``: the quote's floor is solved at top-of-book, but the hedge we would actually lift
+        SWEEPS the ladder for ``lo.size`` shares. Those two numbers agree only while the top level is
+        deep enough, and a resting order is precisely a bet that they will still agree later. A walk that
+        runs out of book is treated as a breach rather than priced off the shallow part it could fill —
+        that shortcut is how the 2026-07-28 PHIMIA fill passed a gate on a ~5c partial walk and then swept
+        to 7c for a guaranteed loss (see hedge.mark_hedge's contract)."""
+        hl = lo.hedge_lookup or {}
+        try:
+            if str(hl.get("venue") or "") == "polymarket":
+                hv = store.poly_view(hl.get("token"))
+            else:
+                hv = store.kalshi_view(hl.get("ticker"), hl.get("side"))
+            ladder = list(getattr(hv, "ask_ladder", None) or [])
+        except Exception:  # noqa: BLE001 — an unreadable book is UNKNOWN, never "fine"
+            return None
+        if not ladder:
+            return None
+        marked = hedge_mod.mark_hedge(ladder, float(lo.size), str(hl.get("venue") or "kalshi"),
+                                      float(lo.poly_rate or 0.0))
+        if not marked:
+            return None
+        if not marked.get("fully_filled"):
+            return float("-inf")          # cannot hedge the size we are resting -> a breach by definition
+        return hedge_mod.locked_net(lo.price, marked["cost_per_share"])
+
+    def hedge_drift_breaches_floor(self, lo: _LiveOrder, store: Any) -> bool:
+        """Would hedging this resting order RIGHT NOW execute below the floor? (Mandatory-reprice test.)
+
+        THE GAP THIS CLOSES. Quote age was never the risk — price safety is event-driven (cross/floor
+        reprice, shock-freeze, feed-down cancel, kickoff-120s), so a 15-minute-old quote is protected in
+        principle. What had no trigger at all was the HEDGE side drifting underneath a quote whose own
+        rest book never moved: CERBVB re-rested at the same price for ~9h and was taken 486s after its
+        last placement, at which point the hedge cost had moved and the pair was already a loss. The
+        existing ``below_floor`` check compares our price to a floor solved at the hedge's BEST ASK, so a
+        ladder that thinned below the top level is invisible to it. This walks the book instead.
+
+        An unreadable book returns False: 'I could not check' must not become a cancel storm on every
+        node the moment a feed hiccups — the fill-time pre-hedge gate is still the hard rail underneath."""
+        net = self.hedge_drift(lo, store)
+        if net is None:
+            return False
+        return net < self.hedge_execution_floor - 1e-9
+
+    # -- per-game concentration (N15) ----------------------------------------
+    def open_on_game(self, game: Any) -> int:
+        """How many of our quotes are resting on ONE game right now."""
+        return sum(1 for lo in self.open_orders.values() if lo.game == game)
+
+    def game_reserved(self, game: Any) -> float:
+        """The $ this game already has committed across its resting quotes (their projected pairs)."""
+        return sum(float(getattr(lo, "projected_pair", 0.0) or 0.0)
+                   for lo in self.open_orders.values() if lo.game == game)
+
+    def _game_slot_ok(self, game: Any) -> bool:
+        """May this game hold ONE more resting quote?
+
+        ``max_open_quotes`` counts orders and does not care that six of them are the same match's totals
+        ladder. On 2026-07-29 one match absorbed 112 placements across six correlated lines — and a
+        single goal moves all six together, so that is not six bets, it is one bet sized six times. This
+        is the cap that says so. 0 disables it."""
+        return self.max_open_per_game <= 0 or self.open_on_game(game) < self.max_open_per_game
+
+    def game_stake_cap(self) -> Optional[float]:
+        """The $ ONE game may have committed at once, or None when the allowance is disabled.
+
+        Read from the LIVE ``caps`` rather than frozen at construction: ``LiveCaps`` is the runtime
+        authority for every other cap (the ARM banner prints it, not the config), so deriving this from
+        config would let the two disagree the moment a pair cap is changed."""
+        if self.max_game_stake_usd > 0:
+            return self.max_game_stake_usd
+        if self.max_open_per_game <= 0:
+            return None
+        return float(self.max_open_per_game) * float(self.caps.max_pair_stake_usd)
+
+    def game_stake_headroom(self, game: Any) -> Optional[float]:
+        """What ``game`` may still commit ($), or None when the per-game allowance is disabled."""
+        cap = self.game_stake_cap()
+        if cap is None:
+            return None
+        return max(0.0, cap - self.game_reserved(game))
 
     def _refuse(self, c: Any, phase: str, price: float, reason: str, projected: float,
                 now_ts: float) -> bool:
@@ -1016,9 +1155,10 @@ class PregameLiveExecutor:
         if not confirmed:
             self._log_cancel_unconfirmed(lo, reason, ts, waiting=False)
             return False
-        return self._finish_cancel(key, lo, now, reason)
+        return self._finish_cancel(key, lo, now, reason, store)
 
-    def _finish_cancel(self, key: tuple, lo: _LiveOrder, now: Any, reason: str) -> bool:
+    def _finish_cancel(self, key: tuple, lo: _LiveOrder, now: Any, reason: str,
+                       store: Any = None) -> bool:
         """A VENUE-CONFIRMED cancel: free the slot, record it, emit the human line. Always returns True.
 
         Split out of ``_cancel`` because the off-loop retry path resolves LATER, on the loop, and must
@@ -1028,9 +1168,9 @@ class PregameLiveExecutor:
             # The raced-fill router (see _cancel_confirmed) already closed this order out and freed its
             # slot. Popping again is harmless; decrementing caps again is not — that silently loses a slot.
             return True
-        self.caps.on_close()
+        self.caps.on_close(lo.projected_pair)
         self._record_lifetime(lo, now)
-        self._record_lo(lo, "expire", now, reason=reason)
+        self._record_lo(lo, "expire", now, reason=reason, store=store)
         age_s = None
         try:
             age_s = (now.timestamp() - float(lo.placed_ts)) if now is not None else None
@@ -1117,7 +1257,7 @@ class PregameLiveExecutor:
             # identical to the inline one while costing the loop zero venue calls.
             if self._cancel_confirmed(lo, res.get("resp"), store, now, now_ts,
                                       order=res.get("order"), resting=res.get("resting", _UNREAD)):
-                self._finish_cancel(key, lo, now, self._cancel_reason.get(key, "cancel"))
+                self._finish_cancel(key, lo, now, self._cancel_reason.get(key, "cancel"), store)
                 closed += 1
         return closed
 
@@ -1127,6 +1267,9 @@ class PregameLiveExecutor:
         one drain call serves every off-loop user and no result is ever silently discarded."""
         if isinstance(wkey, tuple) and wkey and wkey[0] == "fill_poll":
             self._apply_fill_poll_batch(res, exc, store, now, now_ts)
+            return
+        if isinstance(wkey, tuple) and wkey and wkey[0] == "reconcile":
+            self._apply_reconcile_batch(res, exc, store, now, now_ts)
             return
         if self.log:
             self.log.warning("[MAKER_RT][LIVE] unclaimed off-loop result %s (exc=%s).", wkey, exc)
@@ -1608,19 +1751,27 @@ class PregameLiveExecutor:
         while the primary fill detector is simply gone. So the LOOP watches the clock on it. The sockets
         are still an accelerator underneath, so this is a scream, not a halt — but an operator has to be
         told, because "everything looks fine" is exactly what this failure would otherwise look like."""
-        if self._fill_poll_applied_ts <= 0.0 or now_ts <= 0.0:
+        if now_ts <= 0.0:
             return
-        stale = now_ts - self._fill_poll_applied_ts
-        if stale < self.OFFLOOP_STALL_CADENCES * max(1.0, self.fill_poll_s):
+        stalls = []
+        if self._fill_poll_applied_ts > 0.0:
+            stale = now_ts - self._fill_poll_applied_ts
+            if stale >= self.OFFLOOP_STALL_CADENCES * max(1.0, self.fill_poll_s):
+                stalls.append(("fill-poll", stale, self.fill_poll_s))
+        if self._reconcile_applied_ts > 0.0:
+            stale = now_ts - self._reconcile_applied_ts
+            if stale >= self.OFFLOOP_STALL_CADENCES * max(1.0, self.reconcile_every_s):
+                stalls.append(("reconcile", stale, self.reconcile_every_s))
+        if not stalls:
             return
         if now_ts - self._offloop_stall_alerted_ts < self.OFFLOOP_STALL_ALERT_EVERY_S:
             return
         self._offloop_stall_alerted_ts = now_ts
         if self.log:
-            self.log.error("[MAKER_RT][LIVE] fill-poll batch has not landed for %.0fs (cadence %.0fs, "
-                           "%d job(s) in flight) — the WS-independent fill authority is STALLED; the "
-                           "sockets are still routing fills but REST is not confirming them.",
-                           stale, self.fill_poll_s, self._worker.pending())
+            for name, stale, cadence in stalls:
+                self.log.error("[MAKER_RT][LIVE] %s batch has not landed for %.0fs (cadence %.0fs, %d "
+                               "job(s) in flight) — an off-loop safety pass is STALLED.",
+                               name, stale, cadence, self._worker.pending())
         self._instant(alerts.format_event("problem", detail=(
             "My routine double-check with the exchanges has stopped answering. I am still watching the "
             "live feeds, so fills are still being seen and hedged — but the slower safety net behind "
@@ -1749,7 +1900,7 @@ class PregameLiveExecutor:
         if self.open_orders.pop(key, None) is None:
             return
         self._forget_cancel_state(key)
-        self.caps.on_close()
+        self.caps.on_close(lo.projected_pair)
         self._slot_released += 1
         self._record_lo(lo, "slot_released", now, reason="venue_not_resting")
         if self.log:
@@ -2009,7 +2160,7 @@ class PregameLiveExecutor:
         if total >= lo.size - 1e-9:                        # fully filled -> no remainder resting
             self._record_lifetime(lo, now)
             self.open_orders.pop(key, None)
-            self.caps.on_close()
+            self.caps.on_close(lo.projected_pair)
             self._forget_cancel_state(key)                 # nothing left to retry a cancel against
         elif self.caps.halted or (lo.phase == "inplay" and self.inplay_halted):
             # force: a cap/circuit has tripped WITH a live partial resting. Pulling the remainder is the
@@ -2071,7 +2222,7 @@ class PregameLiveExecutor:
         re_mark = hedge_mod.mark_hedge(hv.ask_ladder, matched, hedge_venue, lo.poly_rate) if hv else None
         locked = hedge_mod.locked_net(fill_price, re_mark["cost_per_share"]) if re_mark else None
         hedge_px_est = re_mark["avg_price"] if re_mark else None
-        self._record_fill(lo, matched, fill_price, now)          # ledger chain head: fill -> hedge_* -> unwind
+        self._record_fill(lo, matched, fill_price, now, store)   # ledger chain head: fill -> hedge_* -> unwind
         self._emit_event("filled", lo, instant=True, price=fill_price, size=matched)
         # DECLINE (same code path, both directions): the walked hedge can't lock a net above the decline
         # floor, OR the walked pair already costs >= $1.00/share (a guaranteed loss before fees), OR there
@@ -3527,7 +3678,72 @@ class PregameLiveExecutor:
         if isinstance(data, dict):
             self._market_legs.update(data)
 
-    def reconcile_positions(self, now: Any) -> Optional[dict]:
+    # -- reconciliation, off-loop (phase 2's handoff: it became the largest sync block) --------------
+    def submit_reconcile(self, now_ts: float) -> bool:
+        """Queue the position-reconciliation venue reads on the worker. False if one is already in flight.
+
+        Phase 2 moved the fill poll off the loop and reconciliation inherited the title of largest
+        synchronous block (measured max 4,241ms — a 4-second freeze every 5 minutes). It is the same
+        shape as the fill poll: N per-instrument venue reads in a loop, none of which need the event
+        loop. WHAT MOVES IS THE READS. Every decision the reconcile makes — pruning the watch-set,
+        flagging an unexplained holding, latching an ORPHAN halt, auto-flattening — happens on the loop
+        thread in ``reconcile_positions``, exactly as before."""
+        toks, tks = list(self._traded_tokens), list(self._traded_tickers)
+        if not (toks or tks):
+            return False
+        submitted = self._worker.submit(("reconcile",), lambda: self._reconcile_job(toks, tks))
+        if submitted and self._reconcile_applied_ts == 0.0:
+            self._reconcile_applied_ts = float(now_ts)       # start the watchdog clock at the first submit
+        return submitted
+
+    def _reconcile_job(self, toks: list, tks: list) -> dict:
+        """OFF-LOOP. Read every watched instrument's position. Decides nothing.
+
+        A read that RAISES is recorded as ``_UNREAD`` rather than dropped, because 'we could not ask' and
+        'the venue says zero' must not arrive as the same answer — that distinction is what stops a
+        network blip from pruning a watched instrument or inventing an orphan."""
+        out: dict = {"polymarket": {}, "kalshi": {}}
+        for tok in toks:
+            try:
+                out["polymarket"][tok] = self.poly.conditional_balance(tok)
+            except Exception:  # noqa: BLE001
+                out["polymarket"][tok] = _UNREAD
+        for tk in tks:
+            try:
+                out["kalshi"][tk] = self._kalshi_position(tk)
+            except Exception:  # noqa: BLE001
+                out["kalshi"][tk] = _UNREAD
+        return out
+
+    def _reconcile_read(self, venue: str, instrument: Any, balances: Optional[dict]):
+        """This instrument's position: from the batch when one was fetched, else a live read.
+
+        Returns ``_UNREAD`` for anything unreadable — including an instrument the batch never covered,
+        because a token added to the watch-set AFTER the job was queued has not been checked and must not
+        be judged by it."""
+        if balances is None:
+            try:
+                return (self.poly.conditional_balance(instrument) if venue == "polymarket"
+                        else self._kalshi_position(instrument))
+            except Exception:  # noqa: BLE001
+                return _UNREAD
+        return (balances.get(venue) or {}).get(instrument, _UNREAD)
+
+    def _apply_reconcile_batch(self, res: Any, exc: Any, store: Any, now: Any, now_ts: float) -> None:
+        """ON THE LOOP: run the unchanged reconciliation over batched reads."""
+        self._reconcile_applied_ts = float(now_ts) or self._reconcile_applied_ts
+        if exc is not None or not isinstance(res, dict):
+            if self.log:
+                self.log.warning("[MAKER_RT][LIVE] batched reconcile FAILED (%s) — nothing pruned, nothing "
+                                 "flagged; the next cadence re-reads it.", exc)
+            return
+        try:
+            self.reconcile_positions(now, balances=res)
+        except Exception as exc2:  # noqa: BLE001 — a reconcile failure must not kill the loop
+            if self.log:
+                self.log.warning("[MAKER_RT][LIVE] reconciliation failed: %s", exc2)
+
+    def reconcile_positions(self, now: Any, balances: Optional[dict] = None) -> Optional[dict]:
         """Read ACTUAL positions and diff against the bot's belief (flat -- a resting order is NOT a
         position; every fill is hedged or unwound-to-flat). Any non-zero holding on a token WE TRADED
         this run is an ORPHAN. Runs at startup + every 5 min while armed. If ``auto_flatten`` it also
@@ -3555,11 +3771,8 @@ class PregameLiveExecutor:
         suspects: dict = {}
         flat_toks: list = []
         for tok in list(self._traded_tokens):                # POLY: reliable per-token read (CLOB), maker-scoped
-            try:
-                bal = self.poly.conditional_balance(tok)
-            except Exception:  # noqa: BLE001 - unknown -> keep watching (don't prune on a read failure)
-                continue
-            if bal is None:
+            bal = self._reconcile_read("polymarket", tok, balances)
+            if bal is _UNREAD or bal is None:                # unreadable -> keep watching (never prune/orphan)
                 continue
             # Subtract what we EXPECT to hold (a filled rest leg / live hedge). Only the UNEXPLAINED
             # surplus is naked; a holding that matches an expected leg is not an orphan (it settles).
@@ -3573,11 +3786,8 @@ class PregameLiveExecutor:
             self._persist_traded_tokens()
         flat_tks: list = []
         for tk in list(self._traded_tickers):                # KALSHI: maker-scoped portfolio position read
-            try:
-                pos = self._kalshi_position(tk)
-            except Exception:  # noqa: BLE001
-                continue
-            if pos is None:                                  # unreadable -> keep watching (never prune/orphan here)
+            pos = self._reconcile_read("kalshi", tk, balances)
+            if pos is _UNREAD or pos is None:                # unreadable -> keep watching (never prune/orphan)
                 continue
             unexplained = abs(pos) - self._expected_shares("kalshi", tk)
             if unexplained > 0.5:
@@ -3692,9 +3902,19 @@ class PregameLiveExecutor:
                            "hedge_ask": round(hedge_ask, 4) if hedge_ask is not None else "",
                            "reason": reason or (order_id or "")}, now)
 
+    def _quote_age_s(self, lo: _LiveOrder, now: Any) -> Optional[float]:
+        """How long this quote had been resting, in seconds. Written on every live row (N28) — without
+        it there is no way to ask whether the fills we get are the stale ones."""
+        try:
+            age = float(now.timestamp()) - float(lo.placed_ts)
+        except Exception:  # noqa: BLE001
+            return None
+        return round(age, 1) if age >= 0 else None
+
     def _record_lo(self, lo: _LiveOrder, event: str, now: Any, *, price: float = None, size: float = None,
                    locked_net: float = None, locked_pnl: float = None, unwind_cost: float = None,
-                   hedge_avg: float = None, hedge_order_id: Any = None, reason: str = "") -> None:
+                   hedge_avg: float = None, hedge_order_id: Any = None, reason: str = "",
+                   store: Any = None) -> None:
         if self.state is None:
             return
         row = {"event": event, "mode": "live", "sport": lo.sport, "phase": lo.phase, "game": lo.game,
@@ -3702,6 +3922,13 @@ class PregameLiveExecutor:
                "quote_price": round(price if price is not None else lo.price, 4),
                "size": round(size if size is not None else lo.size, 2),
                "reason": reason or lo.order_id}
+        age = self._quote_age_s(lo, now)
+        if age is not None:
+            row["quote_age_s"] = age
+        if store is not None:
+            drift = self.hedge_drift(lo, store)
+            if drift is not None and drift != float("-inf"):
+                row["hedge_locked_now"] = round(float(drift) * 100, 4)
         if locked_net is not None:
             row["locked_net"] = round(float(locked_net) * 100, 4)
         if hedge_avg is not None:
@@ -3718,14 +3945,28 @@ class PregameLiveExecutor:
                 row[k] = v
         self.state.record(row, now)
 
-    def _record_fill(self, lo: _LiveOrder, matched: float, fill_price: float, now: Any) -> None:
-        """The head of the ledger chain: a live 'fill' row (fill -> hedge_* -> unwind|unwind_FAILED)."""
+    def _record_fill(self, lo: _LiveOrder, matched: float, fill_price: float, now: Any,
+                     store: Any = None) -> None:
+        """The head of the ledger chain: a live 'fill' row (fill -> hedge_* -> unwind|unwind_FAILED).
+
+        Carries ``quote_age_s`` and the hedge's WALKED locked net at fill time (N28). Those two columns
+        are what make the stale-quote question answerable at all: 'were we picked off?' is a correlation
+        between how long a quote had rested and how far the hedge had moved by the time it was taken, and
+        both halves were missing. CERBVB was hit 486s after its last placement and nothing recorded it."""
         if self.state is None:
             return
-        self.state.record({"event": "fill", "mode": "live", "sport": lo.sport, "phase": lo.phase,
-                           "game": lo.game, "market_key": lo.market_key, "side": lo.side,
-                           "direction": lo.direction, "quote_price": round(float(fill_price), 4),
-                           "size": round(float(matched), 2), "reason": lo.order_id}, now)
+        row = {"event": "fill", "mode": "live", "sport": lo.sport, "phase": lo.phase,
+               "game": lo.game, "market_key": lo.market_key, "side": lo.side,
+               "direction": lo.direction, "quote_price": round(float(fill_price), 4),
+               "size": round(float(matched), 2), "reason": lo.order_id}
+        age = self._quote_age_s(lo, now)
+        if age is not None:
+            row["quote_age_s"] = age
+        if store is not None:
+            drift = self.hedge_drift(lo, store)
+            if drift is not None and drift != float("-inf"):
+                row["hedge_locked_now"] = round(float(drift) * 100, 4)
+        self.state.record(row, now)
 
     # -- alerting: INSTANT (fill/hedge/unwind/pause/halt/feed/error) vs ROUTINE (quote/reprice/cancel) --
     def _send_telegram(self, text: str) -> None:

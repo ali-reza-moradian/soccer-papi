@@ -59,13 +59,41 @@ def _node(nd: dict) -> Node:
                 kalshi_ticker=nd.get("kalshi_ticker"), kalshi_side=nd.get("kalshi_side"))
 
 
+def select_games(game_kick: dict, *, max_games: int, per_sport: Optional[dict] = None) -> set:
+    """Which ``(sport, game)`` keys to admit, given each one's kickoff. PURE, so it is unit-tested.
+
+    Without ``per_sport`` this is one nearest-by-kickoff queue across every sport — and soccer's fixture
+    density wins it outright (the observed universe was 92% soccer, 120 of 130 markets, while the next
+    UFC card sat at queue position 172 and became quotable only on fight day). With it, each sport gets
+    its own nearest-N queue.
+
+    A sport ABSENT from the map is not capped per-sport; it competes for whatever the global
+    ``max_games`` backstop leaves. That direction is deliberate — an unlisted sport can never grow the
+    universe past the global cap, and a map that forgot to name a sport does not silently delete it."""
+    ordered = sorted(game_kick.items(), key=lambda kv: kv[1])
+    if not per_sport:
+        return {g for g, _ in ordered[:max(0, int(max_games))]}
+    kept: list = []
+    taken: dict = {}
+    for key, ts in ordered:
+        sport = key[0]
+        limit = per_sport.get(sport)
+        if limit is not None and taken.get(sport, 0) >= max(0, int(limit)):
+            continue
+        taken[sport] = taken.get(sport, 0) + 1
+        kept.append((key, ts))
+    return {g for g, _ in kept[:max(0, int(max_games))]}      # global backstop still applies
+
+
 def build_universe(trees: dict, now_ts: float, *, max_games: int = 20,
-                   expire_before_kickoff_s: int = 120, horizon_hours: Optional[dict] = None) -> list:
+                   expire_before_kickoff_s: int = 120, horizon_hours: Optional[dict] = None,
+                   max_games_per_sport: Optional[dict] = None) -> list:
     """Every settlement-clean, 2-outcome market of the nearest ``max_games`` games by kickoff, admitted
     from now until kickoff + the sport's in-play horizon. ``trees`` maps sport -> loaded tree dict;
     ``horizon_hours`` maps sport -> hours after kickoff a node stays admitted (default {} -> drop at
-    kickoff, the pre-in-play behavior). The driver assigns each node its pre/gap/inplay phase at
-    quote time; the universe only decides admission."""
+    kickoff, the pre-in-play behavior). ``max_games_per_sport`` gives each sport its own nearest-N queue
+    (see ``select_games``). The driver assigns each node its pre/gap/inplay phase at quote time; the
+    universe only decides admission."""
     horizon_hours = horizon_hours or {}
     per_market: list = []
     game_kick: dict = {}
@@ -83,7 +111,7 @@ def build_universe(trees: dict, now_ts: float, *, max_games: int = 20,
                 continue
             per_market.append((sport, ts, m))
             game_kick[(sport, m.game)] = min(ts, game_kick.get((sport, m.game), ts))
-    keep = {g for g, _ in sorted(game_kick.items(), key=lambda kv: kv[1])[:max(0, int(max_games))]}
+    keep = select_games(game_kick, max_games=max_games, per_sport=max_games_per_sport)
     out: list = []
     for sport, ts, m in per_market:
         if (sport, m.game) not in keep:

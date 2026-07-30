@@ -315,7 +315,8 @@ async def _run(cfg: Any, log: Any) -> int:
     try:
         universe = build_universe(trees, time.time(), max_games=cfg.max_games,
                                   expire_before_kickoff_s=cfg.expire_before_kickoff_s,
-                                  horizon_hours=horizon)
+                                  horizon_hours=horizon,
+                                  max_games_per_sport=cfg.max_games_per_sport)
     except Exception as exc:  # noqa: BLE001 — a malformed tree must not crash-loop the maker at startup
         log.error("[MAKER_RT] STARTUP universe build FAILED (%s) — starting with an EMPTY universe; the "
                   "next tree rebuild retries.", exc)
@@ -421,11 +422,11 @@ async def _run(cfg: Any, log: Any) -> int:
                     pregame_exec.submit_fill_poll(now_ts)
                 if now_ts - last_reconcile >= RECONCILE_EVERY_S:     # POSITION RECONCILIATION (orphan guard)
                     last_reconcile = now_ts
+                    # Same split as the fill poll: the per-instrument venue READS go to the worker, and
+                    # every decision (prune, flag, ORPHAN halt, auto-flatten) is made on the loop when the
+                    # batch drains. This was the largest synchronous block left after phase 2 (max 4.2s).
                     with STATS.timer("reconcile"):
-                        try:
-                            pregame_exec.reconcile_positions(now)
-                        except Exception as exc:  # noqa: BLE001
-                            log.warning("[MAKER_RT][LIVE] reconciliation failed: %s", exc)
+                        pregame_exec.submit_reconcile(now_ts)
                 if now_ts - last_settle >= SETTLE_EVERY_S:           # SETTLED-P&L (venue-truth realized pnl)
                     last_settle = now_ts
                     with STATS.timer("settle"):
@@ -488,7 +489,8 @@ async def _run(cfg: Any, log: Any) -> int:
                             new_trees = load_trees(previous=trees, log=log)
                             new_universe = build_universe(new_trees, now_ts, max_games=cfg.max_games,
                                                           expire_before_kickoff_s=cfg.expire_before_kickoff_s,
-                                                          horizon_hours=horizon)
+                                                          horizon_hours=horizon,
+                                                          max_games_per_sport=cfg.max_games_per_sport)
                     except Exception as exc:  # noqa: BLE001 — a bad tree must never kill the live loop
                         log.error("[MAKER_RT] tree reload FAILED (%s) — keeping the current universe of "
                                   "%d market(s); retrying next heartbeat.", exc, len(universe))
@@ -593,6 +595,12 @@ def main(argv: Optional[list] = None) -> int:
     log = get_logger("maker_rt")
     cfg = mrt_config.load_maker_rt_config()
     args = sys.argv[1:] if argv is None else argv
+    if "--gates" in args:
+        # THE MEASUREMENT GATE — read-only, places nothing, needs no creds. This is the report a cap
+        # raise has to be argued from (audit Money §4); see gates.py for why the numbers are cut at the
+        # restatement and why untracked windfalls are excluded.
+        from .gates import run as run_gates
+        return run_gates(log=log)
     if "--selfcheck" in args:
         # READ-ONLY credential/readiness diagnostic — constructs the real order clients and probes
         # each self-check item individually. Places NOTHING; never starts the feeds.

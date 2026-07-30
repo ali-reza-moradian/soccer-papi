@@ -376,26 +376,38 @@ class QuoteDriver:
             self.pregame_exec.set_viable_directions(viable_dirs)
 
     def _freeze_node(self, c: Candidate, now_ts: float, until_ts: float, now: Any, move: float) -> None:
-        """Shock freeze: disarm EVERY open shadow quote of the node and place none until ``until_ts``."""
+        """Shock freeze: disarm every open quote on the shocked node AND on every other line of the SAME
+        GAME, and place none until ``until_ts``.
+
+        GAME-WIDE on purpose (N15). A shock is news about the MATCH, not about one totals line: a goal
+        moves over-1.5, over-2.5, over-3.5, both moneylines and the draw at the same instant. Freezing
+        only the line that happened to tick first left the other five quoting into the same event with
+        stale prices — which is the concentration risk and the stale-quote risk arriving together. The
+        freeze window is keyed per node so each line thaws on its own clock, but the shock sets all of
+        them."""
         node3 = c.node3
         newly = now_ts >= self.freeze_until.get(node3, 0.0)   # a fresh freeze (not an extension) -> log once
-        self.freeze_until[node3] = until_ts
+        game2 = (c.sport, c.game)
+        frozen_nodes = {c2.node3 for c2 in self._cands if (c2.sport, c2.game) == game2} or {node3}
+        for n3 in frozen_nodes:
+            self.freeze_until[n3] = max(until_ts, self.freeze_until.get(n3, 0.0))
         for key in list(self.fills.quotes):
-            if key[:3] == node3:
+            if key[:3] in frozen_nodes:
                 self.fills.disarm(key)
-        if self.pregame_exec is not None:                 # LIVE: cancel any real order on the frozen node
+        if self.pregame_exec is not None:                 # LIVE: cancel every real order on the game
             for key in list(self.pregame_exec.open_orders):
-                if key[:3] == node3:
+                if key[:3] in frozen_nodes:
                     self.pregame_exec.cancel_key(key, now, "shock_freeze")
         for c2 in self._cands:
-            if c2.node3 == node3:
+            if c2.node3 in frozen_nodes:
                 self.last_event[c2.key] = None
         self.state.record({"event": "expire", "mode": "shadow", "sport": c.sport, "game": c.game,
                            "market_key": c.market_key, "side": c.rest_side, "direction": c.direction,
                            "phase": "inplay", "reason": "shock_freeze"}, now)
         if self.log and newly:
-            self.log.info("[MAKER_RT] FREEZE %s %s (mid move %.3f >= shock) - disarmed, no quotes for the "
-                          "freeze window.", c.game, c.market_key, move)
+            self.log.info("[MAKER_RT] FREEZE %s %s (mid move %.3f >= shock) - disarmed %d line(s) of this "
+                          "game, no quotes for the freeze window.", c.game, c.market_key, move,
+                          len(frozen_nodes))
 
     def _maybe_sample_achievable(self, c: Candidate, phase: str, achv: Optional[float], rails_ok: bool,
                                  now: Any, now_ts: float) -> None:

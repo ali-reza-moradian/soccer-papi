@@ -47,22 +47,29 @@ def direction_slot_ok(direction: str, open_by_direction: dict, enabled_direction
 
 
 #: the SIZE-limiting constraints, in tie-break priority (caps before depth), plus the refusal marker.
-BINDING_CONSTRAINTS = ("quote_usd_max", "pair_cap", "daily_stake", "hedge_depth", "book_depth")
+BINDING_CONSTRAINTS = ("quote_usd_max", "pair_cap", "game_cap", "daily_stake", "hedge_depth",
+                       "book_depth")
 _BINDING_ORDER = {n: i for i, n in enumerate(BINDING_CONSTRAINTS)}
 
 
 def plan_size(price: float, hedge_ask: Optional[float], *, quote_usd_max: float,
               max_pair_stake_usd: float, daily_stake_headroom: float, hedge_depth: Optional[float],
-              book_depth: Optional[float], venue_minimum: int) -> dict:
+              book_depth: Optional[float], venue_minimum: int,
+              game_stake_headroom: Optional[float] = None) -> dict:
     """The LARGEST whole-share rest-leg size that fits EVERY constraint — the venue minimum is a FLOOR,
     NEVER a ceiling. (The old ``min(floor_min, cap)`` clamped every quote DOWN to 5 shares, so a $2.80
     fill rested against a $20 cap.) Take the smallest of the resource allowances:
 
       * ``quote_usd_max`` — rest-leg notional cap:            quote_usd_max / price
       * ``pair_cap``      — whole-pair stake cap:             max_pair_stake_usd / (price + hedge_ask)
+      * ``game_cap``      — what THIS GAME has left:          game_stake_headroom / (price + hedge_ask)
       * ``daily_stake``   — remaining daily budget:           daily_stake_headroom / (price + hedge_ask)
       * ``hedge_depth``   — resting hedge shares at the ask:  hedge_depth
       * ``book_depth``    — rest-book liquidity:              book_depth
+
+    ``game_stake_headroom`` is what stops a single match accumulating exposure one correlated line at a
+    time (N15): the per-pair cap is enforced per QUOTE, so six totals lines on one match are six
+    separate "within the cap" decisions that a single goal settles together. None -> unconstrained.
 
     ``pair_cap``/``daily_stake`` divide by the PAIR notional (both legs count toward those caps), so the
     resulting size can never breach them. floor() to whole shares. If that largest size is BELOW the
@@ -75,6 +82,8 @@ def plan_size(price: float, hedge_ask: Optional[float], *, quote_usd_max: float,
     allow = {
         "quote_usd_max": float(quote_usd_max) / px,
         "pair_cap": float(max_pair_stake_usd) / pair_px,
+        "game_cap": (max(0.0, float(game_stake_headroom)) / pair_px
+                     if game_stake_headroom is not None else inf),
         "daily_stake": max(0.0, float(daily_stake_headroom)) / pair_px,
         "hedge_depth": float(hedge_depth) if hedge_depth is not None else inf,
         "book_depth": float(book_depth) if book_depth is not None else inf,
@@ -111,6 +120,12 @@ class LiveCaps:
         self.fills_today = 0
         self.pnl_today = 0.0
         self.open_quotes = 0
+        # RESERVED: the SUM of the projected pair costs of the quotes resting RIGHT NOW (N14). The daily
+        # cap used to check only the ONE quote being placed against ``stake_today``, so twelve slots at a
+        # $350 pair cap were $4,200 of committable exposure against an $800 "cap" — the cap throttled the
+        # RATE of placement and never bounded what was outstanding. A resting order is a promise to spend
+        # its pair cost, so it is counted from the moment it rests and released when it stops resting.
+        self.reserved_stake = 0.0
         self.halted = False
         self.halt_reason: Optional[str] = None
         self._day = ""                   # UTC day of the running counters (rolled by roll())
@@ -173,24 +188,51 @@ class LiveCaps:
             return False, "max_open_quotes"
         if self.fills_today >= self.max_fills_per_day:
             return False, "max_fills_per_day"
+        # FILLS-PER-DAY HEADROOM. Every resting quote is a fill waiting to happen, so holding more open
+        # quotes than the day has fills left is a promise the caps cannot keep: 12 opens against 3
+        # remaining fills means 9 of them must be cancelled or breach the rail. Refuse the excess up
+        # front instead of discovering it at fill time. (No day-halt — the budget is not spent, and it
+        # frees itself as quotes close.)
+        if self.open_quotes >= max(0, self.max_fills_per_day - self.fills_today):
+            return False, "fills_per_day_headroom"
         # PER-PAIR sizing cap FIRST (a single oversized pair is refused, not day-halted).
         if float(projected_pair_stake) > self.max_pair_stake_usd + 1e-9:
             return False, "max_pair_stake_usd"
-        if self.stake_today + float(projected_pair_stake) > self.max_daily_stake_usd + 1e-9:
-            self._halt("max_daily_stake_usd")
-            return False, "max_daily_stake_usd"
+        # EXPOSURE TRUTH: spent + OUTSTANDING + this one, against the daily cap.
+        if self.committed_stake() + float(projected_pair_stake) > self.max_daily_stake_usd + 1e-9:
+            # NOT a day-halt. Unlike money already spent, a reservation is released when its quote is
+            # cancelled or ages out, so this is a "full right now" condition, not a spent budget — and
+            # halting the day over a temporary one would be the concentration bug wearing a rail's
+            # clothes. The day-halt below still fires on genuinely SPENT stake.
+            if self.stake_today + float(projected_pair_stake) > self.max_daily_stake_usd + 1e-9:
+                self._halt("max_daily_stake_usd")
+                return False, "max_daily_stake_usd"
+            return False, "daily_stake_reserved"
         return True, "ok"
+
+    def committed_stake(self) -> float:
+        """Spent today PLUS what the currently-resting quotes would spend if they all filled."""
+        return float(self.stake_today) + max(0.0, float(self.reserved_stake))
+
+    def daily_stake_headroom(self) -> float:
+        """What a NEW quote may still project, once outstanding reservations are honoured."""
+        return max(0.0, float(self.max_daily_stake_usd) - self.committed_stake())
 
     # -- accounting (called on real venue events) ----------------------------
     def commit_stake(self, usd: float) -> None:
         """Add REAL committed notional from a leg (a rest fill, a hedge lift, or an unwind sell)."""
         self.stake_today += float(usd)
 
-    def on_open(self) -> None:
+    def on_open(self, projected_pair_stake: float = 0.0) -> None:
+        """A quote is now RESTING: hold its projected pair cost against the daily cap until it stops."""
         self.open_quotes += 1
+        self.reserved_stake += max(0.0, float(projected_pair_stake))
 
-    def on_close(self) -> None:
+    def on_close(self, projected_pair_stake: float = 0.0) -> None:
+        """A quote stopped resting (cancelled, aged out, or filled). Release its reservation — on a FILL
+        the real legs arrive through ``commit_stake``, so releasing here is what stops double-counting."""
         self.open_quotes = max(0, self.open_quotes - 1)
+        self.reserved_stake = max(0.0, self.reserved_stake - max(0.0, float(projected_pair_stake)))
 
     #: The plausible-pnl bound is derived from what a hedged pair CAN produce, not from its stake: a
     #: pair's pnl is ``locked_net x shares``, ``locked_net`` is capped by the sanity ceiling, and the
