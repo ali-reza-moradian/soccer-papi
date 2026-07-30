@@ -41,12 +41,32 @@ from .quotes import POLY_MIN_SHARES
 
 _UNREAD = object()               # sentinel: "_venue_order_state was not handed a pre-read order dict"
 HEDGE_DECLINE_FLOOR = -0.010     # re-verify at fill: walked locked-net below this -> decline+unwind (both phases)
+# THE HARD EXECUTION BOUND. The price cap actually SENT to the hedge venue is solved at THIS floor, never
+# at HEDGE_DECLINE_FLOOR. At 0.0 it is fee-inclusive break-even, which makes a pair costing more than
+# $1.00/share physically unfillable: the venue either fills at/under the cap or returns nothing and the
+# caller unwinds. HEDGE_DECLINE_FLOOR remains the (looser) "is this even worth trying" gate, so the two
+# can never disagree in the dangerous direction — the executed cap is min(policy, hard) = hard.
+HEDGE_EXECUTION_FLOOR = 0.0
+# BOOKING-TIME PAIR BAND. Complementary legs of a real hedge must sum to about $1.00/share. Anything
+# outside [1 - sanity_ceiling, 1 + PAIR_SUM_TOL] is a SPACE/PAIRING error, not a trade: Cerezo booked
+# 0.76 + 0.77 = $1.53 (the YES-space read of a 0.23 NO fill) and Fortaleza booked 0.04 + 0.05 = $0.09.
+# The lower bound defers to the same sanity ceiling that governs quoting so one rail can never accept
+# what the other would reject; the upper bound is $1.00 plus tick/fee slack.
+PAIR_SUM_TOL = 0.03
 HEDGE_SHARE_TOL = 0.5            # share tolerance for "fully hedged"/"flat" position reads (< 1 contract)
 UNWIND_MAX_ATTEMPTS = 3         # reconcile-to-flat: re-sell the naked remainder up to this many times
 # SMALLEST SIZE EACH VENUE WILL PRICE. Below it there is no order we are able to place, so a residue that
 # small is not an orphan — it is un-closable dust that must ride to settlement (and gets booked there at
 # venue truth). Kalshi orders carry whole contracts (fmt_count/clamp_count); Poly's floor is 5 shares.
 MIN_TRADABLE = {"kalshi": 1.0, "polymarket": float(POLY_MIN_SHARES)}
+
+
+def _iso(now: Any) -> str:
+    """UTC stamp for a persisted incident record; "" when ``now`` cannot format itself."""
+    try:
+        return now.strftime("%Y-%m-%dT%H:%M:%SZ")
+    except Exception:  # noqa: BLE001
+        return ""
 # A full-slot refusal (max_open_quotes / reserve_per_direction) recurs EVERY debounce loop while the caps
 # are full — the driver retries each viable candidate ~4x/s. Log a given node+direction's slot refusal at
 # most once per this window; the suppressed count is surfaced in the Telegram digest line instead.
@@ -188,6 +208,13 @@ class PregameLiveExecutor:
         # the panel even when Telegram is unreachable (Telegram 429'd 1,682x in the incident log — an
         # alert channel is NEVER the detection channel).
         self._orphan_path = mrt_config.runtime_path("orphan")
+        # BOOKING QUARANTINE: same durability contract as ORPHAN, for a booking REFUSED by an invariant
+        # (impossible pair sum / edge above the sanity ceiling). Latched so a restart cannot resume
+        # trading on books a human has not reconciled against the venues.
+        self.quarantine: Optional[dict] = None
+        self._quarantine_path = mrt_config.runtime_path("quarantine")
+        # The sanity ceiling that gates QUOTING also gates BOOKING (see book_refuse_reason).
+        self.max_plausible_edge_pct = float(getattr(cfg, "max_plausible_edge_pct", 5.0))
         # WS-INDEPENDENT FILL AUTHORITY: REST is the primary detector, the socket is an accelerator.
         self.fill_poll_s = float(getattr(getattr(cfg, "live", None), "fill_poll_s", 10.0))
         self._force_fill_poll = False        # set by a cancel that failed because the order FILLED
@@ -228,6 +255,7 @@ class PregameLiveExecutor:
             kalshi=self.kalshi, poly=self.poly,
             record=(self.state.record if self.state is not None else None), log=self.log,
             max_pair_stake_usd=float(getattr(self.caps, "max_pair_stake_usd", 100.0)))
+        self._settle_reconciler.refused_path = mrt_config.runtime_path("refused_settlements")
         # DAILY CAPS PERSISTENCE: LiveCaps' per-day counters (stake_today / fills_today / pnl_today) are
         # in-memory and reset to 0 on every process start, so a mid-day deploy silently RESET the daily
         # budget (12:08Z restart wiped the day's stake to $0). Persist them (keyed by UTC day) and restore
@@ -241,6 +269,7 @@ class PregameLiveExecutor:
         self._load_expected_positions()
         self._load_provisional()
         self._load_orphan()
+        self._load_quarantine()
 
     # -- daily roll ----------------------------------------------------------
     def roll_day(self, now: Any) -> None:
@@ -1417,21 +1446,30 @@ class PregameLiveExecutor:
             locked_net_est, fill_price, hedge_price_est, marked_shares, requested_shares) is not None
 
     @staticmethod
-    def _hedge_price_cap(fill_price: float, hedge_venue: str, poly_rate: float = 0.05) -> float:
-        """The HIGHEST hedge price whose fee-inclusive locked net still meets ``HEDGE_DECLINE_FLOOR`` —
-        sent to the venue as the hedge order's LIMIT.
+    def _hedge_price_cap(fill_price: float, hedge_venue: str, poly_rate: float = 0.05,
+                         floor: float = HEDGE_EXECUTION_FLOOR) -> float:
+        """The HIGHEST hedge price whose fee-inclusive locked net still meets ``floor`` — and the price
+        actually SENT to the venue as the hedge order's LIMIT.
 
-        Without this the hedger picks its own limit from a book it re-fetches at hedge time
-        (``best_ask + 2 ticks`` on Poly), so a book that moved between the gate and the order could be
-        swept at ANY price — the gate approved ~5c and the sweep paid 7c. Capping means a moved book fills
-        less (or nothing) and falls through to the existing VERIFIED unwind, instead of locking a loss.
+        This is the ONE number the hedge order is built from. The hedger does not get to re-derive a
+        limit from a book it re-fetches at hedge time (``best_ask + 2 ticks`` on Poly): it may quote
+        TIGHTER, never looser, because ``_apply_cap`` floors its limit to this. A book that moved
+        between the gate and the order therefore fills less, or nothing, and falls through to the
+        existing VERIFIED unwind — it can never lock a loss.
+
+        ``floor`` defaults to ``HEDGE_EXECUTION_FLOOR`` (0.0 = fee-inclusive break-even), NOT to the
+        looser ``HEDGE_DECLINE_FLOOR``. That is what makes "a pair costing more than $1.00/share" a
+        physical impossibility rather than a policy: at break-even the cap solves
+        ``rest + hedge + fee = $1.00``, so any worse price is outside the limit we sent and the venue
+        simply will not fill it. Tottenham's 0.62 + 0.37 + fees = $1.0085 pair is unreachable because
+        the cap for a 0.62 rest leg is 0.36.
 
         Solves ``1 - fill - p - fee(p) = floor`` EXACTLY for each venue's taker-fee curve, because an
         approximation here is not free: rounding the cap down by even one tick turns a hedge we want into
         a miss + unwind, and rounding it up re-opens the loss this cap exists to prevent.
           * Kalshi  fee = 0.07*p*(1-p)      -> 0.07p² - 1.07p + room = 0 (take the low root)
           * Poly    fee = rate*min(p, 1-p)  -> two branches, joined at p = 0.5"""
-        room = 1.0 - float(fill_price) - HEDGE_DECLINE_FLOOR
+        room = 1.0 - float(fill_price) - float(floor)
         if room <= 0.0:
             return 0.0
         if str(hedge_venue).lower() in ("polymarket", "poly"):
@@ -1443,6 +1481,68 @@ class PregameLiveExecutor:
             disc = 1.07 ** 2 - 4.0 * 0.07 * room
             cap = room if disc < 0 else (1.07 - math.sqrt(disc)) / (2.0 * 0.07)
         return max(0.0, min(0.99, cap))
+
+    @staticmethod
+    def book_refuse_reason(fill_price: float, hedge_avg: Any, locked: Optional[float],
+                           ceiling_pct: float = 5.0) -> Optional[str]:
+        """BOOKING-TIME INVARIANTS. Returns None to book, else the reason to REFUSE + quarantine.
+
+        These exist because every rail downstream of the books trusts the books. On 2026-07-29 a NO-side
+        price read in the wrong space booked Fortaleza's hedge at 5c instead of 95c: the pair recorded as
+        $0.09/share, ``locked_net`` as +66%, and the resulting phantom +$320.05 re-based ``pnl_today`` so
+        far positive that the -$50 daily-loss rail would have needed a REAL -$380 to trip. Two checks,
+        both on numbers we already have at booking time:
+
+          * ``pair_out_of_band`` — complementary legs must sum to ~$1.00/share. Below
+            ``1 - ceiling`` the "edge" exceeds what quoting itself would allow; above ``1 + PAIR_SUM_TOL``
+            the pair is a guaranteed loss. Catches a space error in EITHER direction (Fortaleza $0.09,
+            Cerezo $1.53) — the sign of the error decides whether it looks like a windfall or a disaster,
+            and BOTH are the same bug.
+          * ``locked_above_ceiling`` — the same ``max_plausible_edge_pct`` that already refuses to QUOTE
+            an implausible edge now also refuses to BOOK one. A ceiling that gates only the quote is a
+            ceiling that stops applying the moment real money is involved.
+        Pure, so the production numbers are unit-testable directly."""
+        if hedge_avg is None:
+            return None                       # nothing to check against; other paths handle a missing price
+        pair = float(fill_price) + float(hedge_avg)
+        lo_bound = 1.0 - (float(ceiling_pct) / 100.0)
+        if not (lo_bound - 1e-9 <= pair <= 1.0 + PAIR_SUM_TOL + 1e-9):
+            return "pair_out_of_band"
+        if locked is not None and float(locked) * 100.0 > float(ceiling_pct) + 1e-9:
+            return "locked_above_ceiling"
+        return None
+
+    def _quarantine(self, reason: str, entry: dict, now: Any) -> None:
+        """REFUSE a booking that failed an invariant: halt live trading, persist the entry for manual
+        review, cancel opens, scream. Deliberately the same shape as the ORPHAN latch — an impossible
+        number in the books is at least as dangerous as a naked position, because it silently re-bases
+        every cap and rail that reads those books."""
+        import json
+        if self.quarantine is None:
+            self.quarantine = {"reason": reason, "entry": entry,
+                               "detected": _iso(now), "pending_review": True}
+            self.caps.halted = True
+            self.caps.halt_reason = "booking_quarantine"
+            path = self._quarantine_path
+            if path:
+                try:
+                    mrt_config.assert_writable(path)
+                    tmp = path + ".tmp"
+                    with open(tmp, "w", encoding="utf-8") as fh:
+                        json.dump(self.quarantine, fh, default=str, indent=1)
+                    os.replace(tmp, path)
+                except Exception as exc:  # noqa: BLE001 — persistence must never crash the halt path
+                    if self.log:
+                        self.log.error("[MAKER_RT][LIVE] could not persist QUARANTINE: %s", exc)
+            self.cancel_all("booking_quarantine", now)
+        if self.log:
+            self.log.error("[MAKER_RT][LIVE] BOOKING REFUSED (%s) — NOT booked, quarantined for review: %s",
+                           reason, entry)
+        self._send_telegram(alerts.format_event(
+            "halted", detail=("Trading is PAUSED — a trade's numbers are impossible and were NOT "
+                              "recorded. What to check: compare both venues' actual fills for this "
+                              "market against the bot's numbers, then delete "
+                              "data/ops/maker_rt_QUARANTINE.json to resume.")))
 
     @staticmethod
     def _pair_is_profit(fill_price: float, hedge_avg: Any, locked: Optional[float]) -> bool:
@@ -1473,6 +1573,34 @@ class PregameLiveExecutor:
         ledger the hedge_locked chain row + instant alert. ``locked`` is the FEE-HONEST net (actual hedge
         price + actual fee). ``verified`` marks the path where the venue's fill count under-reported but
         the COMPLEMENT position proves fully hedged (unwind suppressed)."""
+        # BOOKING-TIME INVARIANTS, BEFORE a single number reaches the caps. Everything below this line
+        # writes state that the RAILS read back (pnl_today feeds the daily-loss halt, recent_locked_nets
+        # feeds tuning, the leg costs feed settlement) — so an impossible number has to be refused HERE.
+        # Detecting it downstream is what failed on 2026-07-29: the post-hedge honesty guard DID fire on
+        # Cerezo, and the alert was believed rather than the arithmetic behind it.
+        refuse = self.book_refuse_reason(fill_price, hedge_avg, locked, self.max_plausible_edge_pct)
+        if refuse:
+            self._quarantine(refuse, {
+                "game": lo.game, "market_key": lo.market_key, "phase": lo.phase,
+                "rest_venue": lo.rest_venue, "hedge_venue": hedge_venue,
+                "rest_price": round(float(fill_price), 6), "rest_shares": round(float(matched), 6),
+                "hedge_price": (round(float(hedge_avg), 6) if hedge_avg is not None else None),
+                "hedge_shares": round(float(hedged), 6),
+                "pair_per_share": round(float(fill_price) + float(hedge_avg or 0.0), 6),
+                "locked_net_pct": (round(float(locked) * 100.0, 4) if locked is not None else None),
+                "refused_pnl_usd": round(float(pnl), 4), "hedge_order_id": hedge_oid,
+                "ceiling_pct": self.max_plausible_edge_pct,
+            }, now)
+            self._record_lo(lo, "book_refused", now, price=fill_price, size=matched,
+                            locked_net=locked, hedge_avg=hedge_avg, hedge_order_id=hedge_oid)
+            # The POSITION is real even though its NUMBERS are refused — register the legs so the
+            # reconciler cannot read a genuine hedge as a naked orphan on top of the quarantine.
+            self._note_expected_legs(lo, matched,
+                                     actual_hedge_shares if actual_hedge_shares is not None else hedged,
+                                     hedge_venue, now)
+            return {"outcome": "book_refused", "locked_net": None, "pnl": 0.0,
+                    "hedge_order_id": hedge_oid, "quarantined": refuse,
+                    "chain": self._chain(lo, matched, fill_price, "book_refused", locked, 0.0, hedge_oid)}
         self.caps.commit_stake(float(hedged) * float(hedge_avg or 0.0) + float(hedge_fee or 0.0))
         self.caps.on_fill(pnl)
         # POST-HEDGE HONESTY GUARD: a "LOCKED / profit is GUARANTEED" alert may ONLY be emitted when the
@@ -1565,7 +1693,7 @@ class PregameLiveExecutor:
         u = self._verified_unwind(lo, shares, fill_price)
         if u["ok"]:
             cost = u["cost"] or 0.0
-            self.caps.on_fill(-cost)
+            self.caps.on_fill(-cost, locked=False)
             if u["sold"] > 0 and u["sell_px"] is not None:
                 self.caps.commit_stake(float(u["sell_px"]) * float(u["sold"]))
             self._record_lo(lo, ok_outcome, now, price=fill_price, size=shares, locked_net=locked,
@@ -1582,7 +1710,7 @@ class PregameLiveExecutor:
         naked = float(rem if rem is not None else shares)
         flat = self._auto_flatten_orphan(lo, naked, fill_price, now)
         if flat is not None:
-            self.caps.on_fill(flat)
+            self.caps.on_fill(flat, locked=False)
             self._record_lo(lo, "auto_flattened", now, price=fill_price, size=naked, locked_net=locked,
                             unwind_cost=-flat)
             self.persist_daily_caps()
@@ -1592,7 +1720,7 @@ class PregameLiveExecutor:
         # position is open; its real outcome is unknown), so it can be rebooked at VENUE TRUTH the moment
         # it closes or settles — see ``settle_provisional_marks``.
         est_loss = round(float(fill_price) * naked, 4)
-        self.caps.on_fill(-est_loss)
+        self.caps.on_fill(-est_loss, locked=False)
         self._record_lo(lo, "unwind_FAILED", now, price=fill_price, size=shares, locked_net=locked,
                         unwind_cost=est_loss)
         self._mark_provisional(lo, naked, fill_price, -est_loss, now, "unwind_FAILED")
@@ -1887,6 +2015,25 @@ class PregameLiveExecutor:
         except Exception as exc:  # noqa: BLE001 — persistence must never crash the halt path
             if self.log:
                 self.log.error("[MAKER_RT][LIVE] could not persist ORPHAN banner: %s", exc)
+
+    def _load_quarantine(self) -> None:
+        """Re-latch a persisted booking quarantine at startup. Unlike ORPHAN there is no venue read that
+        can retire this automatically — the books are what is in doubt — so it clears ONLY by a human
+        deleting the file. FAILS CLOSED: a quarantine file we cannot parse still halts."""
+        if not self._quarantine_path or not os.path.exists(self._quarantine_path):
+            return
+        import json
+        try:
+            with open(self._quarantine_path, "r", encoding="utf-8-sig") as fh:
+                data = json.load(fh)
+        except Exception as exc:  # noqa: BLE001
+            data = {"reason": "unreadable_quarantine_file", "error": str(exc)}
+        self.quarantine = data if isinstance(data, dict) and data else {"reason": "empty_quarantine_file"}
+        self.caps.halted = True
+        self.caps.halt_reason = "booking_quarantine"
+        if self.log:
+            self.log.error("[MAKER_RT][LIVE] STARTUP: booking QUARANTINE re-latched — live HALTED until "
+                           "%s is reviewed and deleted. %s", self._quarantine_path, self.quarantine)
 
     def _load_orphan(self) -> None:
         """Re-latch a persisted orphan at startup: an unresolved naked position must NOT be cleared by a

@@ -44,6 +44,12 @@ RUNTIME_FILES: dict[str, tuple[str, str]] = {
     "expected_positions": ("ops", "maker_rt_expected_positions.json"),
     "provisional_marks": ("ops", "maker_rt_provisional_marks.json"),
     "daily_caps":    ("ops",  "maker_rt_daily_caps.json"),
+    # Bookings REFUSED by a booking-time invariant (impossible pair sum / edge above the sanity
+    # ceiling). Latched like ORPHAN: halts live trading until a human clears the file.
+    "quarantine":    ("ops",  "maker_rt_QUARANTINE.json"),
+    # Settlements REFUSED by the sanity rails — real money whose numbers we don't trust. Queued for
+    # manual reconciliation instead of being dropped (they used to just vanish).
+    "refused_settlements": ("ops", "maker_rt_REFUSED_SETTLEMENTS.json"),
     "stop_all":      ("ops",  "STOP_ALL"),
 }
 

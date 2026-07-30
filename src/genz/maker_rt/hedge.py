@@ -32,7 +32,9 @@ def kalshi_actual_fee(res: Any, filled: int, price: float) -> float:
     for src in sources:
         if not isinstance(src, dict):
             continue
-        for k in ("average_fee_paid", "fee_paid", "fees_paid", "fee"):
+        # "fee" is the normalizer's venue-truth sum (taker_fees_dollars + maker_fees_dollars) and is
+        # authoritative when present; the rest are legacy/raw spellings.
+        for k in ("fee", "average_fee_paid", "fee_paid", "fees_paid"):
             v = src.get(k)
             if v is None:
                 continue
@@ -120,6 +122,29 @@ class LiveHedger:
         self.poly_rate = poly_rate
         self.log = log
 
+    # Executed-vs-expected divergence beyond this is reported, never silently booked.
+    DIVERGENCE_WARN = 0.10
+
+    def _warn_if_diverged(self, what: Any, expected: Any, executed: Any, limit: float,
+                          res: Any = None) -> None:
+        """Scream when the EXECUTED hedge price lands far from the book we priced it off.
+
+        A price-SPACE error is invisible to every other check — it produces a perfectly well-formed
+        number, just the complement of the truth — but it always shows up here: Fortaleza priced a 95c
+        ask and "executed" at 5c, a 90c divergence, and nothing said a word. This cannot decide which
+        value is right, so it does not try; it reports, and the booking invariant refuses."""
+        if executed is None or expected is None or not self.log:
+            return
+        try:
+            gap = abs(float(executed) - float(expected))
+        except (TypeError, ValueError):
+            return
+        if gap >= self.DIVERGENCE_WARN:
+            self.log.error("[MAKER_RT][LIVE] HEDGE PRICE DIVERGENCE %s: expected ~%.4f (book), executed "
+                           "%.4f (limit sent %.4f, source %s) — gap %.4f. A gap this large is usually a "
+                           "price-SPACE error, not a moved book.", what, float(expected), float(executed),
+                           float(limit), (res or {}).get("avg_price_source"), gap)
+
     def hedge(self, fill: dict, hedge: dict) -> HedgeResult:
         """Lift the Kalshi complement with a marketable IOC (limit at ask+buffer). Returns a HedgeResult
         with the ACTUAL Kalshi fill count: "locked" (full), "partial" (some), "missed" (0), or "error".
@@ -132,8 +157,14 @@ class LiveHedger:
         if size <= 0 or self.kalshi is None:
             return HedgeResult("error", detail={"reason": "no_size_or_client"})
         ticker, k_side = hedge.get("ticker"), hedge.get("side", "yes")
+        cap = hedge.get("max_price")
+        if cap is not None and float(cap) <= 0.0:
+            # There is NO price at which this hedge clears the gate's floor. Placing a 1-tick order that
+            # cannot fill would still burn a round trip and a slot — report the miss and let the caller
+            # run its verified unwind.
+            return HedgeResult("missed", freeze_market=True, detail={"reason": "cap_not_payable"})
         limit = min(0.99, float(hedge.get("best_ask") or 0.5) + self.buffer)   # marketable limit
-        limit = _apply_cap(limit, hedge.get("max_price"))       # never pay more than the gate approved
+        limit = _apply_cap(limit, cap)                          # never pay more than the gate approved
         try:
             res = self.kalshi.place_order(ticker, k_side, size, limit,
                                           time_in_force="immediate_or_cancel")
@@ -141,6 +172,7 @@ class LiveHedger:
             res = {"status": "error", "fill_count": 0, "error": str(exc)}
         filled = int(res.get("fill_count", 0) or 0)
         avg = res.get("avg_price")
+        self._warn_if_diverged(ticker, hedge.get("best_ask"), avg, limit, res)
         if filled >= size:
             px = float(avg if avg is not None else limit)
             fee = kalshi_actual_fee(res, filled, px)           # ACTUAL fee (venue/official), not the model
@@ -169,6 +201,8 @@ class LiveHedger:
             return HedgeResult("error", detail={"reason": "no_size_or_client"})
         token, best_ask = hedge.get("token"), hedge.get("best_ask")
         cap = hedge.get("max_price")
+        if cap is not None and float(cap) <= 0.0:
+            return HedgeResult("missed", freeze_market=True, detail={"reason": "cap_not_payable"})
         try:
             # A capped hedge passes its LIMIT explicitly; uncapped (price=None) keeps the client's own
             # best_ask + 2 ticks marketable default.
@@ -178,6 +212,7 @@ class LiveHedger:
             res = {"status": "error", "shares": 0, "error": str(exc)}
         filled = float((res or {}).get("shares") or 0.0) if isinstance(res, dict) else 0.0
         avg = res.get("avg_price") if isinstance(res, dict) else None
+        self._warn_if_diverged(str(token)[:12], best_ask, avg, float(cap or 1.0), res)
         if filled >= size - 1e-9:
             px = float(avg if avg is not None else (best_ask or 0.0))
             fee = poly_fee_usd(filled, px, self.poly_rate)     # ACTUAL Poly taker fee (maker rest = 0)

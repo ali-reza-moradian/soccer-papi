@@ -141,5 +141,5 @@ def test_every_runtime_file_is_registered():
     assert set(mrt_config.RUNTIME_FILES) == {
         "events", "heartbeat", "summary", "runstate", "tuning",
         "traded_tokens", "orphan", "settled_ledger", "expected_positions", "daily_caps", "stop_all",
-        "provisional_marks",
+        "provisional_marks", "quarantine", "refused_settlements",
     }

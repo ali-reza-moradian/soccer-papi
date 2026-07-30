@@ -105,12 +105,16 @@ def fmt_price(price: float) -> str:
 
 
 def _avg_price_cents_to_dollars(v: Any) -> Optional[float]:
-    """Kalshi reports fill prices in integer cents; normalize to dollars in (0,1). None if absent."""
+    """Kalshi reports fill prices in integer cents; normalize to dollars in (0,1). None if absent.
+
+    The boundary is ``>= 1.0``, not ``> 1.0``: a contract price lives strictly inside (0,1), so a bare
+    ``1.0`` can only be ONE CENT, never one dollar. Reading it as $1.00 booked a phantom gain on exactly
+    the distressed 0.01-limit unwind sells this path exists to price."""
     try:
         c = float(v)
     except (TypeError, ValueError):
         return None
-    return c / 100.0 if c > 1.0 else c   # tolerate already-dollar responses in mocks
+    return c / 100.0 if c >= 1.0 else c   # tolerate already-dollar responses in mocks
 
 
 def fp_num(row: Any, *names: str) -> Optional[float]:
@@ -307,7 +311,10 @@ class KalshiExec:
         if post_only:
             body["post_only"] = True
         raw = self._request("POST", "/portfolio/events/orders", json_body=body)
-        return self._normalize_order_response(raw, count)
+        # ``side`` is threaded through so the RESPONSE is decoded in the same space the REQUEST was
+        # written in. The write path has always converted NO -> YES; until 2026-07-29 the read path
+        # never converted back (F14/N1).
+        return self._normalize_order_response(raw, count, side=side)
 
     def place_market_sell(self, ticker: str, side: str, count: int, *,
                           client_order_id: Optional[str] = None) -> dict[str, Any]:
@@ -330,7 +337,27 @@ class KalshiExec:
         ``/portfolio/orders/{id}`` V1 path, which 410'd EVERY Kalshi cancel.)"""
         return self._request("DELETE", f"/portfolio/events/orders/{order_id}")
 
-    def _normalize_order_response(self, raw: Any, requested: int) -> dict[str, Any]:
+    def _normalize_order_response(self, raw: Any, requested: int,
+                                  side: Optional[str] = None) -> dict[str, Any]:
+        """Normalize a v2 order response to {status, fill_count, avg_price, cash_debit, fee, ...}.
+
+        ``avg_price`` is ALWAYS in the OUTCOME's own terms (a NO order's price is what a NO share cost),
+        because that is the space every caller prices a hedge in. Getting this wrong is the 2026-07-29
+        F14 incident: v2 reports an average fill price in YES-SPACE, and reading it un-converted booked
+        every NO-side hedge at ``1 - real``. Fortaleza's 353 NO cost $335.35 (95c) and booked as 5c ->
+        a phantom +$320.05 that also neutralised the daily-loss rail.
+
+        Sources, in order of authority:
+          1. **VENUE CASH** — ``taker_fill_cost_dollars`` + ``maker_fill_cost_dollars`` divided by the
+             fill count. This is the actual debit, already in the outcome's own terms, and it is exact
+             even when the fill swept several price levels (Tottenham's 212 NO swept 64c/65c -> 0.6438;
+             no single "price" field can express that). Preferred whenever present.
+          2. **SIDE-NAMED PRICE** — ``no_price_dollars`` / ``yes_price_dollars`` picked BY SIDE, so the
+             space is carried by the field name rather than inferred.
+          3. **LEGACY average_fill_price** — YES-space cents; converted to the outcome's terms
+             (``1 - p`` for NO). Kept only for v1/mocks.
+        ``side`` None means "unknown" -> legacy values are passed through unconverted (the old
+        behaviour) so a caller that never had a side is not silently changed."""
         order = (raw or {}).get("order", raw) if isinstance(raw, dict) else {}
         # fp_num accepts BOTH the v1 bare names and the v2 "_fp" fixed-point strings ("3.00").
         n = fp_num(order, "fill_count", "filled_count", "taker_fill_count", "count_filled")
@@ -338,16 +365,55 @@ class KalshiExec:
             init = fp_num(order, "initial_count", "count")
             rem = fp_num(order, "remaining_count")
             n = (init - rem) if (init is not None and rem is not None) else None
-        filled = int(n) if n is not None else 0
-        avg = None
-        for k in ("average_fill_price", "avg_fill_price", "fill_price", "avg_price"):
-            if order.get(k) is not None:
-                avg = _avg_price_cents_to_dollars(order[k])
-                break
+        filled_f = float(n) if n is not None else 0.0
+        filled = int(filled_f)
+        s = str(side).strip().upper() if side is not None else None
+        is_no = s == "NO"
+
+        def _sum(*names: str) -> Optional[float]:
+            """Sum the present ``*_dollars`` (or bare-cents) variants of these fields; None if all absent."""
+            total, seen = 0.0, False
+            for nm in names:
+                for cand, scale in ((f"{nm}_dollars", 1.0), (nm, 0.01)):
+                    v = order.get(cand)
+                    if v is None or v == "":
+                        continue
+                    try:
+                        total += float(v) * scale
+                        seen = True
+                    except (TypeError, ValueError):
+                        pass
+                    break
+            return total if seen else None
+
+        cash = _sum("taker_fill_cost", "maker_fill_cost")
+        fee = _sum("taker_fees", "maker_fees")
+        avg, src = None, None
+        if cash is not None and filled_f > 0:
+            avg, src = cash / filled_f, "venue_cash"
+        if avg is None and s in ("YES", "NO"):
+            v = order.get("no_price_dollars") if is_no else order.get("yes_price_dollars")
+            try:
+                avg, src = (float(v), "side_price") if v not in (None, "") else (None, None)
+            except (TypeError, ValueError):
+                avg = None
+        if avg is None:
+            for k in ("average_fill_price", "avg_fill_price", "fill_price", "avg_price"):
+                if order.get(k) is not None:
+                    yes_px = _avg_price_cents_to_dollars(order[k])
+                    if yes_px is not None:
+                        # legacy field is YES-space; carry it into the outcome's own terms
+                        avg = round(1.0 - yes_px, 6) if is_no else yes_px
+                        src = "legacy_yes_space"
+                    break
         return {
             "status": classify_fill(requested, filled),
             "fill_count": filled,
             "avg_price": avg,
+            "avg_price_source": src,
+            "cash_debit": cash,          # actual $ debited for the shares (excl. fee), venue truth
+            "fee": fee,                  # actual $ fee charged, venue truth
+            "side": s,
             "order_id": order.get("order_id") or order.get("id"),
             "raw": raw,
         }

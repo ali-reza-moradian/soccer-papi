@@ -450,16 +450,39 @@ class PolyExec:
         resting_states = ("live", "open", "resting", "delayed", "new")
         success = d.get("success")
         is_buy = str(side).upper() == "BUY"
-        avg = None
-        for k in ("price", "avg_price", "average_price"):
-            if d.get(k) is not None:
+        def _num(*names: str) -> Optional[float]:
+            for nm in names:
+                v = d.get(nm)
+                if v is None or v == "":
+                    continue
                 try:
-                    avg = float(d[k])
-                    break
+                    return float(v)
                 except (TypeError, ValueError):
                     continue
+            return None
+
+        # VENUE CASH FIRST. making/taking are the SIDE's base/quote legs (BUY: making=USDC,
+        # taking=SHARES; SELL: the reverse), so their RATIO is the executed price — exact, and exact
+        # even when the sweep crossed several levels. Without this the fallback below books the LIMIT
+        # we sent, and a marketable buy is deliberately sent 2 ticks THROUGH the ask: every Poly hedge
+        # booked 2c dearer than it filled. On 2026-07-29 that alone turned six genuinely +3%/+1% pairs
+        # into "HEDGED AT A LOSS" alerts (Tottenham hedges filled 0.35, booked 0.37).
+        usd_leg = _num("makingAmount", "making_amount") if is_buy else _num("takingAmount", "taking_amount")
+        sh_leg = _num("takingAmount", "taking_amount") if is_buy else _num("makingAmount", "making_amount")
+        avg = None
+        avg_src = None
+        if usd_leg is not None and sh_leg is not None and sh_leg > 0 and usd_leg > 0:
+            avg, avg_src = usd_leg / sh_leg, "venue_cash"
         if avg is None:
-            avg = float(price)
+            for k in ("price", "avg_price", "average_price"):
+                if d.get(k) is not None:
+                    try:
+                        avg, avg_src = float(d[k]), k
+                        break
+                    except (TypeError, ValueError):
+                        continue
+        if avg is None:
+            avg, avg_src = float(price), "limit_fallback"
         filled = None
         for k in ("size_matched", "filled_size", "matched_size"):   # explicit SHARE fields (side-agnostic)
             if d.get(k) is not None:
@@ -505,6 +528,9 @@ class PolyExec:
             "shares": filled,
             "usd": round(filled * avg, 6),
             "avg_price": avg,
+            "avg_price_source": avg_src,
+            # actual USDC moved, when the venue reported it — book cost from THIS, not price x count
+            "cash_debit": (round(usd_leg, 6) if (usd_leg is not None and filled > 0) else None),
             "order_id": d.get("orderID") or d.get("order_id") or d.get("id"),
             "raw": raw,
         }

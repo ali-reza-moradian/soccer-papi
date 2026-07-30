@@ -88,6 +88,13 @@ class SettledPnlReconciler:
         self.max_pair_stake_usd = float(max_pair_stake_usd)   # sanity-guard ceiling for |net| (config-driven)
         self._settled_keys: set = set()            # (game, market_key) already reconciled
         self._manual_keys: set = set()             # non-binary (walkover/void) settlements -> logged ONCE, never auto-booked
+        # REFUSED settlements must not be a black hole. A refused row is a real settlement of real
+        # money whose NUMBERS we do not trust — dropping it loses the event itself. Fortaleza's true
+        # $353 settlement was refused twice by the ROI ceiling on 2026-07-29 (the cost basis had been
+        # corrupted by the price-space bug, so a +$2.36 pair looked like +1011% ROI) and simply
+        # vanished, leaving the pair unbooked and its legs unpruned.
+        self._refused: list = []
+        self.refused_path: Optional[str] = None    # set by the caller; None -> in-memory only
 
     def reconcile(self, pairs: list, now: Any) -> list:
         """``pairs``: the maker's traded hedged markets with per-leg COST BASIS, each:
@@ -124,13 +131,47 @@ class SettledPnlReconciler:
                     # settled net. NEVER emit or record it — it must not reach lifetime pnl. A human
                     # reconciles by hand.
                     _log_critical(self.log, "[MAKER_RT][SETTLE][CRITICAL] REFUSED implausible trade_settled "
-                                  "%s (%s): net $%s cost $%s — NOT counted. %s", key, why,
+                                  "%s (%s): net $%s cost $%s — NOT counted, queued for manual "
+                                  "reconciliation. %s", key, why,
                                   row.get("realized_pnl_usd"), row.get("settled_cost_usd"),
                                   row.get("reason"))
+                    self._queue_refused(key, why, row, now)
                     continue
                 self.record(row, now)
                 emitted.append(row)
         return emitted
+
+    def _queue_refused(self, key: Any, why: str, row: dict, now: Any) -> None:
+        """Persist a REFUSED settlement for manual reconciliation. Never raises: this runs inside the
+        settlement sweep, and losing the queue must not also lose the sweep."""
+        entry = {"game": row.get("game"), "market_key": row.get("market_key"),
+                 "refused_reason": why, "realized_pnl_usd": row.get("realized_pnl_usd"),
+                 "settled_cost_usd": row.get("settled_cost_usd"), "detail": row.get("reason"),
+                 "queued": str(now)}
+        self._refused.append(entry)
+        # Do NOT mark the key settled: the money is real and still needs booking by hand, and a future
+        # pass with a repaired cost basis should be able to reconcile it properly.
+        if not self.refused_path:
+            return
+        try:
+            import json
+            import os
+            existing: list = []
+            if os.path.exists(self.refused_path):
+                try:
+                    with open(self.refused_path, "r", encoding="utf-8-sig") as fh:
+                        prev = json.load(fh)
+                    existing = prev if isinstance(prev, list) else []
+                except Exception:  # noqa: BLE001 — a corrupt queue must not drop the new entry
+                    existing = []
+            existing.append(entry)
+            tmp = f"{self.refused_path}.{os.getpid()}.tmp"
+            with open(tmp, "w", encoding="utf-8") as fh:
+                json.dump(existing, fh, default=str, indent=1)
+            os.replace(tmp, self.refused_path)
+        except Exception as exc:  # noqa: BLE001
+            if self.log:
+                self.log.error("[MAKER_RT][SETTLE] could not persist the refused-settlement queue: %s", exc)
 
     def already_settled(self, game: str, market_key: str) -> bool:
         return (game, market_key) in self._settled_keys

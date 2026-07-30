@@ -35,7 +35,7 @@ import pytest
 
 from src.genz.maker_rt import alerts
 from src.genz.maker_rt.hedge import LiveHedger, _apply_cap, locked_net, mark_hedge
-from src.genz.maker_rt.pregame_exec import HEDGE_DECLINE_FLOOR, PregameLiveExecutor
+from src.genz.maker_rt.pregame_exec import HEDGE_DECLINE_FLOOR, HEDGE_EXECUTION_FLOOR, PregameLiveExecutor
 from src.genz.maker_rt.quotes import hedge_taker_fee
 
 from .test_maker_rt_pregame import (_Hedger, _KalshiExec, _KalshiOC, _Poly, _Store, _cand_kalshi,
@@ -188,9 +188,9 @@ def test_hedge_price_cap_rejects_the_phimia_sweep_price():
     cap = PregameLiveExecutor._hedge_price_cap(_PHIMIA_FILL_PX, "polymarket", 0.05)
     assert cap < 0.07, f"cap {cap} would still have allowed the $1.01/share pair"
     assert cap >= 0.05, f"cap {cap} would refuse the hedge the gate legitimately approved"
-    # the cap is exactly the price whose fee-inclusive net equals the decline floor
+    # the cap is exactly the price whose fee-inclusive net equals the EXECUTION floor (break-even)
     assert locked_net(_PHIMIA_FILL_PX, cap + hedge_taker_fee("polymarket", cap, 0.05)) == \
-        pytest.approx(HEDGE_DECLINE_FLOOR, abs=1e-9)
+        pytest.approx(HEDGE_EXECUTION_FLOOR, abs=1e-9)
 
 
 def test_hedge_price_cap_is_tick_floored_and_never_rounds_up():
@@ -472,16 +472,23 @@ def test_sub_contract_imbalance_is_not_treated_as_naked():
 
 def test_hedge_price_cap_is_exact_on_both_venues_and_both_branches():
     """The cap must be the EXACT break-even-at-floor price: one tick too tight turns a wanted hedge into
-    a miss+unwind, one tick too loose re-opens the loss it exists to prevent."""
+    a miss+unwind, one tick too loose re-opens the loss it exists to prevent. Exactness is asserted at
+    BOTH floors, because the floor is what makes the cap a policy knob rather than a magic number."""
     cap_of = PregameLiveExecutor._hedge_price_cap
     for fill, venue, rate in ((0.94, "polymarket", 0.05),    # cheap poly side (the PHIMIA shape)
                               (0.46, "polymarket", 0.05),    # dear poly side (fee = rate*(1-p))
                               (0.04, "kalshi", 0.05),        # dear kalshi hedge (the 95c PHI leg)
                               (0.46, "kalshi", 0.05),
                               (0.80, "kalshi", 0.05)):
-        cap = cap_of(fill, venue, rate)
-        net = locked_net(fill, cap + hedge_taker_fee(venue, cap, rate))
-        assert net == pytest.approx(HEDGE_DECLINE_FLOOR, abs=1e-9), f"{venue} @ fill {fill}: net {net}"
+        for floor in (HEDGE_EXECUTION_FLOOR, HEDGE_DECLINE_FLOOR):
+            cap = cap_of(fill, venue, rate, floor)
+            net = locked_net(fill, cap + hedge_taker_fee(venue, cap, rate))
+            assert net == pytest.approx(floor, abs=1e-9), f"{venue} @ fill {fill} floor {floor}: {net}"
+        # THE DEFAULT IS THE HARD ONE. The price actually sent to the venue is solved at break-even, so
+        # no executed pair can cost more than $1.00/share including fees.
+        assert cap_of(fill, venue, rate) == pytest.approx(cap_of(fill, venue, rate,
+                                                                HEDGE_EXECUTION_FLOOR), abs=1e-12)
+        assert cap_of(fill, venue, rate) <= cap_of(fill, venue, rate, HEDGE_DECLINE_FLOOR) + 1e-12
 
 
 def test_hedge_price_cap_admits_the_profitable_phimia_hedges():

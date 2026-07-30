@@ -16,6 +16,7 @@ import time
 from typing import Any, Optional
 
 from ...logsetup import get_logger, setup_logging
+from . import alerts
 from . import config as mrt_config
 from .clients import build_pregame_order_clients
 from .driver import QuoteDriver
@@ -239,6 +240,26 @@ async def _run(cfg: Any, log: Any) -> int:
     # clients exist. ONE shared LiveCaps budget + ONE global in-flight guard govern pre+inplay together.
     pregame_exec = _build_pregame_exec(cfg, live_gate, gate.armed or inplay_gate.armed, kalshi_oc,
                                        poly_oc, in_flight, telegram, state, log)
+    if pregame_exec is None and poly_oc is not None:
+        # DISARMED, BUT THE PREVIOUS RUN'S ORDERS ARE STILL OURS. The stray-order sweep used to run only
+        # when ARMED, so a process that came up in SHADOW simply abandoned whatever its predecessor had
+        # resting. On 2026-07-29 the 13:30:07Z shadow restart left six Kalshi quotes on the book; they
+        # filled between 14:22Z and 17:18Z with no hedger running and settled to a net -$38.08 of
+        # completely unintended naked exposure. An unarmed process having ANY order resting is by
+        # definition a leak, so sweep FIRST and say so loudly.
+        stray = _startup_stray_cancel_armed(poly_oc, kalshi_oc, log)
+        if stray:
+            log.error("[MAKER_RT] SHADOW startup: cancelled %d order(s) a previous LIVE run left "
+                      "resting. An unarmed process must hold no orders — these would have filled "
+                      "UNHEDGED.", stray)
+            if telegram is not None:
+                try:
+                    telegram(alerts.format_event(
+                        "error", detail=(f"Found {stray} live order(s) left over from an earlier "
+                                         "session while the bot is switched OFF. They have been "
+                                         "cancelled — no action needed.")))
+                except Exception:  # noqa: BLE001
+                    pass
     if pregame_exec is not None:
         swept = _startup_stray_cancel_armed(poly_oc, kalshi_oc, log)
         _armed_startup_alert(cfg, gate.armed, inplay_gate.armed, telegram, swept, log, pregame_exec.caps)

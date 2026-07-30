@@ -330,7 +330,12 @@ def test_normalize_buy_counts_shares_from_taking_not_dollars_from_making():
     res = p._normalize(raw, price=0.95, requested_shares=17, side="BUY")
     assert res["shares"] == pytest.approx(17.37)      # SHARES, not the $16.21 making amount
     assert res["status"] == "filled"                  # 17.37 >= 17 -> a FULL hedge, never 'partial'
-    assert res["avg_price"] == pytest.approx(0.933)
+    # The price is the CASH RATIO (USDC leg / SHARE leg), not the response's rounded ``price`` field
+    # and not the limit we sent: $16.21 / 17.37 sh = 0.93322/share. Booking the limit instead is what
+    # made every Poly hedge read 2 ticks dearer than it filled on 2026-07-29.
+    assert res["avg_price"] == pytest.approx(16.21 / 17.37)
+    assert res["avg_price_source"] == "venue_cash"
+    assert res["cash_debit"] == pytest.approx(16.21)
 
 
 def test_normalize_buy_derives_shares_from_dollars_when_only_making_present():

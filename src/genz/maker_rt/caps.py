@@ -115,15 +115,25 @@ class LiveCaps:
         self.halt_reason: Optional[str] = None
         self._day = ""                   # UTC day of the running counters (rolled by roll())
 
+    #: Halts that a new UTC day must NOT clear. A DAILY-cap halt is a budget that genuinely resets at
+    #: midnight; a SAFETY halt is a latched statement that something is unresolved, and unresolved
+    #: things do not become resolved because the clock rolled over. This happened twice in production
+    #: (TBTOR 2026-07-23, ZAYRZE 2026-07-25): a "MANUAL CHECK REQUIRED" freeze silently expired at
+    #: 00:00Z and the bot resumed quoting over a naked, unverified position.
+    STICKY_HALTS = ("orphan_position", "booking_quarantine")
+
     def roll(self, day: str) -> None:
-        """Reset the per-DAY counters (stake/fills/pnl + halt) at a new UTC day. ``open_quotes`` is NOT
-        reset — a resting order survives midnight. A daily-cap halt clears with the new day."""
+        """Reset the per-DAY counters (stake/fills/pnl + daily-cap halt) at a new UTC day.
+        ``open_quotes`` is NOT reset — a resting order survives midnight. A daily-cap halt clears with
+        the new day; a STICKY_HALTS safety latch does NOT."""
         if day == self._day:
             return
         self._day = day
         self.stake_today = 0.0
         self.fills_today = 0
         self.pnl_today = 0.0
+        if self.halt_reason in self.STICKY_HALTS:
+            return                        # keep halted + keep the reason: only a human clears these
         self.halted = False
         self.halt_reason = None
 
@@ -180,8 +190,49 @@ class LiveCaps:
     def on_close(self) -> None:
         self.open_quotes = max(0, self.open_quotes - 1)
 
-    def on_fill(self, pnl: float = 0.0) -> None:
+    #: The plausible-pnl bound is derived from what a hedged pair CAN produce, not from its stake: a
+    #: pair's pnl is ``locked_net x shares``, ``locked_net`` is capped by the sanity ceiling, and the
+    #: stake is capped by ``max_pair_stake_usd`` — so |pnl| <= ceiling x pair_cap, times headroom for
+    #: fees, rounding and an over-fill. Bounding by STAKE alone is far too loose to be useful: 2x the
+    #: $350 pair cap is $700, and the Fortaleza fiction was $320.
+    FILL_PNL_SANITY_EDGE = 0.05      # mirrors max_plausible_edge_pct (the ceiling that gates quoting)
+    FILL_PNL_SANITY_MULT = 3.0       # headroom
+    FILL_PNL_SANITY_FLOOR = 5.0      # never bound tighter than this, whatever the pair cap is
+
+    def fill_pnl_bound(self, locked: bool = True) -> float:
+        """The largest |pnl| a single fill can plausibly book.
+
+        TWO regimes, because the two outcomes are bounded by different things:
+          * ``locked=True``  — a HEDGED pair. Its pnl is ``locked_net x shares`` and ``locked_net`` is
+            capped by the sanity ceiling, so the bound is ceiling x pair-cap. This is the tight one,
+            and the one the Fortaleza fiction had to pass.
+          * ``locked=False`` — a realized UNWIND / flatten / orphan mark. That is a position outcome,
+            not an edge, so it is bounded by the money committed rather than by the ceiling. Applying
+            the tight bound here would refuse honest losses (a naked leg can lose its whole stake)."""
+        if not locked:
+            return max(self.FILL_PNL_SANITY_FLOOR, 2.0 * self.max_pair_stake_usd)
+        return max(self.FILL_PNL_SANITY_FLOOR,
+                   self.FILL_PNL_SANITY_MULT * self.FILL_PNL_SANITY_EDGE * self.max_pair_stake_usd)
+
+    def implausible_fill_pnl(self, pnl: float, locked: bool = True) -> bool:
+        """Is this single-fill pnl outside anything the strategy could have produced?
+
+        ``on_fill`` is the ONLY feeder of the daily-loss rail, and it accepted any number at all. On
+        2026-07-29 a +$320.05 booking on a $14.12 rest leg sailed straight through — minutes after the
+        SAME subsystem rejected a 12.6% quote-time edge as a probable bug — and re-based ``pnl_today``
+        so far positive that the -$50 rail would have needed a REAL -$380 to trip. A rail fed by an
+        unbounded number is not a rail."""
+        return abs(float(pnl)) > self.fill_pnl_bound(locked) + 1e-9
+
+    def on_fill(self, pnl: float = 0.0, *, locked: bool = True) -> None:
+        """Count a fill and move the daily pnl. An IMPLAUSIBLE pnl is booked as ZERO and halts for
+        review rather than re-basing the loss rail in either direction (a phantom gain disables it; a
+        phantom loss false-halts the day). ``locked`` selects which bound applies — see
+        ``fill_pnl_bound``."""
         self.fills_today += 1
+        if self.implausible_fill_pnl(pnl, locked):
+            self._halt("implausible_fill_pnl")
+            return
         self.pnl_today += float(pnl)
         if self.pnl_today <= -self.max_daily_loss_usd:
             self._halt("max_daily_loss_usd")

@@ -21,7 +21,9 @@ from .test_maker_rt_pregame import (_Guard, _Hedger, _KalshiExec, _KalshiOC, _Lo
                                     _Store, _cand, _dec, _exec_kalshi)
 
 NOW = datetime(2026, 7, 24, 6, 59, 38, tzinfo=timezone.utc)
-#: books on which a 0.46 rest-poly fill hedges cleanly on Kalshi (locked ~+2%), i.e. the LOCKED path.
+#: books on which a 0.46 rest-poly fill hedges cleanly on Kalshi at 0.53 (pair $0.99/share,
+#: locked ~+1%), i.e. the LOCKED path. The pair MUST sum to about $1.00: the booking invariant
+#: (book_refuse_reason) refuses anything outside it, so a fixture priced 0.46/0.41 would quarantine.
 _HEDGEABLE = _Store(poly_best_ask=0.60, kalshi_ask=0.50)
 
 
@@ -31,7 +33,7 @@ def _locked_rest_poly_pair(tmp_path, *, rest_token="TOKR", hedge_ticker="KX-1"):
     kx = _KalshiExec()
     poly = _Poly()
     hedger = _Hedger(__import__("types").SimpleNamespace(status="locked", hedged_shares=5,
-                     hedge_avg_price=0.41, locked_pnl=0.07, unwind_cost=None), poly=poly)
+                     hedge_avg_price=0.53, locked_pnl=0.05, unwind_cost=None), poly=poly)
     state = _State()
     ex, _ = _exec_kalshi(tmp_path, kalshi_oc=koc, kalshi=kx, poly=poly, hedger=hedger, state=state)
     ex.in_flight = _Guard()
@@ -64,7 +66,7 @@ def test_hedge_fill_in_account_sweep_is_not_a_false_orphan(tmp_path):
     kx.positions["KX-1"] = 5.0                        # the venue shows the hedge we deliberately hold
     ex.poll_kalshi_fills(_Store(), NOW, 100.0)        # prime the dedupe set (no fills yet)
     koc.fills = [{"fill_id": "hedgefill", "order_id": "e3c01ca5-hedge", "count_fp": "5.00",
-                  "side": "yes", "yes_price_dollars": "0.4100", "ticker": "KX-1"}]
+                  "side": "yes", "yes_price_dollars": "0.5300", "ticker": "KX-1"}]
     ex.poll_kalshi_fills(_Store(), NOW, 110.0)
     assert ex.orphan is None, "our own hedge must NOT latch a false orphan"
     assert ex.caps.halted is False, "the bot must stay ARMED"
@@ -106,7 +108,7 @@ def test_untracked_fill_beyond_expected_still_halts(tmp_path):
     kx.positions["KX-1"] = 12.0                       # expected 5, venue shows 12 -> 7 unexplained
     ex.poll_kalshi_fills(_Store(), NOW, 100.0)
     koc.fills = [{"fill_id": "surprise", "order_id": "ghost", "count_fp": "7.00", "side": "yes",
-                  "yes_price_dollars": "0.4100", "ticker": "KX-1"}]
+                  "yes_price_dollars": "0.5300", "ticker": "KX-1"}]
     ex.poll_kalshi_fills(_Store(), NOW, 110.0)
     assert ex.orphan is not None and ex.caps.halted is True
 
