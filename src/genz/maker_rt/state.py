@@ -236,6 +236,7 @@ class MakerState:
     # number either). Set at startup from cfg.live.max_pair_stake_usd; the ROI ceiling is fixed at 50%.
     settled_max_net_usd: float = 100.0
     _tuning_saved_ts: float = 0.0                      # last persist (see maybe_persist_tuning)
+    measurement_gates: dict = field(default_factory=dict)   # gates.report(), refreshed off the hot path
     gates: dict = field(default_factory=dict)          # {"pre": bool, "inplay": bool} — armed states, set at startup
     live: dict = field(default_factory=dict)           # PRE-GAME live snapshot (open_quotes/stake/fills/pnl/halt/feed_ok)
     buckets: dict = field(default_factory=dict)        # (sport, phase) -> _Bucket
@@ -548,18 +549,15 @@ class MakerState:
             "locked_net_window": len(self.recent_locked_nets),
             "gates": dict(self.gates), "live": dict(self.live),
             "by_sport": self._by_sport(), "by_phase": self._by_phase(),
-            # THE MEASUREMENT GATE on the panel (see gates.py). Cheap: it reads the day's own CSV rows,
-            # and it is the number any cap-raise conversation has to start from.
-            "measurement_gates": self._measurement_gates(),
+            # THE MEASUREMENT GATE for the panel — served from a CACHE that a SLOW cadence refreshes.
+            #
+            # It was computed inline here first, and that was a serious mistake: the summary is written
+            # every 2.5s and the report parses every maker_rt_*.csv on disk (~59 MB today). The loop went
+            # to 62s per tick, the heartbeat block alone to 56s, and both websockets timed out — the
+            # maker stopped quoting entirely for seven minutes. A reporting helper must never be on a
+            # hot path, and "cheap" is not a property you get to assume about something that reads files.
+            "measurement_gates": dict(self.measurement_gates),
         }
-
-    def _measurement_gates(self) -> dict:
-        """Per-sport clean-hedged-fill counts vs the audit's gates. Never raises into the summary."""
-        try:
-            from .gates import report
-            return report()
-        except Exception:  # noqa: BLE001 — a reporting helper must never break the heartbeat
-            return {}
 
     def write_summary(self, mode: str, sockets: dict, now: datetime,
                       path: Optional[str] = None) -> None:

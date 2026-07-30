@@ -434,6 +434,10 @@ async def _run(cfg: Any, log: Any) -> int:
                             pregame_exec.reconcile_settlements(now)
                         except Exception as exc:  # noqa: BLE001
                             log.warning("[MAKER_RT][LIVE] settlement reconcile failed: %s", exc)
+                        # The measurement-gate report rides this SLOW cadence, on the worker. It reads
+                        # every events CSV on disk; putting it anywhere faster (it was briefly in the
+                        # 2.5s summary write) freezes the loop and drops the sockets.
+                        pregame_exec.submit_gates()
                 state.live = pregame_exec.snapshot(now_ts)
             poly_user_up = bool(pm_user is not None and pm_user.connected)
             sockets = {"poly_market": pm.connected, "poly_user": poly_user_up, "kalshi": ks.connected}

@@ -1271,6 +1271,10 @@ class PregameLiveExecutor:
         if isinstance(wkey, tuple) and wkey and wkey[0] == "reconcile":
             self._apply_reconcile_batch(res, exc, store, now, now_ts)
             return
+        if isinstance(wkey, tuple) and wkey and wkey[0] == "gates":
+            if exc is None and isinstance(res, dict) and self.state is not None:
+                self.state.measurement_gates = res
+            return
         if self.log:
             self.log.warning("[MAKER_RT][LIVE] unclaimed off-loop result %s (exc=%s).", wkey, exc)
 
@@ -1776,6 +1780,17 @@ class PregameLiveExecutor:
             "My routine double-check with the exchanges has stopped answering. I am still watching the "
             "live feeds, so fills are still being seen and hedged — but the slower safety net behind "
             "them is not responding. Worth a look if this repeats.")))
+
+    def submit_gates(self) -> bool:
+        """Refresh the measurement-gate report ON THE WORKER. False if one is already in flight.
+
+        It parses every ``maker_rt_*.csv`` on disk (~59 MB), which is fine at a 15-minute cadence on a
+        thread and catastrophic anywhere near the loop: computed inline in the 2.5s summary write it took
+        the tick to 62s, timed out both websockets, and stopped the maker quoting for seven minutes.
+        Cheap-looking reporting helpers are exactly the things that need to be measured before they are
+        put on a path."""
+        from .gates import report
+        return self._worker.submit(("gates",), report)
 
     def close(self) -> None:
         """Stop the off-loop worker (shutdown). Safe on a worker that never started a thread."""
