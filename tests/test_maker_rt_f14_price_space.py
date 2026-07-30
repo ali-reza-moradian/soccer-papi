@@ -225,13 +225,33 @@ def test_booking_admits_every_genuine_pair_the_maker_is_meant_to_trade():
 
 
 def test_pair_band_edges_are_the_sanity_ceiling_and_the_dollar():
-    """The band is not a magic number: its floor IS the quoting ceiling (so the two rails can never
-    disagree) and its cap is $1.00 plus tick/fee slack."""
+    """The band is not a magic number: the legitimate range is [1 - ceiling, $1.00], with PAIR_SUM_TOL
+    of slack on each end for fees and tick rounding."""
+    # locked=None isolates the PAIR rule from the ceiling rule (the two compose; see below).
     refuse = PregameLiveExecutor.book_refuse_reason
-    assert refuse(0.50, 0.45, 0.05, 5.0) is None                        # pair 0.95 == 1 - ceiling
-    assert refuse(0.50, 0.4499, 0.0501, 5.0) == "pair_out_of_band"      # a hair beyond it
-    assert refuse(0.50, 0.50 + PAIR_SUM_TOL, -0.03, 5.0) is None        # pair 1.03 == the upper edge
-    assert refuse(0.50, 0.5301, -0.0301, 5.0) == "pair_out_of_band"
+    assert refuse(0.50, 0.45, None, 5.0) is None                        # pair 0.95 == 1 - ceiling
+    assert refuse(0.50, 0.42, None, 5.0) is None                        # pair 0.92 == the lower edge
+    assert refuse(0.50, 0.4199, None, 5.0) == "pair_out_of_band"        # a hair beyond it
+    assert refuse(0.50, 0.50 + PAIR_SUM_TOL, None, 5.0) is None         # pair 1.03 == the upper edge
+    assert refuse(0.50, 0.5301, None, 5.0) == "pair_out_of_band"
+    # ...and the ceiling rule covers the gap the pair slack opens: a raw pair in [0.92, 0.95) can only
+    # net under 5% if a real fee explains it, and anything richer is refused as an implausible edge.
+    assert refuse(0.50, 0.42, 0.08, 5.0) == "locked_above_ceiling"
+
+
+def test_a_quote_at_the_very_ceiling_is_not_falsely_quarantined():
+    """``locked_net`` is FEE-INCLUSIVE, so a pair sitting exactly at the 5% ceiling has a RAW sum a fee
+    BELOW 0.95. A hard 0.95 floor would quarantine the most profitable trade the maker is allowed to
+    make — a rail that halts on success is as bad as one that sleeps through failure."""
+    refuse = PregameLiveExecutor.book_refuse_reason
+    # 50c is where the Kalshi fee curve peaks (0.07 x 0.25 = 1.75c/share), so this is the widest the
+    # gap between the raw pair and the fee-inclusive net can ever be.
+    rest, hedge = 0.4325, 0.50
+    fee_ps = hedge_taker_fee("kalshi", hedge, 0.05)
+    locked = 1.0 - rest - hedge - fee_ps
+    assert locked == pytest.approx(0.05, abs=1e-9), "fixture must actually sit at the ceiling"
+    assert rest + hedge == pytest.approx(0.9325), "and its RAW pair must be below the naive floor"
+    assert refuse(rest, hedge, locked, 5.0) is None
 
 
 def test_execution_floor_is_break_even():

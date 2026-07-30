@@ -47,11 +47,13 @@ HEDGE_DECLINE_FLOOR = -0.010     # re-verify at fill: walked locked-net below th
 # caller unwinds. HEDGE_DECLINE_FLOOR remains the (looser) "is this even worth trying" gate, so the two
 # can never disagree in the dangerous direction — the executed cap is min(policy, hard) = hard.
 HEDGE_EXECUTION_FLOOR = 0.0
-# BOOKING-TIME PAIR BAND. Complementary legs of a real hedge must sum to about $1.00/share. Anything
-# outside [1 - sanity_ceiling, 1 + PAIR_SUM_TOL] is a SPACE/PAIRING error, not a trade: Cerezo booked
-# 0.76 + 0.77 = $1.53 (the YES-space read of a 0.23 NO fill) and Fortaleza booked 0.04 + 0.05 = $0.09.
-# The lower bound defers to the same sanity ceiling that governs quoting so one rail can never accept
-# what the other would reject; the upper bound is $1.00 plus tick/fee slack.
+# BOOKING-TIME PAIR BAND. Complementary legs of a real hedge must sum to about $1.00/share. The
+# LEGITIMATE band is [1 - sanity_ceiling, 1.00] — its floor is the very ceiling that governs quoting,
+# so one rail can never accept what the other would reject — and PAIR_SUM_TOL is slack on BOTH ends
+# for fees and tick rounding. (The slack is not decoration: ``locked_net`` is fee-inclusive, so a quote
+# sitting exactly at the 5% ceiling has a RAW pair a fee below 0.95, and a hard 0.95 floor would
+# quarantine it.) The errors this exists to catch miss by 30c or more, not by 3c: Cerezo booked
+# 0.76 + 0.77 = $1.53 (the YES-space read of a 0.23 NO fill), Fortaleza 0.04 + 0.05 = $0.09.
 PAIR_SUM_TOL = 0.03
 HEDGE_SHARE_TOL = 0.5            # share tolerance for "fully hedged"/"flat" position reads (< 1 contract)
 UNWIND_MAX_ATTEMPTS = 3         # reconcile-to-flat: re-sell the naked remainder up to this many times
@@ -1505,7 +1507,7 @@ class PregameLiveExecutor:
         if hedge_avg is None:
             return None                       # nothing to check against; other paths handle a missing price
         pair = float(fill_price) + float(hedge_avg)
-        lo_bound = 1.0 - (float(ceiling_pct) / 100.0)
+        lo_bound = 1.0 - (float(ceiling_pct) / 100.0) - PAIR_SUM_TOL
         if not (lo_bound - 1e-9 <= pair <= 1.0 + PAIR_SUM_TOL + 1e-9):
             return "pair_out_of_band"
         if locked is not None and float(locked) * 100.0 > float(ceiling_pct) + 1e-9:
