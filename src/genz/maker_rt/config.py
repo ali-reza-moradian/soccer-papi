@@ -236,6 +236,12 @@ class MakerRtConfig:
     # loudly, never placed. Same doctrine as the detector's max_plausible_roi_pct (8%); the maker's own
     # edges are ~1%, so 5% is a wide bug-catcher, not a live constraint.
     max_plausible_edge_pct: float = 5.0
+    # HEDGE EXECUTION FLOOR: the fee-inclusive locked net the hedge order's PRICE CAP is solved at, so a
+    # hedge cannot execute worse than this (it fills at/under the cap or misses -> verified unwind).
+    # -0.010 matches the decline floor: a marginally negative pair is cheaper to LOCK than to unwind
+    # (an unwind pays spread + taker fee, ~0.5-2%, plus brief naked exposure). Set 0.0 for break-even,
+    # which also makes any pair over $1.00/share unfillable — at -0.010 the ceiling is $1.01/share.
+    hedge_execution_floor: float = -0.010
     debounce_ms: int = 250                 # quote-engine debounce
     expire_before_kickoff_s: int = 120     # cancel/expire all quotes at kickoff - this
     poly_fee_rate: float = 0.05            # Polymarket sports taker rate (hedge-fee model)
@@ -300,10 +306,11 @@ def load_maker_rt_config(config_path: Optional[str] = None,
     for name in ("max_games", "quote_usd", "target_net", "debounce_ms", "expire_before_kickoff_s",
                  "poly_fee_rate", "head_poll_s", "ping_s", "reprice_min_ticks", "min_rest_s",
                  "hedge_persist_s", "telegram_digest_min", "reserve_per_direction",
-                 "max_plausible_edge_pct"):
+                 "max_plausible_edge_pct", "hedge_execution_floor"):
         if blk.get(name) is not None:
             setattr(cfg, name, blk[name])
     cfg.max_plausible_edge_pct = float(cfg.max_plausible_edge_pct)
+    cfg.hedge_execution_floor = float(cfg.hedge_execution_floor)
     cfg.reserve_per_direction = int(cfg.reserve_per_direction)
     cfg.max_games = int(cfg.max_games)
     cfg.quote_usd = float(cfg.quote_usd)

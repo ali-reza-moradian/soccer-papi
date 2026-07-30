@@ -148,24 +148,31 @@ def test_cerezo_booked_pair_is_structurally_unreachable():
     assert 0.76 + cap <= 1.0 + 1e-9
 
 
-def test_tottenham_fee_inclusive_pair_cannot_exceed_a_dollar():
-    """TOTSYD as BOOKED: 0.62 + 0.37 sums to 0.99 and so slipped the old dollar-pair rule — but the
-    Poly taker fee pushes it to $1.0085. The cap is solved at FEE-INCLUSIVE break-even, so 0.37 is
-    outside the limit we send."""
-    cap = PregameLiveExecutor._hedge_price_cap(0.62, "polymarket", 0.05)
-    assert cap < 0.37, f"cap {cap} would permit the $1.0085/share fee-inclusive pair"
-    assert 0.62 + 0.37 + hedge_taker_fee("polymarket", 0.37, 0.05) > 1.0    # the pair it must exclude
-    assert 0.62 + cap + hedge_taker_fee("polymarket", cap, 0.05) <= 1.0 + 1e-9
+def test_the_tottenham_pair_is_the_floors_deliberate_cost():
+    """TOTSYD as BOOKED: 0.62 + 0.37 = 0.99 raw, but the Poly taker fee pushes it to $1.0085/share
+    (-0.85%). It sits BETWEEN the two candidate floors, which is exactly what makes it the honest test
+    of the choice — it is refused at break-even and PERMITTED at -1%.
+
+    Permitting it is deliberate: -0.85% locked is cheaper than an unwind (spread + taker fee, ~0.5-2%,
+    plus brief naked exposure). The consequence is stated rather than hidden — at a -1% floor the
+    fee-inclusive pair ceiling is $1.01/share, not $1.00."""
+    fee = hedge_taker_fee("polymarket", 0.37, 0.05)
+    assert 0.62 + 0.37 + fee == pytest.approx(1.0085), "the pair under discussion"
+    assert PregameLiveExecutor._hedge_price_cap(0.62, "polymarket", 0.05, 0.0) < 0.37   # break-even: NO
+    assert PregameLiveExecutor._hedge_price_cap(0.62, "polymarket", 0.05) >= 0.37       # -1% floor: YES
 
 
 @pytest.mark.parametrize("rest,venue", [(0.04, "kalshi"), (0.33, "kalshi"), (0.76, "kalshi"),
                                         (0.62, "polymarket"), (0.94, "polymarket"), (0.97, "polymarket")])
-def test_no_reachable_hedge_price_can_make_a_losing_pair(rest, venue):
-    """The invariant, stated generally: for ANY rest fill, paying the cap leaves a fee-inclusive pair of
-    at most $1.00/share. This is what "structurally impossible" means — it is a property of the number
-    we send to the venue, not a check we remember to run."""
-    cap = PregameLiveExecutor._hedge_price_cap(rest, venue, 0.05)
-    assert rest + cap + hedge_taker_fee(venue, cap, 0.05) <= 1.0 + 1e-9
+def test_no_reachable_hedge_price_can_breach_the_execution_floor(rest, venue):
+    """The invariant, stated generally and honestly: for ANY rest fill, paying the cap leaves a
+    fee-inclusive locked net no worse than the execution floor. THAT is what "structurally impossible"
+    buys — a property of the number we send to the venue, not a check we remember to run. The floor
+    decides where the wall sits; the wall itself is unconditional."""
+    for floor in (HEDGE_EXECUTION_FLOOR, 0.0, -0.02):
+        cap = PregameLiveExecutor._hedge_price_cap(rest, venue, 0.05, floor)
+        pair = rest + cap + hedge_taker_fee(venue, cap, 0.05)
+        assert pair <= 1.0 - floor + 1e-9, f"{venue} @ {rest}, floor {floor}: pair {pair}"
 
 
 def test_a_rest_fill_with_no_payable_hedge_never_places_an_order():
@@ -254,6 +261,31 @@ def test_a_quote_at_the_very_ceiling_is_not_falsely_quarantined():
     assert refuse(rest, hedge, locked, 5.0) is None
 
 
-def test_execution_floor_is_break_even():
-    """Pinned so a future 'let it lose a little' change has to be deliberate."""
-    assert HEDGE_EXECUTION_FLOOR == 0.0
+def test_execution_floor_is_the_decline_floor():
+    """Pinned so a change to how much a hedge may lose has to be deliberate. -1% (not break-even),
+    because unwinding a marginally negative pair costs more than locking it. Cerezo's real -0.24% is
+    the case this exists to admit."""
+    from src.genz.maker_rt.pregame_exec import HEDGE_DECLINE_FLOOR
+    assert HEDGE_EXECUTION_FLOOR == -0.010
+    assert HEDGE_EXECUTION_FLOOR == HEDGE_DECLINE_FLOOR, \
+        "execution and decline floors agree: the gate cannot approve what the order cannot reach"
+
+
+def test_the_config_knob_reaches_the_cap():
+    """The floor is config, not a recompile: maker_rt.hedge_execution_floor moves the wall."""
+    from src.genz.maker_rt import config as mrt_config
+    assert mrt_config.MakerRtConfig().hedge_execution_floor == pytest.approx(HEDGE_EXECUTION_FLOOR)
+    cfg = mrt_config.load_maker_rt_config(overrides={"hedge_execution_floor": 0.0})
+    assert cfg.hedge_execution_floor == 0.0
+    # the shipped config.yaml carries the -1% setting, not just the dataclass default
+    assert mrt_config.load_maker_rt_config().hedge_execution_floor == pytest.approx(-0.010)
+    # ...and the same rest leg yields the tighter cap under it
+    assert PregameLiveExecutor._hedge_price_cap(0.62, "polymarket", 0.05, cfg.hedge_execution_floor) \
+        < PregameLiveExecutor._hedge_price_cap(0.62, "polymarket", 0.05, HEDGE_EXECUTION_FLOOR)
+
+
+def test_cerezos_real_hedge_is_now_reachable():
+    """The point of the change. Cerezo really filled 92 NO at 0.23 for a -0.24% pair; at break-even the
+    cap was 0.22 and that hedge would have MISSED, leaving 92 naked shares to unwind."""
+    assert PregameLiveExecutor._hedge_price_cap(0.76, "kalshi", 0.05, 0.0) < 0.23        # would miss
+    assert PregameLiveExecutor._hedge_price_cap(0.76, "kalshi", 0.05) >= 0.23            # now fills

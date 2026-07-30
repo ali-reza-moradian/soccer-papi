@@ -41,12 +41,20 @@ from .quotes import POLY_MIN_SHARES
 
 _UNREAD = object()               # sentinel: "_venue_order_state was not handed a pre-read order dict"
 HEDGE_DECLINE_FLOOR = -0.010     # re-verify at fill: walked locked-net below this -> decline+unwind (both phases)
-# THE HARD EXECUTION BOUND. The price cap actually SENT to the hedge venue is solved at THIS floor, never
-# at HEDGE_DECLINE_FLOOR. At 0.0 it is fee-inclusive break-even, which makes a pair costing more than
-# $1.00/share physically unfillable: the venue either fills at/under the cap or returns nothing and the
-# caller unwinds. HEDGE_DECLINE_FLOOR remains the (looser) "is this even worth trying" gate, so the two
-# can never disagree in the dangerous direction — the executed cap is min(policy, hard) = hard.
-HEDGE_EXECUTION_FLOOR = 0.0
+# THE HARD EXECUTION BOUND. The price cap actually SENT to the hedge venue is solved at THIS floor, so
+# no hedge can EXECUTE at a fee-inclusive locked net worse than it: the venue fills at/under the cap or
+# returns nothing and the caller unwinds. That is a property of the number on the order, not a check we
+# remember to run.
+#
+# Set to the decline floor (-1%), NOT to break-even, deliberately. Break-even is the tighter rail but it
+# converts every marginally-negative hedge into an UNWIND, and an unwind is not free: it pays the spread
+# plus a taker fee (historically ~0.5-2%) and carries brief naked exposure. Locking Cerezo's real -0.24%
+# pair is simply cheaper than unwinding it. The cost of this choice is explicit: at -1% the fee-inclusive
+# pair may reach $1.01/share, so "a pair over $1.00 is impossible" does NOT hold here — "a pair worse
+# than the floor is impossible" does. Tottenham's 0.62 + 0.37 + fees = $1.0085 (-0.85%) is therefore
+# PERMITTED at this setting and refused only at break-even; see test_execution_floor_is_the_decline_floor.
+# Override per-run with maker_rt.hedge_execution_floor.
+HEDGE_EXECUTION_FLOOR = -0.010
 # BOOKING-TIME PAIR BAND. Complementary legs of a real hedge must sum to about $1.00/share. The
 # LEGITIMATE band is [1 - sanity_ceiling, 1.00] — its floor is the very ceiling that governs quoting,
 # so one rail can never accept what the other would reject — and PAIR_SUM_TOL is slack on BOTH ends
@@ -217,6 +225,9 @@ class PregameLiveExecutor:
         self._quarantine_path = mrt_config.runtime_path("quarantine")
         # The sanity ceiling that gates QUOTING also gates BOOKING (see book_refuse_reason).
         self.max_plausible_edge_pct = float(getattr(cfg, "max_plausible_edge_pct", 5.0))
+        # The floor the hedge order's PRICE CAP is solved at — the bound a hedge cannot execute past.
+        self.hedge_execution_floor = float(getattr(cfg, "hedge_execution_floor",
+                                                   HEDGE_EXECUTION_FLOOR))
         # WS-INDEPENDENT FILL AUTHORITY: REST is the primary detector, the socket is an accelerator.
         self.fill_poll_s = float(getattr(getattr(cfg, "live", None), "fill_poll_s", 10.0))
         self._force_fill_poll = False        # set by a cancel that failed because the order FILLED
@@ -1356,7 +1367,7 @@ class PregameLiveExecutor:
             return self._unwind_and_record(lo, matched, fill_price, locked, "hedge_declined", now)
         # FIRE the hedge on the COMPLEMENT venue (rest_poly -> Kalshi IOC; rest_kalshi -> Poly FAK), with an
         # EXPLICIT price cap so the executed hedge can never be worse than the one the gate just approved.
-        cap = self._hedge_price_cap(fill_price, hedge_venue, lo.poly_rate)
+        cap = self._hedge_price_cap(fill_price, hedge_venue, lo.poly_rate, self.hedge_execution_floor)
         if hedge_venue == "polymarket":
             res = self.hedger.hedge_poly({"price": fill_price, "size": matched},
                                          {"token": hl.get("token"), "best_ask": getattr(hv, "best_ask", None),

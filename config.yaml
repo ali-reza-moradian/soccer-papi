@@ -548,6 +548,13 @@ maker_rt:
   # opportunity -> the quote is REJECTED + logged loudly, never placed (same doctrine as the detector's
   # max_plausible_roi_pct 8% guard). The maker's real edges are ~1%, so 5% is a wide bug-catcher.
   max_plausible_edge_pct: 5.0
+  # The fee-inclusive locked net the hedge order's PRICE CAP is solved at. A hedge fills at/under that
+  # cap or misses -> verified unwind, so it can never EXECUTE worse than this. -0.010 matches the
+  # decline floor on purpose: locking a marginally negative pair (Cerezo's real -0.24%) is cheaper than
+  # unwinding it, since an unwind pays spread + taker fee (~0.5-2%) plus brief naked exposure.
+  # 0.0 = break-even, which additionally makes any pair over $1.00/share unfillable; at -0.010 the
+  # fee-inclusive ceiling is $1.01/share.
+  hedge_execution_floor: -0.010
   directions: [rest_poly, rest_kalshi]   # LIVE rest directions (both SMOKE-proven); shared caps + one-in-flight span them
   reserve_per_direction: 3          # of live.max_open_quotes (12), GUARANTEE 3 slots to EACH enabled direction (raised 2 -> 3 with the 8 -> 12 slot bump; rest_kalshi can't monopolize)
   debounce_ms: 250                  # quote-engine debounce
