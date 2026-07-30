@@ -252,7 +252,7 @@ def format_event(kind: str, *, sport: Any = None, game: Any = None, market_key: 
                  stake_today: Any = None, stake_cap: Any = None, today_pnl: Any = None,
                  lifetime_pnl: Any = None, cost: Any = None, winner: Any = None,
                  payout: Any = None, roi_pct: Any = None, was: Any = None, name: Any = None,
-                 sold: Any = None, **_ignore: Any) -> str:
+                 sold: Any = None, floor_pct: Any = None, **_ignore: Any) -> str:
     """Build the plain-language alert for ``kind``. Missing facts degrade gracefully. Never emits a
     ticker or UUID — pass the human name via side/teams (or ``name`` when the caller already has it)."""
     tag = _sport_tag(sport)
@@ -306,6 +306,29 @@ def format_event(kind: str, *, sport: Any = None, game: Any = None, market_key: 
             l4 = f"\n   📈 Today: {ft}{signed_money(today_pnl)} · Lifetime: {signed_money(lifetime_pnl)}"
         return l1 + l2 + l3 + l4
 
+    if kind == "locked_thin":
+        # NEGATIVE, BUT INSIDE THE ALLOWANCE THE POLICY GRANTS. Not an error and not a win: the execution
+        # floor is -1.0% on purpose, because locking a marginally negative pair is cheaper than unwinding
+        # it (an unwind pays spread + taker fee, ~0.5-2%, plus brief naked exposure). There was no such
+        # state, so a pair that netted -0.00% was shouted at as "HEDGED AT A LOSS ... Investigate." A
+        # guard that fires on correct behaviour is a guard an operator learns to scroll past.
+        hedge_nm = other_name(name, teams)
+        rp = rest_price if rest_price is not None else price
+        rs = rest_shares if rest_shares is not None else size
+        rest_amt = money((float(rp) * float(rs)) if (rp is not None and rs is not None) else None)
+        hedge_amt = money((float(hedge_price) * float(hedge_shares))
+                          if (hedge_price is not None and hedge_shares is not None) else None)
+        risked = _pair_risk(rest_price, rest_shares, hedge_price, hedge_shares, hedge_fee, price, size)
+        roi = f" ({pct(net_pct)})" if net_pct is not None else ""
+        fl = f" (floor {pct(floor_pct)})" if floor_pct is not None else ""
+        return (f"\u2139\ufe0f \u00b7 {tag} \u00b7 {match} \u00b7 hedged flat \u2014 locked slightly "
+                f"negative, within policy"
+                f"\n   Bought: {name} {rest_amt} @ {cents(rp)} ({venue_label(venue)}) + "
+                f"{hedge_nm} {hedge_amt} @ {cents(hedge_price)} ({venue_label(hedge_venue)})"
+                f"\n   Total risked {money(risked)} \u00b7 \U0001f4b5 net {signed_money(pnl)} after "
+                f"fees{roi}{fl}"
+                f"\n   Locking this is cheaper than unwinding it \u2014 no action needed.")
+
     if kind == "locked_loss":
         # A completed pair that does NOT profit (locked_net <= 0, or rest+hedge >= $1.00/share). This is
         # NEVER "GUARANTEED" — it is a guaranteed LOSS that the pre-hedge check should have declined, so it
@@ -325,9 +348,15 @@ def format_event(kind: str, *, sport: Any = None, game: Any = None, market_key: 
               f"{hedge_nm} {hedge_amt} @ {cents(hedge_price)} ({venue_label(hedge_venue)})")
         roi = f" ({pct(net_pct)})" if net_pct is not None else ""
         l3 = f"\n   Total risked {money(risked)} → pays {pays} · 💵 net {signed_money(pnl)} after fees{roi}"
-        warn = (f"\n   ⚠️ rest+hedge = {money(pair_ps)}/share (≥ $1.00) — the pre-hedge check should have "
-                f"declined this. Investigate." if (pair_ps is not None and pair_ps >= 1.0 - 1e-9)
-                else "\n   ⚠️ net edge is ≤ 0 after fees — the pre-hedge check should have declined this. Investigate.")
+        # The warning names the FLOOR that was actually breached, not "$1.00/share": the pair price at
+        # which a hedge becomes unacceptable is a function of the CONFIGURED floor, and hard-coding
+        # break-even here is what made this alert fire on pairs the policy had just accepted.
+        fl = f" (floor {pct(floor_pct)})" if floor_pct is not None else ""
+        warn = (f"\n   \u26a0\ufe0f rest+hedge = {money(pair_ps)}/share and the net is worse than the "
+                f"execution floor{fl} \u2014 the pre-hedge check should have declined this. Investigate."
+                if pair_ps is not None else
+                f"\n   \u26a0\ufe0f net edge is worse than the execution floor{fl} \u2014 the pre-hedge "
+                f"check should have declined this. Investigate.")
         return l1 + l2 + l3 + warn
 
     if kind == "settled":

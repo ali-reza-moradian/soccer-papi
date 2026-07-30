@@ -107,6 +107,14 @@ def cancel_backoff_s(attempts: int) -> float:
     return min(CANCEL_RETRY_MAX_S, CANCEL_RETRY_FLOOR_S * (2.0 ** (n - 1)))
 
 
+def now_ts_of(now: Any) -> float:
+    """Unix seconds from a datetime-ish ``now`` (0.0 when unreadable) — for throttling repeated logs."""
+    try:
+        return float(now.timestamp())
+    except Exception:  # noqa: BLE001
+        return 0.0
+
+
 def _epoch(now: Any) -> float:
     """Unix seconds from a datetime-ish ``now`` (0.0 when it cannot be read) — audit metadata only."""
     try:
@@ -285,6 +293,7 @@ class PregameLiveExecutor:
         self._cancel_next_ts: dict = {}
         self._cancel_reason: dict = {}
         self._cancel_logged_at: dict = {}    # throttles the 'cancel NOT confirmed' WARNING (22,942/day)
+        self._deferred_offloop: list = []    # off-loop results waiting for a drain that HAS a book
         self._hedge_drift_repriced = 0       # quotes pulled because the HEDGE moved under them (N28)
         self._cancel_retries = 0             # off-loop retry DELETEs issued (panel/diagnostic)
         self._cancel_suppressed = 0          # tick-level cancel attempts skipped by the backoff
@@ -1235,11 +1244,28 @@ class PregameLiveExecutor:
         orders were closed out.
 
         The worker only fetched bytes. Everything that matters — the raced-fill check, freeing a slot,
-        mutating caps — happens here, in the one thread allowed to touch trading state."""
-        drained = self._worker.drain()
+        mutating caps — happens here, in the one thread allowed to touch trading state.
+
+        A RESULT THAT NEEDS A BOOK WAITS FOR ONE. This drain is reached from two kinds of caller: the
+        loop (which always has a ``store``) and ``_cancel`` (which often does not — a shock freeze, a
+        disarm sweep and a churn cancel all cancel by key with no book in hand). A batched FILL POLL
+        applied without a store reaches ``_hedge_fill``, which needs the book to price the hedge, and on
+        2026-07-30 at 17:04Z it raised ``'NoneType' object has no attribute 'poly_view'`` three times in
+        a row and latched an ORPHAN halt on a fill that was hedged fine three seconds later. So a
+        non-cancel result arriving without a store is HELD, not applied and not dropped — the next drain
+        that has a book applies it."""
+        drained = self._deferred_offloop + self._worker.drain() if store is not None             else self._worker.drain()
+        if store is not None:
+            self._deferred_offloop = []
         closed = 0
         for wkey, res, exc in drained:
             if not (isinstance(wkey, tuple) and len(wkey) == 2 and wkey[0] == "cancel"):
+                if store is None and not (isinstance(wkey, tuple) and wkey and wkey[0] == "gates"):
+                    # Needs a book to decide; hold it for a drain that has one (see the docstring).
+                    self._deferred_offloop.append((wkey, res, exc))
+                    if len(self._deferred_offloop) > 32:      # bound it; the loop drains every tick
+                        self._deferred_offloop = self._deferred_offloop[-32:]
+                    continue
                 self._on_offloop_result(wkey, res, exc, store, now, now_ts)
                 continue
             key = wkey[1]
@@ -2449,12 +2475,39 @@ class PregameLiveExecutor:
     @staticmethod
     def _pair_is_profit(fill_price: float, hedge_avg: Any, locked: Optional[float]) -> bool:
         """A completed hedge is a GENUINE profit only when the actual locked net is > 0 AND the pair
-        (rest + hedge per share) costs < $1.00. Anything else is a locked LOSS (alert it as an ERROR, never
-        'GUARANTEED')."""
+        (rest + hedge per share) costs < $1.00. Anything else is not a profit — see ``pair_outcome`` for
+        WHICH kind of not-a-profit it is, because that distinction decides the alert's colour."""
         if locked is None or float(locked) <= 1e-9:
             return False
         pair_ps = float(fill_price) + float(hedge_avg or 0.0)
         return pair_ps < 1.0 - 1e-9
+
+    @staticmethod
+    def pair_outcome(fill_price: float, hedge_avg: Any, locked: Optional[float],
+                     floor: float) -> str:
+        """``'profit'`` | ``'within_floor'`` | ``'breach'`` — THREE states, not two.
+
+        The alert used to have only two, and its warning text was written when the execution floor was
+        break-even: any pair at or over $1.00/share got a red ERROR saying "the pre-hedge check should
+        have declined this. Investigate." But the floor is a CONFIGURED number and it is -1.0% today,
+        deliberately: locking a marginally negative pair is cheaper than unwinding it, because an unwind
+        pays the spread plus a taker fee (~0.5-2%) and carries brief naked exposure. See
+        HEDGE_EXECUTION_FLOOR, which spells out that at -1% a fee-inclusive pair may legitimately reach
+        $1.01/share.
+
+        So the guard was screaming about pairs the policy had just chosen to accept. On 2026-07-30 the
+        Ilves fill locked at **-0.00%** — a rounding error inside a 1% allowance — and was alerted as a
+        red "HEDGED AT A LOSS ... Investigate." A guard that fires on correct behaviour trains an
+        operator to ignore it, and this one has cost real money before by doing exactly that.
+
+        The floor is passed in rather than read from a constant so the alert can NEVER drift out of sync
+        with the rail it is describing."""
+        if locked is None:
+            return "breach"
+        net = float(locked)
+        if net > 1e-9 and float(fill_price) + float(hedge_avg or 0.0) < 1.0 - 1e-9:
+            return "profit"
+        return "within_floor" if net >= float(floor) - 1e-9 else "breach"
 
     @staticmethod
     def _actual_locked_net(fill_price: float, hedge_avg: Any, hedge_fee: Any, hedged: Any,
@@ -2507,24 +2560,38 @@ class PregameLiveExecutor:
                     "chain": self._chain(lo, matched, fill_price, "book_refused", locked, 0.0, hedge_oid)}
         self.caps.commit_stake(float(hedged) * float(hedge_avg or 0.0) + float(hedge_fee or 0.0))
         self.caps.on_fill(pnl)
-        # POST-HEDGE HONESTY GUARD: a "LOCKED / profit is GUARANTEED" alert may ONLY be emitted when the
-        # pair genuinely profits (locked_net > 0 AND rest+hedge < $1/share). A pair that summed >= $1/share
-        # or nets <= 0 is a guaranteed LOSS the pre-hedge gate should have declined — alert it as a red
-        # ERROR (never "GUARANTEED") so a -2% hedge like the 2026-07-27 golubic fill can't read as a win.
-        profit = self._pair_is_profit(fill_price, hedge_avg, locked)
+        # POST-HEDGE HONESTY GUARD, in THREE states against the CONFIGURED floor (not against
+        # break-even, which is what it used to assume — see ``pair_outcome``):
+        #   profit       -> LOCKED, "profit is GUARANTEED"
+        #   within_floor -> INFO: negative, but inside the allowance the policy deliberately grants
+        #   breach       -> ERROR: worse than the floor, which the pre-hedge gate should have refused
+        outcome = self.pair_outcome(fill_price, hedge_avg, locked, self.hedge_execution_floor)
+        profit = outcome == "profit"
         self._record_lo(lo, "hedge_locked", now, price=fill_price, size=matched, locked_net=locked,
                         locked_pnl=pnl, hedge_avg=hedge_avg, hedge_order_id=hedge_oid)
-        if not profit and self.log:
-            self.log.error("[MAKER_RT][LIVE] HEDGED AT A LOSS %s: rest %.4f + hedge %.4f = %.4f/sh, "
-                           "locked_net %s, pnl $%.2f — booked, alerted ERROR (not GUARANTEED).",
+        if self.log and outcome == "breach":
+            self.log.error("[MAKER_RT][LIVE] HEDGED BELOW THE FLOOR %s: rest %.4f + hedge %.4f = "
+                           "%.4f/sh, locked_net %s (floor %.2f%%), pnl $%.2f - booked, alerted ERROR "
+                           "(not GUARANTEED).",
                            self._name_for(lo), float(fill_price), float(hedge_avg or 0.0),
                            float(fill_price) + float(hedge_avg or 0.0),
-                           ("%.2f%%" % (locked * 100.0)) if locked is not None else "n/a", pnl)
-        self._emit_event("locked" if profit else "locked_loss", lo, instant=True, pnl=pnl,
+                           ("%.2f%%" % (locked * 100.0)) if locked is not None else "n/a",
+                           self.hedge_execution_floor * 100.0, pnl)
+        elif self.log and outcome == "within_floor":
+            self.log.info("[MAKER_RT][LIVE] locked slightly negative (WITHIN the %.2f%% floor) %s: rest "
+                          "%.4f + hedge %.4f = %.4f/sh, locked_net %s, pnl $%.2f - locking this is "
+                          "cheaper than unwinding it, which is what the floor is for.",
+                          self.hedge_execution_floor * 100.0, self._name_for(lo), float(fill_price),
+                          float(hedge_avg or 0.0), float(fill_price) + float(hedge_avg or 0.0),
+                          ("%.2f%%" % (locked * 100.0)) if locked is not None else "n/a", pnl)
+        _kind = {"profit": "locked", "within_floor": "locked_thin", "breach": "locked_loss"}[outcome]
+        self._emit_event(_kind, lo, instant=(outcome != "within_floor"), digest_kind="locked_thin",
+                         pnl=pnl,
                          net_pct=(locked * 100.0 if locked is not None else None),
                          hedge_price=hedge_avg, hedge_venue=hedge_venue,
                          rest_price=fill_price, rest_shares=matched, hedge_shares=hedged,
-                         hedge_fee=hedge_fee, **self._live_ctx())
+                         hedge_fee=hedge_fee, floor_pct=self.hedge_execution_floor * 100.0,
+                         **self._live_ctx())
         # fee-honest cost basis + the fill-time ESTIMATE this pair contributed to today's loss rail, so
         # settlement can restate the difference rather than double-count (F4).
         self._note_pair_legs(lo, matched, fill_price, hedged, hedge_avg, hedge_fee, booked_pnl=pnl)
@@ -2956,8 +3023,14 @@ class PregameLiveExecutor:
             detected = now.strftime("%Y-%m-%dT%H:%M:%SZ")
         except Exception:  # noqa: BLE001
             detected = ""
+        # ``pending_verify`` on an IN-PROCESS latch too, not only on one re-read from disk at startup.
+        # It was set solely by ``_load_orphan``, so ``verify_latched_orphan`` returned False immediately
+        # for a latch this process had created and the halt could only ever be retired by a RESTART. On
+        # 2026-07-30 at 17:05:08Z that cost 26 minutes: the latch fired on three hedge-chain exceptions,
+        # the fourth attempt hedged the pair correctly THREE SECONDS LATER, and both legs were registered
+        # as EXPECTED — but nothing was allowed to look again.
         self.orphan = {"game": game, "token": token, "remaining": remaining, "phase": phase,
-                       "detected": detected, "detail": detail}
+                       "detected": detected, "detail": detail, "pending_verify": True}
         # ORDER MATTERS. Halt + persist + log FIRST; Telegram LAST and never load-bearing. Telegram
         # returned 429 (rate limit) 1,682 times in the incident window — if the scream came first and
         # raised, the halt would never land. _send_telegram also swallows its own errors.
@@ -3086,8 +3159,12 @@ class PregameLiveExecutor:
                            "hold — I checked both exchanges and it is fully hedged, so nothing is at "
                            "risk. I'm trading again."))
                 return True
-            o.pop("pending_verify", None)                 # genuinely unexplained -> confirmed orphan
-            if self.log:
+            # CONFIRMED, but KEEP RE-CHECKING. This used to clear ``pending_verify``, which disabled every
+            # future check: a latch that was genuinely naked at 17:05 and gets hedged (or settles) at
+            # 17:06 would then stay halted until a human noticed. Throttle the scream instead — the
+            # condition is re-read from the venue on every reconcile pass either way.
+            if self.log and now_ts_of(now) - float(o.get("confirmed_logged_ts") or 0.0) >= 900.0:
+                o["confirmed_logged_ts"] = now_ts_of(now)
                 self.log.error("[MAKER_RT][LIVE] latched ORPHAN CONFIRMED by venue: %s holds %.2f sh with "
                                "no expected leg to explain it — live stays HALTED.", inst, held)
             return False

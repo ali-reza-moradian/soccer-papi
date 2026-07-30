@@ -265,12 +265,19 @@ def test_settled_orphan_is_cleared_and_live_resumes(tmp_path):
 
 
 def test_orphan_still_held_stays_halted(tmp_path):
-    """A latch the venue CONFIRMS (position still open) must keep the halt and stop re-checking."""
+    """A latch the venue CONFIRMS (position still open) must keep the halt — and KEEP RE-CHECKING.
+
+    This test used to assert the opposite ("confirmed -> no further re-checks", by clearing
+    ``pending_verify``), and 2026-07-30 17:04Z showed why that is wrong: a position can be genuinely
+    unexplained at the moment the latch fires and fully hedged seconds later, which is exactly what
+    happened when three hedge attempts raised before the fourth succeeded. Disabling the re-check made
+    the halt permanent until a human noticed — 26 minutes, over a pair both venues agreed was covered.
+    The scream is throttled instead; see test_the_confirmed_scream_is_throttled."""
     ex = _latched(tmp_path)
     ex._kalshi_position = lambda tk: 21.0
     assert ex.verify_latched_orphan(_DT) is False
     assert ex.orphan is not None and ex.caps.halted is True
-    assert "pending_verify" not in ex.orphan                  # confirmed -> no further re-checks
+    assert ex.orphan.get("pending_verify") is True            # still re-checkable on the next pass
 
 
 def test_unreadable_position_fails_closed(tmp_path):
