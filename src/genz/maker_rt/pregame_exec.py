@@ -37,6 +37,7 @@ from . import hedge as hedge_mod
 from . import settle as settle_mod
 from .caps import direction_slot_ok
 from .live import assert_live_allowed
+from .loopstats import STATS
 from .quotes import POLY_MIN_SHARES
 
 _UNREAD = object()               # sentinel: "_venue_order_state was not handed a pre-read order dict"
@@ -932,13 +933,15 @@ class PregameLiveExecutor:
         lo = self.open_orders.get(key)
         if lo is None:
             return True
-        resp = None
-        try:
-            resp = self._venue_cancel(lo)
-        except Exception as exc:  # noqa: BLE001 — order id + raw error are LOG-ONLY (never Telegram)
-            if self.log:
-                self.log.warning("[MAKER_RT][LIVE] cancel raised for %s: %s", lo.order_id, exc)
-        if not self._cancel_confirmed(lo, resp, store, now, now_ts):
+        with STATS.timer("cancel"):
+            resp = None
+            try:
+                resp = self._venue_cancel(lo)
+            except Exception as exc:  # noqa: BLE001 — order id/raw error are LOG-ONLY (never Telegram)
+                if self.log:
+                    self.log.warning("[MAKER_RT][LIVE] cancel raised for %s: %s", lo.order_id, exc)
+            confirmed = self._cancel_confirmed(lo, resp, store, now, now_ts)
+        if not confirmed:
             if self.log:
                 self.log.warning("[MAKER_RT][LIVE] cancel NOT confirmed %s (%s) — keeping tracked.",
                                  lo.order_id, reason)
@@ -2455,7 +2458,7 @@ class PregameLiveExecutor:
             self.log.error("[MAKER_RT][LIVE] STARTUP: persisted ORPHAN re-latched — live HALTED "
                            "(pending venue verification). %s", data)
 
-    def _clear_orphan(self, why: str, now: Any = None) -> None:
+    def _clear_orphan(self, why: str, now: Any = None, *, human: Optional[str] = None) -> None:
         """Retire a latched orphan that VENUE TRUTH says is not a position, and resume live quoting.
         The file is renamed (never silently deleted) so the incident stays auditable."""
         data = self.orphan
@@ -2471,9 +2474,13 @@ class PregameLiveExecutor:
         if self.log:                                      # ticker/token stays LOG-ONLY (plain-language rule)
             self.log.warning("[MAKER_RT][LIVE] ORPHAN CLEARED (%s) — venue reads FLAT; live RESUMED. %s",
                              why, data)
-        self._send_telegram("🟢 RESUMED · the stray position I was paused over is gone from the exchange "
-                            "(it settled while I was away). I checked with the exchange and I'm holding "
-                            "nothing, so I'm trading again.")
+        # The plain-language line has to match what is actually true, and there are two different truths
+        # here: the position is GONE, or it is still HELD and fully hedged. Telling an operator "I'm
+        # holding nothing" while we hold 52 hedged contracts would be a lie in the one message they read.
+        self._send_telegram(human or (
+            "🟢 RESUMED · the stray position I was paused over is gone from the exchange (it settled "
+            "while I was away). I checked with the exchange and I'm holding nothing, so I'm trading "
+            "again."))
 
     def verify_latched_orphan(self, now: Any = None) -> bool:
         """Re-check a ``pending_verify`` orphan against the venue and CLEAR it when we are provably flat.
@@ -2485,7 +2492,17 @@ class PregameLiveExecutor:
         idle for ~11h with healthy feeds. A settled/flat instrument is NOT a naked position.
 
         FAILS CLOSED: an unreadable position (network/auth error) leaves the halt in place. Returns True
-        when the orphan was cleared."""
+        when the orphan was cleared.
+
+        TWO WAYS OUT, because there are two ways a latch stops being true. FLAT is the obvious one. The
+        other is EXPLAINED: the instrument is still held, ON PURPOSE, as a leg of a pair we hedged. That
+        is the same question ``_orphan_detected`` asks with ``_reverify_explained`` before it halts — and
+        asking it with a WEAKER test on the way out is what made a latch unretirable. On 2026-07-30 a
+        reconciliation sweep and a fill landed in the same second: the sweep saw 51.97 unexplained Kalshi
+        contracts and halted at 04:33:18, and the chain registered them as an EXPECTED leg and booked the
+        pair LOCKED (+$1.56, with Poly holding 51.96 of the complement) at 04:33:20. The bot then sat
+        halted for ten hours over a position both venues agreed was hedged, because "do we hold any?" was
+        the only question the retirement path knew how to ask. One question, one test, both directions."""
         o = self.orphan
         if not isinstance(o, dict) or not o.get("pending_verify"):
             return False
@@ -2495,11 +2512,18 @@ class PregameLiveExecutor:
         held = self._instrument_shares(inst)
         if held is None:                                  # unreadable -> keep the halt (fail closed)
             return False
-        if held > HEDGE_SHARE_TOL:                        # genuinely still holding -> confirmed orphan
-            o.pop("pending_verify", None)
+        if held > HEDGE_SHARE_TOL:
+            if self._reverify_explained(inst):            # held ON PURPOSE, as a booked pair leg
+                self._clear_orphan(
+                    f"{inst} holds {held:.2f} sh but they are an EXPECTED leg of a booked pair", now,
+                    human=("🟢 RESUMED · the position I was paused over turned out to be one I meant to "
+                           "hold — I checked both exchanges and it is fully hedged, so nothing is at "
+                           "risk. I'm trading again."))
+                return True
+            o.pop("pending_verify", None)                 # genuinely unexplained -> confirmed orphan
             if self.log:
-                self.log.error("[MAKER_RT][LIVE] latched ORPHAN CONFIRMED by venue: %s holds %.2f sh — "
-                               "live stays HALTED.", inst, held)
+                self.log.error("[MAKER_RT][LIVE] latched ORPHAN CONFIRMED by venue: %s holds %.2f sh with "
+                               "no expected leg to explain it — live stays HALTED.", inst, held)
             return False
         self._clear_orphan(f"{inst} reads flat ({held:.2f} sh)", now)
         return True

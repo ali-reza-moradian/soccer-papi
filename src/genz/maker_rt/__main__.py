@@ -26,6 +26,7 @@ from .gitguard import head_changed, read_head_sha
 from .hedge import LiveHedger
 from .inplay_exec import InFlightGuard
 from .live import LiveGate
+from .loopstats import STATS
 from .state import MakerState, bump_restart, utcnow
 from .store import BookStore
 from .universe import build_universe, kalshi_tickers, load_trees, poly_tokens, tree_mtimes
@@ -73,7 +74,14 @@ def _telegram_sender(log: Any):
         from ...telegram import send_message
     except Exception:  # noqa: BLE001
         return None
-    return lambda text: send_message(key, chat, html.escape(text, quote=False), log)
+
+    def _send(text: str) -> Any:
+        # TIMED at the one place every consumer (caps, executor, driver, this module) goes through, so
+        # what the LOOP pays for alerting is a number instead of unexplained lag. This is a synchronous
+        # HTTPS POST with a 20s timeout, taken at fill/hedge/halt moments; the audit's worst case was 64s.
+        with STATS.timer("telegram"):
+            return send_message(key, chat, html.escape(text, quote=False), log)
+    return _send
 
 
 def _kalshi_ws_auth() -> tuple:
@@ -205,7 +213,9 @@ def _spawn_user_feed(store: BookStore, pregame_exec: Any, poly_oc: Any, log: Any
         return None, None
 
     def _on_user_order(e):
-        pregame_exec.on_order_update(e, store, utcnow(), time.time())
+        # WS callbacks run on the SAME event loop as the trading tick, so their cost IS loop lag.
+        with STATS.timer("ws_cb"):
+            pregame_exec.on_order_update(e, store, utcnow(), time.time())
 
     pm_user = PolyUserFeed(store, [], creds, on_user_order=_on_user_order,
                            on_user_trade=lambda e: None, log=log)
@@ -302,13 +312,16 @@ async def _run(cfg: Any, log: Any) -> int:
              len(kalshi_tickers(universe)))
 
     def on_prints(prints):
-        driver.consume_prints(prints, store, utcnow(), time.time())
+        with STATS.timer("ws_cb"):
+            driver.consume_prints(prints, store, utcnow(), time.time())
 
     # rest-kalshi live: route OUR Kalshi fills (private 'fill' channel) to the executor when that
     # direction is enabled + armed. rest-poly-only configs leave this None (the fills are never ours).
     on_kalshi_fill = None
     if pregame_exec is not None and "rest-kalshi" in getattr(pregame_exec, "directions", set()):
-        on_kalshi_fill = lambda e: pregame_exec.on_kalshi_fill(e, store, utcnow(), time.time())  # noqa: E731
+        def on_kalshi_fill(e):                                   # noqa: F811 - the wired variant
+            with STATS.timer("ws_cb"):
+                pregame_exec.on_kalshi_fill(e, store, utcnow(), time.time())
 
     def _spawn_wired():
         """Every feed creation goes through here, so no respawn can lose a callback."""
@@ -333,21 +346,20 @@ async def _run(cfg: Any, log: Any) -> int:
     # spent NOT repricing, which at the current market count is the difference between quoting the book
     # and quoting a memory of it. Measured, not assumed: a max and a p50 per heartbeat, alongside how
     # many book events each pass absorbed (the conflation ratio). Cheap enough to leave on forever.
-    loop_lags: list = []
-    loop_ticks = 0
+    #
+    # WHAT blocks it, and for how much of the window in TOTAL — not just the worst single call. The
+    # buckets live in loopstats.STATS (sum + count + max each) because a max cannot tell one 5s stall
+    # apart from 4,909 fast calls an hour, and those two need opposite fixes. Two blocks that were
+    # previously UNATTRIBUTED are buckets now as well: the websocket callbacks (they run on THIS loop,
+    # not a thread) and the heartbeat/summary write.
     last_tick_mono = time.monotonic()
     events_at_last_hb = 0
-    # WHAT blocks it, not just how much. Everything below runs SYNCHRONOUS REST on the event loop, so a
-    # slow venue read is loop lag by definition; attributing it is the difference between a number and a
-    # cause. (Quote refresh is pure in-memory book math and never blocks on I/O.)
-    blockers = {"quotes": 0.0, "fill_poll": 0.0, "reconcile": 0.0, "settle": 0.0}
     try:
         while True:
             now, now_ts = utcnow(), time.time()
             _mono = time.monotonic()
-            loop_lags.append(max(0.0, (_mono - last_tick_mono) - cfg.debounce_ms / 1000.0) * 1000.0)
+            STATS.note_tick((_mono - last_tick_mono - cfg.debounce_ms / 1000.0) * 1000.0)
             last_tick_mono = _mono
-            loop_ticks += 1
             # GRACEFUL STOP: the supervisor drops data/ops/STOP_ALL (or a SIGTERM/SIGBREAK arrives) —
             # return 0 so the finally cancels every live order BEFORE the supervisor can force-kill us.
             stop_all = os.path.exists(stop_all_path())
@@ -359,11 +371,10 @@ async def _run(cfg: Any, log: Any) -> int:
             # is a synchronous POST to the venue, so an active tick blocks for as long as the exchange
             # takes. That is the unexplained part of the max lag (a 2.7s tick with only 612ms of fill-poll
             # in it), and it is inherent to placing orders — worth seeing, not worth hiding.
-            _b = time.monotonic()
-            driver.refresh_quotes(store, now, now_ts)
-            driver.process_drift(store, now, now_ts)
-            driver.expire_kickoff(now, now_ts)
-            blockers["quotes"] = max(blockers["quotes"], (time.monotonic() - _b) * 1000.0)
+            with STATS.timer("quotes"):
+                driver.refresh_quotes(store, now, now_ts)
+                driver.process_drift(store, now, now_ts)
+                driver.expire_kickoff(now, now_ts)
             if pregame_exec is not None:
                 pregame_exec.roll_day(now)                        # reset in-play circuit + caps at UTC midnight
                 pregame_exec.enforce_arm_state(now)               # a phase disarmed mid-run -> cancel its opens
@@ -390,53 +401,52 @@ async def _run(cfg: Any, log: Any) -> int:
                     last_fill_poll = now_ts
                     # These are SYNCHRONOUS REST calls on the event loop, so their duration IS loop lag —
                     # attribute it rather than leaving a bare max in the log to be guessed at.
-                    _b = time.monotonic()
-                    pregame_exec.poll_open_orders(store, now, now_ts)
-                    pregame_exec.poll_kalshi_fills(store, now, now_ts)
-                    blockers["fill_poll"] = max(blockers["fill_poll"], (time.monotonic() - _b) * 1000.0)
+                    with STATS.timer("fill_poll"):
+                        pregame_exec.poll_open_orders(store, now, now_ts)
+                        pregame_exec.poll_kalshi_fills(store, now, now_ts)
                 if now_ts - last_reconcile >= RECONCILE_EVERY_S:     # POSITION RECONCILIATION (orphan guard)
                     last_reconcile = now_ts
-                    _b = time.monotonic()
-                    try:
-                        pregame_exec.reconcile_positions(now)
-                    except Exception as exc:  # noqa: BLE001
-                        log.warning("[MAKER_RT][LIVE] reconciliation failed: %s", exc)
-                    blockers["reconcile"] = max(blockers["reconcile"], (time.monotonic() - _b) * 1000.0)
+                    with STATS.timer("reconcile"):
+                        try:
+                            pregame_exec.reconcile_positions(now)
+                        except Exception as exc:  # noqa: BLE001
+                            log.warning("[MAKER_RT][LIVE] reconciliation failed: %s", exc)
                 if now_ts - last_settle >= SETTLE_EVERY_S:           # SETTLED-P&L (venue-truth realized pnl)
                     last_settle = now_ts
-                    _b = time.monotonic()
-                    try:
-                        pregame_exec.reconcile_settlements(now)
-                    except Exception as exc:  # noqa: BLE001
-                        log.warning("[MAKER_RT][LIVE] settlement reconcile failed: %s", exc)
-                    blockers["settle"] = max(blockers["settle"], (time.monotonic() - _b) * 1000.0)
+                    with STATS.timer("settle"):
+                        try:
+                            pregame_exec.reconcile_settlements(now)
+                        except Exception as exc:  # noqa: BLE001
+                            log.warning("[MAKER_RT][LIVE] settlement reconcile failed: %s", exc)
                 state.live = pregame_exec.snapshot(now_ts)
             poly_user_up = bool(pm_user is not None and pm_user.connected)
             sockets = {"poly_market": pm.connected, "poly_user": poly_user_up, "kalshi": ks.connected}
             if now_ts - last_hb >= HEARTBEAT_EVERY_S:
-                state.write_heartbeat(mode, sockets, driver.open_quote_count(), now)
-                state.maybe_persist_tuning(now_ts)         # throttled; fills persist immediately
-                if pregame_exec is not None:
-                    pregame_exec.maybe_persist_daily_caps(now_ts)   # daily caps survive a mid-day restart
-                summ = state.summary(mode, sockets, now)
-                state.write_summary(mode, sockets, now)
+                # HEARTBEAT/SUMMARY WRITE — several synchronous JSON builds plus file writes, every 2.5s.
+                # Previously unattributed, so whatever it cost was reported as bare, unexplained loop lag.
+                with STATS.timer("heartbeat"):
+                    state.write_heartbeat(mode, sockets, driver.open_quote_count(), now)
+                    state.maybe_persist_tuning(now_ts)     # throttled; fills persist immediately
+                    if pregame_exec is not None:
+                        pregame_exec.maybe_persist_daily_caps(now_ts)  # caps survive a mid-day restart
+                    summ = state.summary(mode, sockets, now)
+                    state.write_summary(mode, sockets, now)
                 if now_ts - last_achv_log >= 60.0:            # a compact per-sport achievable heartbeat
                     last_achv_log = now_ts
-                    if loop_lags:
-                        ordered = sorted(loop_lags)
+                    if STATS.ticks:
+                        p50, p99, mx = STATS.lag_percentiles()
                         applied = store.events_applied - events_at_last_hb
                         events_at_last_hb = store.events_applied
-                        worst = max(blockers, key=blockers.get)
-                        log.info("[MAKER_RT][LOOP] %d ticks, lag p50 %.1fms max %.1fms (target %dms) · "
-                                 "%d book event(s) absorbed = %.1f per tick (conflated) · %d markets · "
-                                 "slowest blocking sync REST: %s %.0fms (quotes %.0f/fill_poll %.0f/"
-                                 "reconcile %.0f/settle %.0f)",
-                                 loop_ticks, ordered[len(ordered) // 2], ordered[-1], cfg.debounce_ms,
-                                 applied, applied / max(1, loop_ticks), len(universe),
-                                 worst, blockers[worst], blockers["quotes"], blockers["fill_poll"],
-                                 blockers["reconcile"], blockers["settle"])
-                        loop_lags, loop_ticks = [], 0
-                        blockers = {"quotes": 0.0, "fill_poll": 0.0, "reconcile": 0.0, "settle": 0.0}
+                        worst = STATS.worst_bucket() or "none"
+                        # BUSIEST is by SUM, not by worst call: the bucket that ate the most of the
+                        # window is the one to fix. cancel/telegram are NESTED inside whichever bucket
+                        # called them (see loopstats), so the parts do not add up to the tick.
+                        log.info("[MAKER_RT][LOOP] %d ticks, lag p50 %.1fms p99 %.1fms max %.1fms "
+                                 "(target %dms) · %d book event(s) absorbed = %.1f per tick "
+                                 "(conflated) · %d markets · busiest %s · %s",
+                                 STATS.ticks, p50, p99, mx, cfg.debounce_ms, applied,
+                                 applied / max(1, STATS.ticks), len(universe), worst, STATS.render())
+                        STATS.reset()
                     if pregame_exec is not None:
                         lv = pregame_exec.snapshot()
                         log.info("[MAKER_RT][LIVE] feed_ok=%s open=%d stake=$%.2f/%.0f fills=%d pnl=$%.2f "
@@ -452,16 +462,19 @@ async def _run(cfg: Any, log: Any) -> int:
                 if head_changed(head0, read_head_sha(mrt_config.REPO_ROOT)):
                     log.warning("[MAKER_RT] git HEAD changed — exiting 0 for a fresh restart.")
                     return 0
-                nm = tree_mtimes()
+                with STATS.timer("trees"):
+                    nm = tree_mtimes()
                 if nm != mtimes:                          # trees rebuilt -> rebuild the universe
                     # KEEP-OLD-UNIVERSE. A rebuild that yields NOTHING while markets are live is not a
                     # quiet fixture list — it is a failed read, and adopting it cancels every resting
                     # order. The mtimes are NOT committed in that case, so the next heartbeat retries.
                     try:
-                        new_trees = load_trees(previous=trees, log=log)
-                        new_universe = build_universe(new_trees, now_ts, max_games=cfg.max_games,
-                                                      expire_before_kickoff_s=cfg.expire_before_kickoff_s,
-                                                      horizon_hours=horizon)
+                        with STATS.timer("trees"):
+                            new_trees = load_trees(previous=trees, log=log)
+                            new_universe = build_universe(
+                                new_trees, now_ts, max_games=cfg.max_games,
+                                expire_before_kickoff_s=cfg.expire_before_kickoff_s,
+                                horizon_hours=horizon)
                     except Exception as exc:  # noqa: BLE001 — a bad tree must never kill the live loop
                         log.error("[MAKER_RT] tree reload FAILED (%s) — keeping the current universe of "
                                   "%d market(s); retrying next heartbeat.", exc, len(universe))
