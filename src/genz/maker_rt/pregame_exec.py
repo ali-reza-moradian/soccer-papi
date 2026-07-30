@@ -576,11 +576,20 @@ class PregameLiveExecutor:
         return self.poly.get_order(lo.order_id)
 
     @staticmethod
-    def _order_matched(lo: _LiveOrder, o: dict) -> Any:
-        """Matched quantity from a venue order dict (Poly: size_matched; Kalshi: fill_count or
-        initial-remaining). Kalshi v2 suffixes every count with ``_fp`` and sends it as a fixed-point
-        STRING, so this MUST go through fp_num — reading only the bare v1 names is what made 6,126
-        consecutive REST polls report "no fill" on two fully-executed orders on 2026-07-23."""
+    def _order_matched(lo: _LiveOrder, o: dict) -> Optional[float]:
+        """Matched quantity from a venue order dict, ALWAYS as a float or None — never a raw venue value.
+
+        Kalshi v2 suffixes every count with ``_fp`` and sends it as a fixed-point STRING, so this MUST go
+        through fp_num — reading only the bare v1 names is what made 6,126 consecutive REST polls report
+        "no fill" on two fully-executed orders on 2026-07-23.
+
+        POLYMARKET sends ``size_matched`` as a STRING too ("0"), and this used to return it unconverted.
+        Every caller then had to remember to coerce, and one did not: ``_venue_order_state`` compared it to
+        a float and raised ``TypeError: '>' not supported between 'str' and 'float'``, killing the LIVE
+        process at 04:04:27 on 2026-07-30. The bug had been latent for as long as the field had been read,
+        reachable only once the N9 fix started asking the venue about a Poly order BEFORE honoring a
+        cancel. Coercing HERE — at the one place that reads the field — is what makes every caller safe,
+        rather than every caller being individually careful."""
         if lo.rest_venue == "kalshi":
             from ...executor.kalshi_exec import fp_num
             n = fp_num(o, "fill_count", "taker_fill_count", "filled_count", "count_filled")
@@ -594,7 +603,13 @@ class PregameLiveExecutor:
             if str(o.get("status") or "").lower() == "executed":
                 return float(lo.size)
             return None
-        return o.get("size_matched")
+        v = o.get("size_matched")
+        if v is None or v == "":
+            return None
+        try:
+            return float(v)
+        except (TypeError, ValueError):      # an unreadable count is UNKNOWN, never "zero filled"
+            return None
 
     def _venue_cancel(self, lo: _LiveOrder) -> Any:
         if lo.rest_venue == "kalshi":
@@ -1021,7 +1036,13 @@ class PregameLiveExecutor:
             matched = self._order_matched(lo, o)
             if status in ("CANCELED", "CANCELLED"):
                 return "canceled", matched
-            if status in self._FILLED_STATUSES or (matched or 0) > lo.matched_seen + 1e-9:
+            # ``matched`` is a float-or-None by contract (see _order_matched); belt-and-braces anyway,
+            # because this comparison is on the live cancel path and a raise here kills the process.
+            try:
+                grew = matched is not None and float(matched) > lo.matched_seen + 1e-9
+            except (TypeError, ValueError):
+                grew = False
+            if status in self._FILLED_STATUSES or grew:
                 return "filled", matched
             return "resting", matched
         # Empty/failed single-order read -> re-resolve in the venue's RESTING list (by id, then coid).

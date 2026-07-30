@@ -318,6 +318,38 @@ def test_a_fill_that_raced_the_cancel_window_is_hedged_before_the_slot_is_freed(
     assert c.key not in ex.open_orders and ex.caps.open_quotes == 0    # slot freed exactly once
 
 
+def test_a_string_size_matched_cannot_crash_the_cancel_path(tmp_path):
+    """Polymarket sends ``size_matched`` as a STRING. `_venue_order_state` compared it to a float and
+    raised `TypeError: '>' not supported between 'str' and 'float'`, which killed the LIVE process at
+    04:04:27 on 2026-07-30 — latent for as long as that field had been read, and reachable only once N9
+    started asking the venue about a Poly order BEFORE honoring a cancel. `_order_matched` now coerces at
+    the single place the field is read, so no caller has to remember."""
+    oc = _OrderClient()
+    poly = _Poly(order_status="LIVE", size_matched="0")       # <- the venue's real shape: a string
+    hedger = _Hedger(_locked(4.0, px=0.50), poly=poly)
+    ex, _ = _exec(tmp_path, order_client=oc, hedger=hedger, poly=poly)
+    ex.log = _Log()
+    ex.caps.quote_usd_max = 70.0
+    store = _Store(poly_best_ask=0.55, kalshi_ask=0.50)
+    c = _cand("rest-poly", token="TOK_STR")
+    ex.place_or_reprice(c, _dec(0.46, hedge_ask=0.50), None, store, _DT, 1.0, "pre")
+    lo = ex.open_orders[c.key]
+
+    assert ex._order_matched(lo, {"size_matched": "0"}) == pytest.approx(0.0)
+    assert ex._order_matched(lo, {"size_matched": "4.5"}) == pytest.approx(4.5)
+    assert ex._order_matched(lo, {"size_matched": "banana"}) is None    # unknown, never "zero filled"
+    assert ex._order_matched(lo, {}) is None
+    assert ex._venue_order_state(lo) == ("resting", pytest.approx(0.0))
+    assert ex._cancel(c.key, _DT, "reprice", store, 2.0) is True        # must not raise
+
+    # ...and a STRING delta still routes as a fill rather than being lost or crashing.
+    poly.order_status, poly.size_matched = "LIVE", "4"
+    c2 = _cand("rest-poly", token="TOK_STR2")
+    ex.place_or_reprice(c2, _dec(0.46, hedge_ask=0.50), None, store, _DT, 3.0, "pre")
+    ex._cancel(c2.key, _DT, "reprice", store, 4.0)
+    assert any(r["event"] == "fill" for r in ex.state.rows)
+
+
 def test_a_cancelled_order_whose_fill_was_routed_still_frees_its_slot(tmp_path):
     """The mirror hazard: keeping a terminal order tracked to protect its fill must not strand its slot.
     The release branch used to require matched_seen == 0, and so did age-out — so a

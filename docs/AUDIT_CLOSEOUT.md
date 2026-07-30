@@ -172,6 +172,17 @@ per sport stand, and phase 1 raises no cap.
 **Individually deferred:** F2, F7, F8, F9-residual, N11, N12-residual, N18, N19, N20, N25, N27, N28,
 N29, N30, N32-residual, N33, N34-residual, N35, N36.
 
+**One regression phase 1 caused, found in production 15 minutes after the deploy and fixed:**
+
+Polymarket sends `size_matched` as a **string**, and `_venue_order_state` compared it to a float —
+`TypeError: '>' not supported between 'str' and 'float'`. The bug was as old as that field's read path but
+**unreachable**: `_cancel_confirmed` honored the `canceled` fast path first, so a Poly order was never
+asked about. N9 reordered exactly that, and the LIVE process died at 04:04:27Z (graceful shutdown ran,
+all 10 resting orders cancelled cleanly, wrapper restarted it 12s later; one crash, no stranded orders,
+no fills in flight). `_order_matched` now coerces at the single place the field is read, so no caller has
+to remember — the same lesson as `fp_num`. Pinned by
+`test_a_string_size_matched_cannot_crash_the_cancel_path`, mutation-verified to reproduce the TypeError.
+
 **Two things phase 1 found that the audit did not, both now closed:**
 
 1. A **permanent slot leak**: the branch that releases a venue-terminal order required `matched_seen == 0`,
