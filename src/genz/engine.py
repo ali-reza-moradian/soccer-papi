@@ -104,6 +104,17 @@ class PricedVenue:
     depth_usd: float                 # fillable dollar depth (Σ price*size of the ladder)
     open: Optional[bool] = None      # venue market open/tradeable; None = unknown (couldn't tell)
     ladder: list = field(default_factory=list)   # the ascending (price, size) ask ladder (for depth sizing)
+    # THE BID SIDE OF THE SAME BOOK. Both venues answer one request with bids AND asks; pricing only ever
+    # kept the asks, so the paper maker — which needs the best BID to decide where it would join the queue
+    # — re-downloaded every book a second time, serially, through a 0.5s throttle. That redundant fetch was
+    # 85% of the soccer cycle (847s of 997s). Carrying the number we already received costs nothing.
+    #
+    # ``bid_read`` is what makes it safe: ``best_bid is None`` is a LEGITIMATE answer (an empty bid side),
+    # so a consumer cannot use None to mean "not plumbed". Only ``bid_read`` distinguishes "the venue told
+    # us there are no bids" from "nobody asked" — and a md object that predates this (or a test double
+    # exposing only the ask-ladder methods) leaves it False and gets the old fetch path.
+    best_bid: Optional[float] = None
+    bid_read: bool = False
 
     @property
     def priced(self) -> bool:
@@ -114,6 +125,19 @@ def _ladder(md: Any, venue: str, ident: str, side: str) -> list[tuple[float, flo
     if venue == "kalshi":
         return md.kalshi_ask_ladder(ident, side)
     return md.poly_ask_ladder(ident)
+
+
+def _quote(md: Any, venue: str, ident: str, side: str):
+    """``(ask_ladder, best_bid, bid_read)`` from ONE venue book read, when ``md`` can do that.
+
+    Prefers the combined reader (``kalshi_quote`` / ``poly_quote``, which fetch the book once and return
+    both sides) and falls back to the ask-only method — so any md implementation, including the injected
+    fakes in the tests, keeps working with exactly its previous behaviour."""
+    combined = getattr(md, "kalshi_quote" if venue == "kalshi" else "poly_quote", None)
+    if callable(combined):
+        ladder, bid = combined(ident, side) if venue == "kalshi" else combined(ident)
+        return list(ladder or []), bid, True
+    return _ladder(md, venue, ident, side), None, False
 
 
 def _venue_open(md: Any, venue: str, ident: str) -> Optional[bool]:
@@ -132,18 +156,23 @@ def _price_one(md: Any, venue: str, ident: str, side: str, stake: float) -> Pric
     """Walk a live ladder to ``stake`` and report best ask + walk-to-stake fill + dollar depth +
     open status. FULLY exception-safe: ANY data/timeout error -> an UNPRICED result (never raises),
     so one bad book can't abort the cycle or feed a half price into an arb."""
+    bid, bid_read = None, False
     try:
-        ladder = _ladder(md, venue, ident, side)
+        ladder, bid, bid_read = _quote(md, venue, ident, side)
     except Exception:  # noqa: BLE001 - any data error -> unpriced (drop-safe)
         ladder = []
     is_open = _venue_open(md, venue, ident)
     if not ladder:
-        return PricedVenue(venue, ident, None, None, 0.0, open=is_open)
+        # An empty ASK ladder does not invalidate the bid we read from the same response, and the paper
+        # maker's join decision is a bid-side question — so carry it even on an unpriced node.
+        return PricedVenue(venue, ident, None, None, 0.0, open=is_open,
+                           best_bid=bid, bid_read=bid_read)
     best = ladder[0][0]
     walk = bookmath.walk_book(ladder, stake)
     fill = walk.avg_price if walk.avg_price > 0 else best
     depth = sum(p * s for p, s in ladder)
-    return PricedVenue(venue, ident, best, fill, depth, open=is_open, ladder=ladder)
+    return PricedVenue(venue, ident, best, fill, depth, open=is_open, ladder=ladder,
+                       best_bid=bid, bid_read=bid_read)
 
 
 def price_markets(md: Any, markets: list[Market], cfg: gz_config.GenzConfig) -> dict[tuple, PricedVenue]:

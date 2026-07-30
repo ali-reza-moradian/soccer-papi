@@ -182,24 +182,49 @@ def test_poll_unreadable_venue_keeps_tracked_fail_closed(tmp_path):
 # --------------------------------------------------------------------------- #
 # THE incident replay: place -> DELETE 404 -> still resting -> NO new placement #
 # --------------------------------------------------------------------------- #
+def _settle_offloop(ex, tries: int = 200) -> None:
+    """Wait for the off-loop cancel worker to go idle (phase 2 / N18). The retry DELETE is issued on a
+    worker thread and DECIDED on the loop, so a test that asserts on the venue has to let the thread run
+    and then drain — which is also the honest shape of what the event loop does every tick."""
+    import time as _t
+    for _ in range(tries):
+        if ex._worker.pending() == 0:
+            break
+        _t.sleep(0.01)
+    ex._drain_cancel_results(_STORE, NOW, 0.0)
+
+
 def test_incident_replay_no_stacking_then_recovers(tmp_path):
     """Replay the exact pattern: a mandatory reprice tries to cancel, the DELETE 404s, the order is still
-    resting -> NO replacement is placed; the cancel is retried each tick. Once the cancel path works the
-    reprice confirms death and places cleanly — exactly ONE order rests throughout (never a stack)."""
+    resting -> NO replacement is placed. Once the cancel path works the reprice confirms death and places
+    cleanly — exactly ONE order rests throughout (never a stack).
+
+    The RETRY CADENCE changed in phase 2 (N18): the storm this replay used to require — one synchronous
+    DELETE+GET per tick, up to 4,909/hour — is exactly the thing that got fixed, so what is pinned here
+    is the INVARIANT (never stack, never free the slot, never abandon the cancel) rather than the number
+    of DELETEs. A tick inside the backoff window must issue NONE."""
     venue = _KVenue(cancel_404=True, single_read_blind=True, orders_scan_blind=True)
     ex, _ = _kalshi_exec(tmp_path, venue)
     c = _ck("KX-1", 1)
     ex.place_or_reprice(c, _DEC(), None, _STORE, NOW, 100.0, "pre")
     assert len(venue.resting) == 1
     d2 = _dec(0.44, hedge_ask=0.55); d2.floor = 0.44        # resting 0.46 is now below floor -> MANDATORY reprice
-    for t in (140.0, 180.0, 220.0):                         # the driver retries the cancel each tick (backoff)
-        ex.place_or_reprice(c, d2, None, _STORE, NOW, t, "pre")
+    for i in range(20):                                     # 20 driver passes = the whole 5s floor
+        ex.place_or_reprice(c, d2, None, _STORE, NOW, 140.0 + i * 0.25, "pre")
     assert len(venue.resting) == 1, "NEVER stacked a replacement while the original was still live"
     assert len(ex.open_orders) == 1 and ex.caps.open_quotes == 1
-    assert len(venue.cancels) >= 3, "the cancel was retried, not abandoned"
-    # cancel path recovers -> the reprice confirms death and replaces cleanly (still exactly one resting).
+    assert len(venue.cancels) == 1, "20 ticks inside the 5s backoff issue ONE DELETE, not 20"
+    ex.place_or_reprice(c, d2, None, _STORE, NOW, 200.0, "pre")   # past the floor -> retry, off-loop
+    _settle_offloop(ex)
+    assert len(venue.cancels) >= 2, "the cancel was retried, not abandoned"
+    assert len(ex.open_orders) == 1 and ex.caps.open_quotes == 1, "an unhonoured cancel keeps the slot"
+    assert len(venue.resting) == 1, "still exactly one order live at the venue"
+    # cancel path recovers -> the off-loop retry confirms death; the next tick replaces cleanly.
     venue.cancel_404 = False
-    ex.place_or_reprice(c, d2, None, _STORE, NOW, 260.0, "pre")
+    ex.place_or_reprice(c, d2, None, _STORE, NOW, 400.0, "pre")
+    _settle_offloop(ex)
+    assert c.key not in ex.open_orders, "the venue-confirmed cancel freed the slot on the loop"
+    ex.place_or_reprice(c, d2, None, _STORE, NOW, 400.5, "pre")
     assert len(venue.resting) == 1 and ex.open_orders[c.key].price == 0.44
 
 

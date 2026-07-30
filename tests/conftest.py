@@ -19,8 +19,12 @@ guard fails the test loudly instead of corrupting production data.
 """
 from __future__ import annotations
 
+import dataclasses
+import os
+
 import pytest
 
+from src.genz import config as gz_config
 from src.genz.maker_rt import config as mrt_config
 
 
@@ -38,3 +42,31 @@ def _isolate_maker_rt_paths(tmp_path, monkeypatch):
     monkeypatch.setattr(mrt_config, "OPS_DIR", str(ops))
     monkeypatch.setattr(mrt_config, "GENZ_DIR", str(genz))
     return tmp_path
+
+
+@pytest.fixture(autouse=True)
+def _isolate_genz_sport_paths(tmp_path, monkeypatch):
+    """The SAME isolation for the genz cycle's own artifacts (snapshot / heartbeat / papermaker).
+
+    maker_rt's files were isolated; the scanner's were not, and ``run_cycle(write=True)`` derives its
+    snapshot and papermaker paths from ``paths_for_sport`` rather than from an argument. So a test that
+    ran a cycle wrote into the LIVE ``data/genz`` — where a scanner process is writing the same files.
+    That is two problems in one: the suite can clobber the panel's snapshot, and the suite is flaky,
+    because ``os.replace`` onto a file another process holds open raises WinError 32 (it did, mid-phase-2:
+    test_nothing_executes_under_default_flags failed roughly one run in eight for exactly this reason).
+
+    ``SportPaths`` is a frozen dataclass built from module constants at IMPORT time, so patching
+    ``GENZ_DIR`` alone would not move them — each instance is rebuilt with its basenames under tmp."""
+    root = tmp_path / "genz_data"
+    root.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(gz_config, "GENZ_DIR", str(root))
+    moved = {}
+    for sport, paths in gz_config.SPORT_PATHS.items():
+        fields = {f.name: getattr(paths, f.name) for f in dataclasses.fields(paths)}
+        for key in ("tree_path", "meta_path", "snapshot_path", "heartbeat_path",
+                    "papermaker_summary_path", "papermaker_state_path"):
+            fields[key] = os.path.join(str(root), os.path.basename(fields[key]))
+        moved[sport] = gz_config.SportPaths(**fields)
+    monkeypatch.setattr(gz_config, "SPORT_PATHS", moved)
+    monkeypatch.setattr(gz_config, "_SOCCER_PATHS", moved["soccer"])
+    return root

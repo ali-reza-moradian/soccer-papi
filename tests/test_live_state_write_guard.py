@@ -144,3 +144,28 @@ def test_every_runtime_file_is_registered():
         "provisional_marks", "quarantine", "refused_settlements",
         "lock",            # the singleton lock (one maker per host) — see maker_rt/singleton.py
     }
+
+
+# --------------------------------------------------------------------------- #
+# the SCANNER's artifacts need the same isolation as the maker's                 #
+# --------------------------------------------------------------------------- #
+def test_the_genz_cycle_writes_nowhere_near_live_data():
+    """maker_rt's runtime files were isolated; the genz scanner's were not.
+
+    ``run_cycle(write=True)`` takes its snapshot / papermaker paths from ``paths_for_sport``, not from
+    an argument, so a test that ran a cycle wrote into the LIVE ``data/genz`` — the directory a scanner
+    process is writing the same files in. Two problems in one: the suite can clobber the panel's
+    snapshot, and the suite is FLAKY, because ``os.replace`` onto a file another process holds open
+    raises WinError 32 on Windows. It did, during phase 2: one full-suite run in roughly eight failed
+    on exactly that, in a test that has nothing to do with file paths.
+
+    This asserts the conftest fixture is doing its job for EVERY sport, so a future refactor that drops
+    it fails here instead of in a random unrelated test a week later."""
+    from src.genz import config as gz_config
+    for sport, paths in gz_config.SPORT_PATHS.items():
+        for name in ("tree_path", "meta_path", "snapshot_path", "heartbeat_path",
+                     "papermaker_summary_path", "papermaker_state_path"):
+            p = getattr(paths, name)
+            assert mrt_config.under_tmp(p), f"{sport}.{name} points at live data: {p}"
+        assert mrt_config.under_tmp(paths.arbs_path_for()), f"{sport} arbs path is live"
+        assert mrt_config.under_tmp(paths.papermaker_path_for()), f"{sport} papermaker path is live"

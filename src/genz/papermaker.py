@@ -247,7 +247,7 @@ class PaperMaker:
                 return self._row("expire", now, existing, reason="floor gone / crosses ask")
             return {"_key": key}
 
-        best_bid = _best_bid(md, rest_venue, rnode)
+        best_bid = _bid_for(rest_pv, md, rest_venue, rnode)
         qp = quote_from_floor(floor, best_bid, tick)
         if qp is None:
             return {"_key": key}
@@ -417,7 +417,11 @@ def _pv(priced: dict, venue: str, node: dict):
 
 
 def _best_bid(md: Any, venue: str, node: dict) -> Optional[float]:
-    """Best resting bid to JOIN on the rest venue for this outcome (best-effort; None if unavailable)."""
+    """Best resting bid to JOIN on the rest venue for this outcome (best-effort; None if unavailable).
+
+    THE FALLBACK, not the path. Every call here is a full order-book HTTP round-trip for a book the
+    pricing pass already downloaded this cycle, and it fired once per node per direction — ~2,059 of
+    them, serially, through the client's 0.5s throttle. See ``_bid_for``."""
     try:
         if venue == "polymarket":
             fn = getattr(md, "poly_best_bid", None)
@@ -428,15 +432,28 @@ def _best_bid(md: Any, venue: str, node: dict) -> Optional[float]:
         return None
 
 
+def _bid_for(pv: Any, md: Any, venue: str, node: dict) -> Optional[float]:
+    """Best bid from the ALREADY-FETCHED priced book, falling back to a fresh read only if the pricing
+    pass did not carry one.
+
+    ``pv.bid_read`` is the whole distinction: ``best_bid is None`` on a read book means "this side of the
+    book is empty", which is an answer, and re-fetching it would be the same waste for the same None. Only
+    an md that cannot report bids (an old injected double) leaves ``bid_read`` False and pays for a read."""
+    if getattr(pv, "bid_read", False):
+        return getattr(pv, "best_bid", None)
+    return _best_bid(md, venue, node)
+
+
 def _rest_mid(priced: dict, md: Any, q: Quote) -> Optional[float]:
     """(best_bid + best_ask)/2 on the rest venue for the quote's outcome — the adverse-selection probe.
     Falls back to whichever side is available."""
     if q.rest_venue == "polymarket":
+        node = {"poly_token_id": q.rest_poly_token}
         pv = priced.get(("poly", q.rest_poly_token, "BUY"))
-        bid = _best_bid(md, "polymarket", {"poly_token_id": q.rest_poly_token})
     else:
+        node = {"kalshi_ticker": q.rest_kalshi_ticker, "kalshi_side": q.rest_kalshi_side}
         pv = priced.get(("kalshi", q.rest_kalshi_ticker, q.rest_kalshi_side))
-        bid = _best_bid(md, "kalshi", {"kalshi_ticker": q.rest_kalshi_ticker, "kalshi_side": q.rest_kalshi_side})
+    bid = _bid_for(pv, md, q.rest_venue, node)
     ask = pv.best_ask if pv else None
     if ask is None and bid is None:
         return None

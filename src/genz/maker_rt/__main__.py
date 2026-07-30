@@ -58,9 +58,14 @@ def _install_signal_handlers(log: Any) -> None:
                 pass
 
 
-def _telegram_sender(log: Any):
+def _telegram_sender(log: Any, *, queued: bool = False):
     """A ``callable(text)`` that alerts Telegram, or None when creds are absent. Only ever called by the
     in-play executor when the (locked) in-play gate is armed.
+
+    ``queued`` puts a FIFO + one sender thread in front of the POST (see tgqueue) so a Telegram stall
+    cannot freeze the event loop at a fill/halt moment. It is OFF by default because the one caller that
+    must NOT queue is the singleton refusal: that process exits immediately afterwards, and an alert
+    handed to a thread it will not wait for is an alert nobody receives.
 
     HTML-ESCAPES the text. ``send_message`` posts with parse_mode=HTML (other senders in this repo use
     real markup), so a bare ``<`` in OUR plain-text alerts was parsed as a start tag and Telegram
@@ -75,13 +80,22 @@ def _telegram_sender(log: Any):
     except Exception:  # noqa: BLE001
         return None
 
-    def _send(text: str) -> Any:
+    def _post(text: str) -> Any:
+        return send_message(key, chat, html.escape(text, quote=False), log)
+
+    if not queued:
+        return _post
+    from .tgqueue import TelegramQueue
+    q = TelegramQueue(_post, log=log)
+
+    def _enqueue(text: str) -> Any:
         # TIMED at the one place every consumer (caps, executor, driver, this module) goes through, so
-        # what the LOOP pays for alerting is a number instead of unexplained lag. This is a synchronous
-        # HTTPS POST with a 20s timeout, taken at fill/hedge/halt moments; the audit's worst case was 64s.
+        # what the LOOP pays for alerting is a number rather than unexplained lag. Post-queue this is
+        # microseconds; before the queue it was up to 64s at exactly the worst moment.
         with STATS.timer("telegram"):
-            return send_message(key, chat, html.escape(text, quote=False), log)
-    return _send
+            return q(text)
+    _enqueue.queue = q                       # so shutdown can flush it  # type: ignore[attr-defined]
+    return _enqueue
 
 
 def _kalshi_ws_auth() -> tuple:
@@ -255,7 +269,7 @@ async def _run(cfg: Any, log: Any) -> int:
     state.settled_max_net_usd = float(getattr(cfg.live, "max_pair_stake_usd", 100.0))
     state.load_tuning()          # cross-restart fill-rate + realized-locked-net windows (target_net tuning)
     state.gates = {"pre": bool(gate.armed), "inplay": bool(inplay_gate.armed)}
-    telegram = _telegram_sender(log)
+    telegram = _telegram_sender(log, queued=True)   # FIFO + sender thread: never block the loop on chat
     # UNIFIED LIVE executor (rest-poly, BOTH phases) — built when EITHER gate is armed AND the order
     # clients exist. ONE shared LiveCaps budget + ONE global in-flight guard govern pre+inplay together.
     pregame_exec = _build_pregame_exec(cfg, live_gate, gate.armed or inplay_gate.armed, kalshi_oc,
@@ -396,14 +410,15 @@ async def _run(cfg: Any, log: Any) -> int:
                 pregame_exec.note_feed_health({"poly_market": pm, "poly_user": pm_user, "kalshi": ks})
                 pregame_exec.maybe_flush_digest(now_ts)           # routine-event Telegram digest (15 min)
                 # WS-INDEPENDENT FILL AUTHORITY (primary detector; the socket is only an accelerator).
+                # The venue READS run on a worker thread; every DECISION (routing a fill, hedging it,
+                # freeing a slot, mutating caps) is made here, on the loop, when the batch is drained.
+                # The 10s cadence and the routing rules are unchanged — only the blocking moved.
+                with STATS.timer("fill_poll"):
+                    pregame_exec.drain_offloop(store, now, now_ts)
                 if (now_ts - last_fill_poll >= pregame_exec.fill_poll_s
                         or pregame_exec.needs_fill_poll()):
                     last_fill_poll = now_ts
-                    # These are SYNCHRONOUS REST calls on the event loop, so their duration IS loop lag —
-                    # attribute it rather than leaving a bare max in the log to be guessed at.
-                    with STATS.timer("fill_poll"):
-                        pregame_exec.poll_open_orders(store, now, now_ts)
-                        pregame_exec.poll_kalshi_fills(store, now, now_ts)
+                    pregame_exec.submit_fill_poll(now_ts)
                 if now_ts - last_reconcile >= RECONCILE_EVERY_S:     # POSITION RECONCILIATION (orphan guard)
                     last_reconcile = now_ts
                     with STATS.timer("reconcile"):
@@ -471,10 +486,9 @@ async def _run(cfg: Any, log: Any) -> int:
                     try:
                         with STATS.timer("trees"):
                             new_trees = load_trees(previous=trees, log=log)
-                            new_universe = build_universe(
-                                new_trees, now_ts, max_games=cfg.max_games,
-                                expire_before_kickoff_s=cfg.expire_before_kickoff_s,
-                                horizon_hours=horizon)
+                            new_universe = build_universe(new_trees, now_ts, max_games=cfg.max_games,
+                                                          expire_before_kickoff_s=cfg.expire_before_kickoff_s,
+                                                          horizon_hours=horizon)
                     except Exception as exc:  # noqa: BLE001 — a bad tree must never kill the live loop
                         log.error("[MAKER_RT] tree reload FAILED (%s) — keeping the current universe of "
                                   "%d market(s); retrying next heartbeat.", exc, len(universe))
@@ -515,10 +529,16 @@ async def _run(cfg: Any, log: Any) -> int:
         # exception — runs this), then stop the feeds. An unhedged resting order must never be stranded.
         if pregame_exec is not None:
             try:
+                # The shutdown sweep FORCES every cancel inline (see cancel_all), so it does not depend
+                # on the off-loop worker still running — which is why the worker is only stopped after.
                 n = pregame_exec.cancel_all("shutdown", utcnow())
                 log.warning("[MAKER_RT][LIVE] shutdown cancel-all: %d open order(s) cancelled.", n)
             except Exception as exc:  # noqa: BLE001 — a cancel failure must not mask the shutdown
                 log.error("[MAKER_RT][LIVE] shutdown cancel-all FAILED: %s", exc)
+            try:
+                pregame_exec.close()
+            except Exception as exc:  # noqa: BLE001
+                log.warning("[MAKER_RT][LIVE] off-loop worker shutdown failed: %s", exc)
         # FLUSH pending drift so a HEAD-change/restart never silently drops a fill's drift numbers.
         try:
             driver.flush_drift(utcnow())
@@ -536,6 +556,14 @@ async def _run(cfg: Any, log: Any) -> int:
         state.write_heartbeat(mode, {"poly_market": False, "poly_user": False, "kalshi": False},
                               0, utcnow())
         state.persist_tuning()        # flush the tuning windows on the way out (deploys are frequent)
+        # FLUSH the alert backlog LAST — a deploy is exactly when the final message (shutdown cancel-all,
+        # a halt) matters, and a queue that is not drained on exit turns "queued" into "lost".
+        tgq = getattr(telegram, "queue", None)
+        if tgq is not None:
+            try:
+                tgq.close()
+            except Exception as exc:  # noqa: BLE001
+                log.warning("[MAKER_RT] telegram flush on shutdown failed: %s", exc)
 
 
 def _load_env() -> None:

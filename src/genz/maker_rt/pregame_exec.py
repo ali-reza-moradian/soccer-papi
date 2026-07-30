@@ -92,6 +92,19 @@ def _iso(now: Any) -> str:
 # most once per this window; the suppressed count is surfaced in the Telegram digest line instead.
 REFUSE_LOG_EVERY_S = 300.0
 _SLOT_REFUSE_REASONS = ("max_open_quotes", "reserve_per_direction")
+# CANCEL RETRY BACKOFF (N18). A cancel the venue will not honour — most often because the order already
+# FILLED, or is mid-settlement — used to be re-attempted on EVERY tick, i.e. up to 4,909 synchronous
+# DELETE+GET pairs an hour (1.36/s) on the event loop. The first attempt on an order is what carries the
+# latency that matters (a reprice cannot place until its cancel is confirmed), so it stays inline and
+# immediate; every attempt AFTER it backs off geometrically from a 5s floor and runs off the loop.
+CANCEL_RETRY_FLOOR_S = 5.0
+CANCEL_RETRY_MAX_S = 120.0
+
+
+def cancel_backoff_s(attempts: int) -> float:
+    """Seconds to wait before DELETE attempt ``attempts`` + 1: 5, 10, 20, 40, 80, 120, 120, …"""
+    n = max(1, int(attempts))
+    return min(CANCEL_RETRY_MAX_S, CANCEL_RETRY_FLOOR_S * (2.0 ** (n - 1)))
 
 
 def _epoch(now: Any) -> float:
@@ -251,6 +264,25 @@ class PregameLiveExecutor:
         self.fill_poll_s = float(getattr(getattr(cfg, "live", None), "fill_poll_s", 10.0))
         self._force_fill_poll = False        # set by a cancel that failed because the order FILLED
         self._routing_raced_fill = False     # re-entrancy guard: _cancel -> fill route -> _cancel
+        # OFF-LOOP venue I/O (N18 cancel retries + F10 batched fill poll). One thread, de-duplicated by
+        # key, results decided on the loop. Created eagerly but the THREAD only starts on first submit.
+        from .offloop import Worker
+        self._worker = Worker(log=self.log)
+        # CANCEL RETRY STATE, per candidate key: how many DELETEs we have issued, when the next one is
+        # allowed, and the reason to attribute the eventual close-out to.
+        self._cancel_attempts: dict = {}
+        self._cancel_next_ts: dict = {}
+        self._cancel_reason: dict = {}
+        self._cancel_logged_at: dict = {}    # throttles the 'cancel NOT confirmed' WARNING (22,942/day)
+        self._cancel_retries = 0             # off-loop retry DELETEs issued (panel/diagnostic)
+        self._cancel_suppressed = 0          # tick-level cancel attempts skipped by the backoff
+        # OFF-LOOP STALENESS WATCHDOG. Moving the fill poll to a worker traded a LOUD failure for a
+        # SILENT one: a venue read that hangs used to freeze the whole loop (impossible to miss), and now
+        # it would just stop the fill authority while everything else kept running normally. So the loop
+        # watches the clock on it and screams if no batch has been APPLIED for several cadences.
+        self._fill_poll_submitted_ts = 0.0
+        self._fill_poll_applied_ts = 0.0
+        self._offloop_stall_alerted_ts = 0.0
         self._last_fills_sweep_ts = 0.0      # unix-seconds low-water mark for the /portfolio/fills sweep
         self._seen_fill_ids: set = set()     # fill_id dedupe across sweeps + the socket
         # PLACE-FAILURE BACKOFF: a venue refusal (esp. "market closed") must not retry ~1x/s forever.
@@ -702,8 +734,10 @@ class PregameLiveExecutor:
         if ok and not self._reservation_ok(c.direction):     # per-direction slot fairness (global cap passed)
             ok, reason = False, "reserve_per_direction"
         if not ok:
-            self._refuse(c, phase, price, reason, projected, now_ts)
-            self._record(c, "expire", now, phase, price=price, size=size, hedge_ask=hedge_ask, reason=reason)
+            # The CSV row rides the SAME 300s throttle as the log line — see _refuse's return contract.
+            if self._refuse(c, phase, price, reason, projected, now_ts):
+                self._record(c, "expire", now, phase, price=price, size=size, hedge_ask=hedge_ask,
+                             reason=reason)
             return
         # PRE-PLACEMENT STACK GUARD (belt): a NEW order (no tracked order for this key) must never rest on
         # a market that already carries an untracked order of ours (a ghost a failed cancel left live).
@@ -838,10 +872,15 @@ class PregameLiveExecutor:
                                  self.caps.max_open_quotes, self.reserve_per_direction)
 
     def _refuse(self, c: Any, phase: str, price: float, reason: str, projected: float,
-                now_ts: float) -> None:
+                now_ts: float) -> bool:
         """Log a placement refusal. A full-slot refusal (max_open_quotes / reserve_per_direction) recurs
         every loop while the caps are full, so it is throttled to once per REFUSE_LOG_EVERY_S per
-        node+direction+reason; suppressed hits are counted for the digest line instead of spamming."""
+        node+direction+reason; suppressed hits are counted for the digest line instead of spamming.
+
+        RETURNS whether this refusal was RECORDED (False = collapsed into the throttle window). The
+        caller gates its CSV ``expire`` row on it: the log was throttled but the row was not, so the same
+        refusal still wrote ~117,000 identical rows a day — the measurement equivalent of the spam this
+        throttle exists to stop, and 58% of the file's bytes. One row per window says the same thing."""
         text = (f"[MAKER_RT][LIVE] REFUSE {c.game} {c.direction} [{phase}] @ {price:.4f}: {reason} "
                 f"(projected pair ${projected:.2f}, stake_today ${self.caps.stake_today:.2f})")
         if reason in _SLOT_REFUSE_REASONS:
@@ -855,9 +894,10 @@ class PregameLiveExecutor:
             k = (c.key, reason)
             if now_ts - self._refuse_log_at.get(k, -1e18) < REFUSE_LOG_EVERY_S:
                 self._digest["refuse_suppressed"] = self._digest.get("refuse_suppressed", 0) + 1
-                return
+                return False
             self._refuse_log_at[k] = now_ts
         self._routine("refuse", text)
+        return True
 
     def _depths_for(self, c: Any, hedge_ask: Optional[float], store: Any,
                     live_rest: Any) -> tuple[Optional[float], Optional[float]]:
@@ -927,25 +967,63 @@ class PregameLiveExecutor:
         return self._cancel(key, now, reason)
 
     def _cancel(self, key: tuple, now: Any, reason: str, store: Any = None,
-                now_ts: float = 0.0) -> bool:
+                now_ts: float = 0.0, *, force: bool = False) -> bool:
         """Cancel the tracked order and CONFIRM cancellation. Returns True only when confirmed cancelled
-        (so a reprice never double-places). An unconfirmed cancel leaves it tracked for a later sweep."""
+        (so a reprice never double-places). An unconfirmed cancel leaves it tracked for a later sweep.
+
+        THREE PATHS, because a first cancel and a 400th retry of the same cancel are not the same act:
+
+        * **First attempt on an order, or ``force``** — inline and synchronous, byte-identical to the old
+          behaviour. This is the ~107/hour path whose latency matters: a reprice cannot place until its
+          cancel is confirmed, and every sweeping caller (shutdown, disarm, feed-down, halt-after-partial)
+          must reach the venue on the spot. ``force`` exists precisely so a backoff can never leave an
+          order resting at shutdown.
+        * **Inside the backoff window** — NO venue I/O at all. The order stays tracked and the SHARED
+          fill poll keeps watching it, which is where a raced fill was always going to be caught anyway
+          (it is the fill authority of record). This is the storm: 4,909 DELETE+GET an hour became zero.
+        * **Backoff elapsed** — the DELETE *and* its confirming read go to the off-loop worker, keyed by
+          the order so retries cannot stack, and the LOOP decides on the marshalled result in
+          ``_drain_cancel_results``. Same decision function, same fail-closed rules, off the loop.
+        """
+        self._drain_cancel_results(store, now, now_ts)     # honour anything the worker already resolved
         lo = self.open_orders.get(key)
         if lo is None:
+            self._forget_cancel_state(key)
             return True
+        ts = now_ts if now_ts > 0 else _epoch(now)
+        attempts = int(self._cancel_attempts.get(key, 0))
+        self._cancel_reason[key] = reason
+        if attempts and not force:
+            if ts and ts < self._cancel_next_ts.get(key, 0.0):
+                self._cancel_suppressed += 1
+                self._log_cancel_unconfirmed(lo, reason, ts, waiting=True)
+                return False
+            self._cancel_attempts[key] = attempts + 1
+            self._cancel_next_ts[key] = ts + cancel_backoff_s(attempts + 1)
+            self._submit_offloop_cancel(key, lo, reason)
+            self._log_cancel_unconfirmed(lo, reason, ts, waiting=False)
+            return False
+        self._cancel_attempts[key] = attempts + 1
+        self._cancel_next_ts[key] = ts + cancel_backoff_s(attempts + 1)
         with STATS.timer("cancel"):
             resp = None
             try:
                 resp = self._venue_cancel(lo)
-            except Exception as exc:  # noqa: BLE001 — order id/raw error are LOG-ONLY (never Telegram)
+            except Exception as exc:  # noqa: BLE001 — order id + raw error are LOG-ONLY (never Telegram)
                 if self.log:
                     self.log.warning("[MAKER_RT][LIVE] cancel raised for %s: %s", lo.order_id, exc)
             confirmed = self._cancel_confirmed(lo, resp, store, now, now_ts)
         if not confirmed:
-            if self.log:
-                self.log.warning("[MAKER_RT][LIVE] cancel NOT confirmed %s (%s) — keeping tracked.",
-                                 lo.order_id, reason)
+            self._log_cancel_unconfirmed(lo, reason, ts, waiting=False)
             return False
+        return self._finish_cancel(key, lo, now, reason)
+
+    def _finish_cancel(self, key: tuple, lo: _LiveOrder, now: Any, reason: str) -> bool:
+        """A VENUE-CONFIRMED cancel: free the slot, record it, emit the human line. Always returns True.
+
+        Split out of ``_cancel`` because the off-loop retry path resolves LATER, on the loop, and must
+        run exactly the same close-out — a second copy of this is how a slot silently stops being freed."""
+        self._forget_cancel_state(key)
         if self.open_orders.pop(key, None) is None:
             # The raced-fill router (see _cancel_confirmed) already closed this order out and freed its
             # slot. Popping again is harmless; decrementing caps again is not — that silently loses a slot.
@@ -961,11 +1039,104 @@ class PregameLiveExecutor:
         self._emit_event("cancelled", lo, instant=False, digest_kind="cancel", reason=reason, age_s=age_s)
         return True
 
+    def _forget_cancel_state(self, key: tuple) -> None:
+        """Drop a key's retry bookkeeping (order closed out by ANY path — cancel, fill, stale release)."""
+        for d in (self._cancel_attempts, self._cancel_next_ts, self._cancel_reason,
+                  self._cancel_logged_at):
+            d.pop(key, None)
+
+    def _log_cancel_unconfirmed(self, lo: _LiveOrder, reason: str, ts: float, *, waiting: bool) -> None:
+        """'cancel NOT confirmed' at most once per backoff window per order. It was 22,942 WARNING lines
+        in one day for a handful of orders, which is not a signal — it is the storm wearing a log's
+        clothes. Throttled on the same clock as the retry itself so every line marks a real attempt."""
+        if not self.log:
+            return
+        key = lo.key
+        if ts and ts - self._cancel_logged_at.get(key, -1e18) < CANCEL_RETRY_FLOOR_S:
+            return
+        self._cancel_logged_at[key] = ts
+        nxt = max(0.0, self._cancel_next_ts.get(key, 0.0) - ts) if ts else 0.0
+        self.log.warning("[MAKER_RT][LIVE] cancel NOT confirmed %s (%s) — keeping tracked; attempt %d, "
+                         "%s (next retry in %.0fs; the shared fill poll still watches it).",
+                         lo.order_id, reason, int(self._cancel_attempts.get(key, 0)),
+                         "backing off" if waiting else "retrying off-loop", nxt)
+
+    def _submit_offloop_cancel(self, key: tuple, lo: _LiveOrder, reason: str) -> None:
+        """Queue this order's retry DELETE + its confirming read on the worker thread.
+
+        BOTH calls go off-loop together so the read is contemporaneous with the DELETE (fresher than any
+        cached poll) while costing the loop nothing. De-duplicated by key inside ``Worker.submit``, so a
+        tick that asks again while one is in flight cannot stack a second DELETE on the same order — the
+        exact failure mode that produced the stacked ghost orders on 2026-07-25."""
+        def _job() -> dict:
+            out: dict = {"resp": None, "order": None, "resting": _UNREAD}
+            try:
+                out["resp"] = self._venue_cancel(lo)
+            except Exception as exc:  # noqa: BLE001 — a raised DELETE is a RESULT, not a dead worker
+                out["resp"] = {"_error": str(exc)}
+            try:
+                out["order"] = self._venue_get_order(lo)
+            except Exception:  # noqa: BLE001 — unreadable; the resting re-resolve below decides
+                out["order"] = None
+            o = out["order"]
+            if not (isinstance(o, dict) and o):
+                # The single read said nothing, which on Kalshi does NOT mean gone. Do the re-resolve
+                # HERE too, so the loop's decision needs no venue call of its own at all.
+                try:
+                    out["resting"] = self._venue_find_resting(lo)
+                except Exception:  # noqa: BLE001 — unreadable list -> _UNREAD -> loop fails closed
+                    out["resting"] = _UNREAD
+            return out
+        if self._worker.submit(("cancel", key), _job):
+            self._cancel_retries += 1
+
+    def _drain_cancel_results(self, store: Any = None, now: Any = None, now_ts: float = 0.0) -> int:
+        """Decide, ON THE LOOP, on every off-loop cancel the worker has finished. Returns how many
+        orders were closed out.
+
+        The worker only fetched bytes. Everything that matters — the raced-fill check, freeing a slot,
+        mutating caps — happens here, in the one thread allowed to touch trading state."""
+        drained = self._worker.drain()
+        closed = 0
+        for wkey, res, exc in drained:
+            if not (isinstance(wkey, tuple) and len(wkey) == 2 and wkey[0] == "cancel"):
+                self._on_offloop_result(wkey, res, exc, store, now, now_ts)
+                continue
+            key = wkey[1]
+            lo = self.open_orders.get(key)
+            if lo is None:
+                self._forget_cancel_state(key)
+                continue
+            if exc is not None or not isinstance(res, dict):
+                if self.log:
+                    self.log.warning("[MAKER_RT][LIVE] off-loop cancel of %s failed (%s) — order stays "
+                                     "tracked; retrying after the backoff.", lo.order_id, exc)
+                continue
+            # The worker's reads are passed through VERBATIM — including ``None``/``{}``, which mean "the
+            # venue said nothing", not "nobody looked". That distinction is what keeps this decision
+            # identical to the inline one while costing the loop zero venue calls.
+            if self._cancel_confirmed(lo, res.get("resp"), store, now, now_ts,
+                                      order=res.get("order"), resting=res.get("resting", _UNREAD)):
+                self._finish_cancel(key, lo, now, self._cancel_reason.get(key, "cancel"))
+                closed += 1
+        return closed
+
+    def _on_offloop_result(self, wkey: Any, res: Any, exc: Any, store: Any, now: Any,
+                           now_ts: float) -> None:
+        """Non-cancel off-loop results (the batched fill poll). Overridden by nothing — dispatched here so
+        one drain call serves every off-loop user and no result is ever silently discarded."""
+        if isinstance(wkey, tuple) and wkey and wkey[0] == "fill_poll":
+            self._apply_fill_poll_batch(res, exc, store, now, now_ts)
+            return
+        if self.log:
+            self.log.warning("[MAKER_RT][LIVE] unclaimed off-loop result %s (exc=%s).", wkey, exc)
+
     #: venue order statuses that mean "this order is gone because it TRADED", not because we cancelled it.
     _FILLED_STATUSES = ("EXECUTED", "FILLED", "MATCHED", "COMPLETE", "COMPLETED")
 
     def _cancel_confirmed(self, lo: _LiveOrder, resp: Any, store: Any = None, now: Any = None,
-                          now_ts: float = 0.0) -> bool:
+                          now_ts: float = 0.0, *, order: Any = _UNREAD,
+                          resting: Any = _UNREAD) -> bool:
         """True ONLY when the cancel is VENUE-CONFIRMED terminal (canceled). A cancel that "succeeded"
         with a 404/empty response is NOT proof the order is gone — the 2026-07-25 ghost orders came from
         exactly that: DELETEs 404'd, the response/single-read looked empty, this returned True, the slot
@@ -981,8 +1152,12 @@ class PregameLiveExecutor:
           * the cancel response's own ``canceled`` list is honored (fast path) — after the delta check;
           * otherwise VENUE TRUTH decides — canceled -> True; still-FILLING -> False (a fill is not a
             cancel; the position must be hedged, not replaced); still RESTING or an UNREADABLE/UNKNOWN
-            state -> False (keep it tracked and retry, NEVER free the slot)."""
-        state, matched = self._venue_order_state(lo)
+            state -> False (keep it tracked and retry, NEVER free the slot).
+
+        ``order``/``resting`` may be reads the caller already did (the off-loop retry path does both in
+        the same worker job as its DELETE), which keeps this decision identical while costing the loop no
+        I/O of its own."""
+        state, matched = self._venue_order_state(lo, order, resting=resting)
         raced = matched is not None and float(matched) > lo.matched_seen + 1e-9
         if raced:
             self._force_fill_poll = True           # belt: the poll re-reads it next tick regardless
@@ -1020,7 +1195,7 @@ class PregameLiveExecutor:
                            "to fill detection (slot NOT released).", lo.order_id)
         return False
 
-    def _venue_order_state(self, lo: _LiveOrder, o: Any = _UNREAD) -> tuple:
+    def _venue_order_state(self, lo: _LiveOrder, o: Any = _UNREAD, *, resting: Any = _UNREAD) -> tuple:
         """VENUE TRUTH for one open order: ('canceled' | 'filled' | 'resting' | 'unknown', matched|None).
 
         Reads the order by id; if that single read is EMPTY (Kalshi's single-order GET can 404 while the
@@ -1049,10 +1224,13 @@ class PregameLiveExecutor:
                 return "filled", matched
             return "resting", matched
         # Empty/failed single-order read -> re-resolve in the venue's RESTING list (by id, then coid).
-        try:
-            resting = self._venue_find_resting(lo)
-        except Exception:  # noqa: BLE001 — could not read the resting list -> UNKNOWN -> fail closed
-            return "unknown", None
+        # ``resting`` may already carry that answer from a batched off-loop read (the order dict, or None
+        # for positively-absent); only _UNREAD means nobody has looked yet.
+        if resting is _UNREAD:
+            try:
+                resting = self._venue_find_resting(lo)
+            except Exception:  # noqa: BLE001 — could not read the resting list -> UNKNOWN -> fail closed
+                return "unknown", None
         if resting is not None:
             return "resting", self._order_matched(lo, resting)
         # Positively ABSENT from the resting list == terminal (canceled, or filled + purged). A fill is
@@ -1183,14 +1361,16 @@ class PregameLiveExecutor:
                     self.log.warning("[MAKER_RT][LIVE] kalshi cancel_all() failed: %s", exc)
         from .state import utcnow
         for key in list(self.open_orders):
-            self._cancel(key, now or utcnow(), reason)
+            # force: a shutdown/halt sweep must reach the venue for EVERY order. A retry backoff that
+            # could skip one here would leave it resting with nothing watching it — the -$38.08 shape.
+            self._cancel(key, now or utcnow(), reason, force=True)
         return n
 
     def cancel_inplay_open(self, now: Any, reason: str = "inplay_halt") -> int:
         """Cancel only the IN-PLAY open orders (pre-game orders keep resting)."""
         keys = [k for k, lo in self.open_orders.items() if lo.phase == "inplay"]
         for k in keys:
-            self._cancel(k, now, reason)
+            self._cancel(k, now, reason, force=True)      # one-shot circuit sweep, not a per-tick path
         return len(keys)
 
     def enforce_arm_state(self, now: Any) -> None:
@@ -1293,25 +1473,228 @@ class PregameLiveExecutor:
             "offers keep running; I'll re-offer on Kalshi when it reconnects.")))
         for k, lo in list(self.open_orders.items()):
             if lo.rest_venue == "kalshi":
-                self._cancel(k, now or utcnow(), "kalshi_feed_down")
+                # One-shot: fires on the DEBOUNCED down edge, not every tick, so forcing costs nothing
+                # and losing the fill signal while an order rests is not something to back off about.
+                self._cancel(k, now or utcnow(), "kalshi_feed_down", force=True)
 
     def needs_fill_poll(self) -> bool:
         """True when something (a cancel that failed because the order FILLED) demands the fill poll run
         NOW rather than at the next cadence tick."""
         return self._force_fill_poll
 
-    def poll_open_orders(self, store: Any, now: Any, now_ts: float) -> None:
+    # -- the fill poll, off the loop and batched (F10) --------------------------
+    def submit_fill_poll(self, now_ts: float) -> bool:
+        """Queue ONE off-loop job that reads everything the fill poll needs. False if one is in flight.
+
+        WHAT MOVED: the reads. WHAT DID NOT: any decision. Previously this cadence did one synchronous
+        ``GET /portfolio/orders/{id}``-class read PER OPEN ORDER plus the account fills sweep, all on the
+        event loop — measured median 1.6s and up to 4.5s of freeze every 10s, the audit's dominant stall.
+        Now a single worker thread makes at most three LIST calls (Poly ``/data/orders``, the Kalshi
+        resting list, the Kalshi fills sweep) and per-order reads ONLY for tracked orders those lists do
+        not mention — which is the rare case, because an order leaves them only once it is terminal.
+
+        The 10s cadence, the dedupe set, ``matched_seen`` as a venue high-water mark, and every routing
+        rule are untouched: ``_apply_fill_poll_batch`` feeds the same ``poll_open_orders`` /
+        ``poll_kalshi_fills`` code paths, just with bytes that were fetched off the loop."""
+        orders = list(self.open_orders.values())
+        want_fills = (self.kalshi_order_client is not None
+                      and hasattr(self.kalshi_order_client, "fills_since"))
+        if not orders and not want_fills:
+            return False
+        since = int(self._last_fills_sweep_ts or (now_ts - 3600.0)) - 5
+        polled_ts = float(now_ts)
+        submitted = self._worker.submit(
+            ("fill_poll",), lambda: self._fill_poll_job(orders, since, want_fills, polled_ts))
+        if submitted:
+            self._force_fill_poll = False      # the request is consumed by the SUBMIT, not by the apply
+            self._fill_poll_submitted_ts = polled_ts
+            if self._fill_poll_applied_ts == 0.0:
+                self._fill_poll_applied_ts = polled_ts     # start the watchdog clock at the first submit
+        return submitted
+
+    def _fill_poll_job(self, orders: list, since: int, want_fills: bool, polled_ts: float) -> dict:
+        """OFF-LOOP. Fetch bytes, decide nothing. Runs on the worker thread — it must never touch
+        ``open_orders``, ``caps`` or any counter, because the loop owns those."""
+        out: dict = {"index": {}, "per_order": {}, "venue_ok": {}, "fills": None, "fills_read": False,
+                     "polled_ts": polled_ts, "since": since,
+                     # Only orders this job actually looked at may be judged from it. The loop keeps
+                     # placing while the job runs, and a brand-new order is ABSENT from a list that was
+                     # read before it existed — treating that absence as "terminal" would free the slot
+                     # of a live order, which is the ghost-order failure with a new cause.
+                     "covered": {str(lo.order_id) for lo in orders}}
+        for venue, lister in (("polymarket", self._list_poly_open_orders),
+                              ("kalshi", self._list_kalshi_resting)):
+            if not any(lo.rest_venue == venue for lo in orders):
+                continue
+            try:
+                for o in (lister() or []):
+                    oid = self._resting_order_id(o)
+                    if oid:
+                        out["index"][str(oid)] = o
+                out["venue_ok"][venue] = True
+            except Exception as exc:  # noqa: BLE001 — a failed LIST degrades to per-order reads below
+                out["venue_ok"][venue] = False
+                if self.log:
+                    self.log.warning("[MAKER_RT][LIVE] batched %s order list failed (%s) — falling back "
+                                     "to per-order reads for this pass.", venue, exc)
+        for lo in orders:
+            # THE BATCH STANDS IN FOR THE PER-ORDER READ ONLY IF IT CAN ANSWER THE QUESTION THE POLL
+            # EXISTS TO ASK: how much of this order is matched? A row that carries no readable matched
+            # count is not a cheaper read, it is a BLIND one — and a blind read that looks successful is
+            # precisely the 2026-07-23 invisible-fill class (6,126 polls reporting "no fill" on two fully
+            # executed orders). Poly's /data/orders rows are unverified on that field, so the rule is
+            # enforced per row rather than assumed per venue.
+            row = out["index"].get(str(lo.order_id)) if out["venue_ok"].get(lo.rest_venue) else None
+            if isinstance(row, dict) and row and self._order_matched(lo, row) is not None:
+                continue
+            try:
+                out["per_order"][str(lo.order_id)] = self._venue_get_order(lo)
+            except Exception:  # noqa: BLE001 — unreadable stays unreadable; the loop fails closed
+                out["per_order"][str(lo.order_id)] = None
+        if want_fills:
+            out["fills"] = self.kalshi_order_client.fills_since(since)
+            out["fills_read"] = True
+        return out
+
+    def _list_poly_open_orders(self) -> list:
+        """OUR resting Poly orders in ONE call (``GET /data/orders`` — the read the stack guard uses).
+        Every resting order on this account is ours, so no filtering is needed. Raises on a read failure."""
+        lister = getattr(self.poly, "open_orders", None)
+        if not callable(lister):
+            raise RuntimeError("poly client exposes no open_orders lister")
+        oo = lister()
+        if isinstance(oo, list):
+            return [o for o in oo if isinstance(o, dict)]
+        d = oo or {}
+        rows = d.get("data") or d.get("orders") or []
+        return [o for o in rows if isinstance(o, dict)]
+
+    def _list_kalshi_resting(self) -> list:
+        """OUR resting Kalshi orders (``mrt-`` coid) in ONE cursor-paged call. Raises on a read failure."""
+        if self.kalshi_order_client is None or not hasattr(self.kalshi_order_client, "resting_orders"):
+            raise RuntimeError("no kalshi order client")
+        return list(self.kalshi_order_client.resting_orders() or [])
+
+    def _apply_fill_poll_batch(self, res: Any, exc: Any, store: Any, now: Any, now_ts: float) -> None:
+        """ON THE LOOP: route the batch through the unchanged detectors."""
+        # A FAILED batch still counts as "the worker is alive and answering" — the watchdog above is
+        # about SILENCE, and a read error is not silence. Nothing is advanced; the next cadence re-reads.
+        self._fill_poll_applied_ts = float(now_ts) or self._fill_poll_applied_ts
+        if exc is not None or not isinstance(res, dict):
+            if self.log:
+                self.log.warning("[MAKER_RT][LIVE] batched fill poll FAILED (%s) — nothing is advanced; "
+                                 "the next cadence tick re-reads it.", exc)
+            return
+        self.poll_open_orders(store, now, now_ts, snapshot=res)
+        if res.get("fills_read"):
+            self.poll_kalshi_fills(store, now, now_ts, batch=res)
+
+    def drain_offloop(self, store: Any, now: Any, now_ts: float) -> int:
+        """Apply every finished off-loop job (cancel retries + the batched fill poll). Loop-thread only."""
+        n = self._drain_cancel_results(store, now, now_ts)
+        self._watch_offloop_stall(now_ts)
+        return n
+
+    #: How many fill-poll cadences may pass with nothing applied before we call it a stall.
+    OFFLOOP_STALL_CADENCES = 4.0
+    OFFLOOP_STALL_ALERT_EVERY_S = 300.0
+
+    def _watch_offloop_stall(self, now_ts: float) -> None:
+        """Scream when the off-loop fill poll stops producing results.
+
+        This is the price of moving the fill authority off the event loop, paid deliberately. A venue
+        read that HANGS used to freeze the whole loop — catastrophic, but impossible to miss. On a worker
+        thread the same hang is silent: quoting, repricing and the heartbeat all keep working normally
+        while the primary fill detector is simply gone. So the LOOP watches the clock on it. The sockets
+        are still an accelerator underneath, so this is a scream, not a halt — but an operator has to be
+        told, because "everything looks fine" is exactly what this failure would otherwise look like."""
+        if self._fill_poll_applied_ts <= 0.0 or now_ts <= 0.0:
+            return
+        stale = now_ts - self._fill_poll_applied_ts
+        if stale < self.OFFLOOP_STALL_CADENCES * max(1.0, self.fill_poll_s):
+            return
+        if now_ts - self._offloop_stall_alerted_ts < self.OFFLOOP_STALL_ALERT_EVERY_S:
+            return
+        self._offloop_stall_alerted_ts = now_ts
+        if self.log:
+            self.log.error("[MAKER_RT][LIVE] fill-poll batch has not landed for %.0fs (cadence %.0fs, "
+                           "%d job(s) in flight) — the WS-independent fill authority is STALLED; the "
+                           "sockets are still routing fills but REST is not confirming them.",
+                           stale, self.fill_poll_s, self._worker.pending())
+        self._instant(alerts.format_event("problem", detail=(
+            "My routine double-check with the exchanges has stopped answering. I am still watching the "
+            "live feeds, so fills are still being seen and hedged — but the slower safety net behind "
+            "them is not responding. Worth a look if this repeats.")))
+
+    def close(self) -> None:
+        """Stop the off-loop worker (shutdown). Safe on a worker that never started a thread."""
+        try:
+            self._worker.close()
+        except Exception:  # noqa: BLE001 — shutdown must never raise out of here
+            pass
+
+    def _read_order(self, lo: _LiveOrder, snapshot: Optional[dict]) -> tuple:
+        """``(order_dict_or_None, readable)`` for ``lo``.
+
+        ``readable`` False means the venue could not be read at all, which is NOT 'the order is gone' —
+        the caller must keep it tracked (that distinction is the whole N22/ghost-order lesson). A ``{}``
+        with ``readable`` True means the venue positively has no record of it resting."""
+        if snapshot is None:
+            try:
+                return self._venue_get_order(lo), True
+            except Exception:  # noqa: BLE001
+                return None, False
+        oid = str(lo.order_id)
+        covered = snapshot.get("covered")
+        if covered is not None and oid not in covered:
+            return None, False                           # placed after the batch was taken -> not judged
+        per_order = snapshot.get("per_order") or {}
+        if oid in per_order:                             # the AUTHORITATIVE read wins over the list row
+            o = per_order[oid]
+            if o is None:
+                return None, False                       # that read failed -> unreadable, fail closed
+            return (o if isinstance(o, dict) else {}), True
+        hit = (snapshot.get("index") or {}).get(oid)
+        if isinstance(hit, dict) and hit:
+            return hit, True
+        if (snapshot.get("venue_ok") or {}).get(lo.rest_venue):
+            return {}, True                              # listed venue, order absent -> positively gone
+        return None, False
+
+    @staticmethod
+    def _snapshot_resting(lo: _LiveOrder, snapshot: Optional[dict]) -> Any:
+        """What the batch says about ``lo`` being RESTING: the order dict, None (positively absent), or
+        ``_UNREAD`` when the batch cannot answer and a live re-resolve is still required."""
+        if snapshot is None:
+            return _UNREAD
+        oid = str(lo.order_id)
+        covered = snapshot.get("covered")
+        if covered is not None and oid not in covered:
+            return _UNREAD
+        hit = (snapshot.get("index") or {}).get(oid)
+        if isinstance(hit, dict) and hit:
+            return hit
+        if (snapshot.get("venue_ok") or {}).get(lo.rest_venue):
+            return None
+        return _UNREAD
+
+    def poll_open_orders(self, store: Any, now: Any, now_ts: float,
+                         snapshot: Optional[dict] = None) -> None:
         """WS-INDEPENDENT FILL AUTHORITY. While ANY live order is open, read its REST status and hedge
         any matched delta the socket missed; also drop orders cancelled out from under us.
 
         This is the PRIMARY fill detector, not a backup: the private WS 'fill' channel is an accelerator
         whose callback can be lost (feed respawn) or whose frames can be missed (flap). Nothing here
-        depends on a socket being connected."""
-        self._force_fill_poll = False
+        depends on a socket being connected.
+
+        ``snapshot`` is a batch read fetched off the loop (see ``submit_fill_poll``). With it, the reads
+        are already done and this is pure decision-making; without it, every read happens inline exactly
+        as before — which is what keeps the legacy path (and every test that drives it) intact."""
+        if snapshot is None:
+            self._force_fill_poll = False   # the batched path consumes the request at SUBMIT time instead
         for key, lo in list(self.open_orders.items()):
-            try:
-                o = self._venue_get_order(lo)        # venue-dispatched single-order read
-            except Exception:  # noqa: BLE001
+            o, readable = self._read_order(lo, snapshot)
+            if not readable:
                 continue
             if not isinstance(o, dict) or not o:
                 # The single-order read is EMPTY. That is NOT proof the order is gone: a still-RESTING
@@ -1321,7 +1704,8 @@ class PregameLiveExecutor:
                 # order frees its slot, an UNKNOWN/still-resting one stays tracked. A short grace still
                 # protects a just-placed order the venue hasn't indexed yet.
                 if lo.matched_seen <= 1e-9 and now_ts - lo.placed_ts >= self._stale_grace_s:
-                    state, matched = self._venue_order_state(lo, o)
+                    state, matched = self._venue_order_state(
+                        lo, o, resting=self._snapshot_resting(lo, snapshot))
                     if state == "canceled":
                         self._release_stale(key, lo, now)         # venue-confirmed gone -> free the slot
                     elif state == "filled" or (matched is not None and matched > lo.matched_seen + 1e-9):
@@ -1364,6 +1748,7 @@ class PregameLiveExecutor:
         """Drop a tracked order the venue no longer shows resting (cancelled/purged) and free its slot."""
         if self.open_orders.pop(key, None) is None:
             return
+        self._forget_cancel_state(key)
         self.caps.on_close()
         self._slot_released += 1
         self._record_lo(lo, "slot_released", now, reason="venue_not_resting")
@@ -1378,16 +1763,26 @@ class PregameLiveExecutor:
                 self._slot_wait_since.pop(k, None)
         self.slot_wait_max_s = max((now_ts - w[0] for w in self._slot_wait_since.values()), default=0.0)
 
-    def poll_kalshi_fills(self, store: Any, now: Any, now_ts: float) -> int:
+    def poll_kalshi_fills(self, store: Any, now: Any, now_ts: float,
+                          batch: Optional[dict] = None) -> int:
         """Account-wide Kalshi fill sweep (GET /portfolio/fills) — ONE call that covers every open order
         and needs no socket at all. Catches a fill even when the order id has already left our book
-        (the exact hole the 2026-07-23 incident fell through). Returns how many fills were routed."""
+        (the exact hole the 2026-07-23 incident fell through). Returns how many fills were routed.
+
+        ``batch`` supplies a sweep already read off the loop. The low-water mark then advances to the ts
+        the READ happened at, not to apply time — advancing past a window nobody looked at is N22, and an
+        off-loop read makes those two timestamps different for the first time."""
         if self.kalshi_order_client is None or not hasattr(self.kalshi_order_client, "fills_since"):
             return 0
         # Look back a generous window on the first sweep so a fill during startup/downtime is not missed.
         first = self._last_fills_sweep_ts == 0.0
-        since = int(self._last_fills_sweep_ts or (now_ts - 3600.0)) - 5
-        fills = self.kalshi_order_client.fills_since(since)
+        if batch is not None:
+            since = int(batch.get("since") or 0)
+            fills = batch.get("fills")
+            now_ts = float(batch.get("polled_ts") or now_ts)
+        else:
+            since = int(self._last_fills_sweep_ts or (now_ts - 3600.0)) - 5
+            fills = self.kalshi_order_client.fills_since(since)
         if fills is None:
             # THE READ FAILED — that is not "no fills". Leaving the low-water mark where it is re-reads
             # this interval next pass; advancing it would step the window PAST fills we never looked at,
@@ -1615,8 +2010,11 @@ class PregameLiveExecutor:
             self._record_lifetime(lo, now)
             self.open_orders.pop(key, None)
             self.caps.on_close()
+            self._forget_cancel_state(key)                 # nothing left to retry a cancel against
         elif self.caps.halted or (lo.phase == "inplay" and self.inplay_halted):
-            self._cancel(key, now, "halt_after_partial", store, now_ts)   # partial + a cap/circuit tripped -> pull remainder
+            # force: a cap/circuit has tripped WITH a live partial resting. Pulling the remainder is the
+            # halt, so it goes to the venue now rather than after a backoff.
+            self._cancel(key, now, "halt_after_partial", store, now_ts, force=True)
 
     def _on_hedge_exception(self, lo: _LiveOrder, delta: float, fill_price: float, exc: Any,
                             now: Any) -> None:
@@ -2472,8 +2870,10 @@ class PregameLiveExecutor:
         except Exception:  # noqa: BLE001 — clearing state must never crash the loop
             pass
         if self.log:                                      # ticker/token stays LOG-ONLY (plain-language rule)
-            self.log.warning("[MAKER_RT][LIVE] ORPHAN CLEARED (%s) — venue reads FLAT; live RESUMED. %s",
-                             why, data)
+            # ``why`` already states WHICH of the two clearances this was (flat, or held-but-expected).
+            # The line used to append "venue reads FLAT" unconditionally, which contradicts the explained
+            # case in the same sentence — and a future incident review reads this line, not this comment.
+            self.log.warning("[MAKER_RT][LIVE] ORPHAN CLEARED — %s; live RESUMED. %s", why, data)
         # The plain-language line has to match what is actually true, and there are two different truths
         # here: the position is GONE, or it is still HELD and fully hedged. Telling an operator "I'm
         # holding nothing" while we hold 52 hedged contracts would be a lie in the one message they read.
@@ -3432,7 +3832,8 @@ class PregameLiveExecutor:
                                   prehedge_declines=int(d.get("prehedge_declines", 0) or 0),
                                   binding=top_binding, stake_today=round(self.caps.stake_today, 2),
                                   stake_cap=self.caps.max_daily_stake_usd,
-                                  today_pnl=round(self.caps.pnl_today, 4), why_no_fills=why)
+                                  today_pnl=round(self.caps.pnl_today, 4), why_no_fills=why,
+                                  refuse_suppressed=int(d.get("refuse_suppressed", 0) or 0))
         self._send_telegram(line)
         if self.log:
             self.log.warning(line)

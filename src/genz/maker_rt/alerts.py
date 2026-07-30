@@ -394,7 +394,7 @@ def digest_line(minutes: float, *, placed: int, cancelled: int, fills: int, open
                 reconnects: Optional[dict] = None, prehedge_declines: int = 0,
                 binding: Optional[str] = None, stake_today: Optional[float] = None,
                 stake_cap: Optional[float] = None, today_pnl: Optional[float] = None,
-                why_no_fills: Optional[str] = None) -> str:
+                why_no_fills: Optional[str] = None, refuse_suppressed: int = 0) -> str:
     """The periodic plain-language roll-up. Line 1: activity + best edge. Line 2: current state + daily
     usage. Then, when they happened: feed flakiness, reconnect attempt/success totals, pre-hedge declines,
     and (on 0 fills) WHY in plain words."""
@@ -425,5 +425,10 @@ def digest_line(minutes: float, *, placed: int, cancelled: int, fills: int, open
                     + ("" if _ok >= _att else " — still down"))
     decl = (f"\n   🛡️ {int(prehedge_declines)} fill{'s' if int(prehedge_declines) != 1 else ''} refused a "
             f"hedge that would have lost money (unwound instead)") if prehedge_declines else ""
+    # The number that was counted and never shown: how many times a market I wanted to offer on had to
+    # wait because every slot was already in use. It is the ONLY signal that says "more slots would mean
+    # more offers", and it was write-only for as long as it existed.
+    wait = (f"\n   ⏳ {int(refuse_suppressed)} times I wanted to offer but every slot was busy"
+            ) if refuse_suppressed else ""
     why = f"\n   Why no fills: {why_no_fills}" if (fills == 0 and why_no_fills) else ""
-    return l1 + l2 + flap + pflap + rec + decl + why
+    return l1 + l2 + flap + pflap + rec + decl + wait + why

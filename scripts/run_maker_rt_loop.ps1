@@ -20,4 +20,13 @@ if (Test-Path $secrets) { . $secrets } else {
 $env:PYTHONIOENCODING = 'utf-8'
 $env:PYTHONUTF8 = '1'
 
-while ($true) { & $py -m src.genz.maker_rt; Start-Sleep -Seconds 5 }
+# RESTART ECONOMICS. Exit 0 is a DELIBERATE restart (a git HEAD change so the deploy adopts fresh
+# bytecode, or STOP_ALL) and the process has already cancelled every resting order on the way out - so
+# the only thing the pause buys is dead time with no maker on the book. Deploys run 11-21x/day, so 5s
+# each is a minute or two of daily absence for nothing. A NON-zero exit is different: it is a crash or
+# the singleton refusal (exit 3), where backing off is the point - keep the full 5s there so a
+# crash-loop cannot spin.
+while ($true) {
+    & $py -m src.genz.maker_rt
+    if ($LASTEXITCODE -eq 0) { Start-Sleep -Seconds 1 } else { Start-Sleep -Seconds 5 }
+}

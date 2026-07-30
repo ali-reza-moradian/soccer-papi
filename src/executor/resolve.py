@@ -163,6 +163,21 @@ def normalize_arb(arb: dict[str, Any]) -> NormalizedArb:
 # --------------------------------------------------------------------------- #
 # Live market data (read-only) — re-pull books at execution time                 #
 # --------------------------------------------------------------------------- #
+def _poly_asks(book: Any) -> list[tuple[float, float]]:
+    """Ascending (price, size) BUY ladder from a Polymarket CLOB book payload. One implementation, used
+    by both the ask-only reader and the combined one, so the two can never normalize differently."""
+    out: list[tuple[float, float]] = []
+    for lvl in (book or {}).get("asks") or []:
+        try:
+            p, s = float(lvl.get("price")), float(lvl.get("size"))
+        except (TypeError, ValueError, AttributeError):
+            continue
+        if 0.0 < p < 1.0 and s > 0:
+            out.append((p, s))
+    out.sort(key=lambda x: x[0])
+    return out
+
+
 class MarketData:
     """Read-only LIVE book source. Default uses the public no-auth clients in src/kalshi.py and
     src/polymarket.py; the engine only needs the two ask-ladder methods, so tests can inject any
@@ -195,18 +210,7 @@ class MarketData:
 
     def poly_ask_ladder(self, token_id: str) -> list[tuple[float, float]]:
         """Ascending (price, size) ladder to BUY the LIVE Polymarket token (CLOB best-ask side)."""
-        from src.polymarket import best_ask  # noqa: F401  (kept for parity / future use)
-        book = self._poly().book(token_id)
-        out: list[tuple[float, float]] = []
-        for lvl in (book or {}).get("asks") or []:
-            try:
-                p, s = float(lvl.get("price")), float(lvl.get("size"))
-            except (TypeError, ValueError, AttributeError):
-                continue
-            if 0.0 < p < 1.0 and s > 0:
-                out.append((p, s))
-        out.sort(key=lambda x: x[0])
-        return out
+        return _poly_asks(self._poly().book(token_id))
 
     def kalshi_best_bid(self, ticker: str, side: str = "YES") -> Optional[float]:
         """Highest resting bid to JOIN on the LIVE Kalshi book for ``side`` (paper-maker only). None on
@@ -224,3 +228,20 @@ class MarketData:
             return best_bid(self._poly().book(token_id))
         except Exception:  # noqa: BLE001
             return None
+
+    # -- BOTH SIDES OF ONE BOOK, from ONE request ----------------------------
+    # A venue book response already contains bids and asks. Reading the asks and then fetching the same
+    # book again for the bids cost one extra throttled round-trip per node per cycle — ~2,059 redundant
+    # order-book downloads, 85% of the soccer cycle. These are the readers the pricing path uses so the
+    # bid arrives with the ask it came with.
+    def kalshi_quote(self, ticker: str, side: str = "YES") -> tuple:
+        """``(ask_ladder, best_bid)`` for ``side`` from ONE Kalshi orderbook read."""
+        from src.kalshi import ask_ladder, best_bid
+        book = self._kalshi().orderbook(ticker)
+        return ask_ladder(book, side), best_bid(book, side)
+
+    def poly_quote(self, token_id: str) -> tuple:
+        """``(ask_ladder, best_bid)`` from ONE Polymarket CLOB book read."""
+        from src.polymarket import best_bid
+        book = self._poly().book(token_id)
+        return _poly_asks(book), best_bid(book)
