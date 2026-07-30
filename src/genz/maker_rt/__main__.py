@@ -18,6 +18,7 @@ from typing import Any, Optional
 from ...logsetup import get_logger, setup_logging
 from . import alerts
 from . import config as mrt_config
+from . import singleton
 from .clients import build_pregame_order_clients
 from .driver import QuoteDriver
 from .feeds import KalshiFeed, PolyMarketFeed, PolyUserFeed
@@ -146,7 +147,8 @@ def _armed_startup_alert(cfg: Any, pre_armed: bool, inplay_armed: bool, telegram
     # Print the caps from the LIVE LiveCaps OBJECT (not cfg) so the banner proves what actually loaded +
     # governs — incl. the per-pair cap and the sanity ceiling. Falls back to cfg if no caps passed.
     c = caps or cfg.live
-    msg = ("[MAKER_RT][LIVE] LIVE ARMED (%s; phases: %s). stray-cancel=%d. SHARED caps: "
+    msg = ("[MAKER_RT][LIVE] LIVE ARMED (%s; phases: %s). stray-cancel=%d. SHARED caps (ONE budget "
+           "across pre-game AND in-play — there are no per-phase exposure caps): "
            "quote<=$%.0f, pair<=$%.0f, daily_stake<=$%.0f, open<=%d (reserve/direction %d), "
            "fills/day<=%d, loss<=$%.0f, sanity_ceiling %.1f%%. "
            "in-play circuit: first-fill pause %.0fs, day-halt at locked_net %.1f%%."
@@ -212,6 +214,14 @@ def _spawn_user_feed(store: BookStore, pregame_exec: Any, poly_oc: Any, log: Any
 
 async def _run(cfg: Any, log: Any) -> int:
     mrt_config.ensure_dirs()
+    # SINGLETON FIRST — before the restart counter, before a client, before a socket. A second maker on
+    # this host doubles every daily cap, cancels the incumbent's resting orders with its own startup
+    # stray-sweep, and false-orphans it; the supervisor can start one because it matches only the
+    # wrapper's command line (scripts/ops.py). Refusing here costs nothing: nothing has been placed,
+    # nothing has been counted, and the wrapper simply retries once the stale process is gone.
+    if not singleton.guard(mrt_config.runtime_path("lock"), log=log,
+                           telegram=_telegram_sender(log), now_ts=time.time()):
+        return 3
     now0 = utcnow()
     restarts = bump_restart(now0)                     # crash-loop signal (persisted, per UTC day)
     # PRE-GAME live: construct order clients ONLY when live.enabled (a shadow/default config NEVER
@@ -254,10 +264,13 @@ async def _run(cfg: Any, log: Any) -> int:
                       "UNHEDGED.", stray)
             if telegram is not None:
                 try:
+                    # "problem", not "error": format_event's "error" branch does not render ``detail``, so
+                    # this alert used to arrive with no content in it — for the exact leak that cost
+                    # -$38.08 of unhedged exposure on 2026-07-29.
                     telegram(alerts.format_event(
-                        "error", detail=(f"Found {stray} live order(s) left over from an earlier "
-                                         "session while the bot is switched OFF. They have been "
-                                         "cancelled — no action needed.")))
+                        "problem", detail=(f"Found {stray} live order(s) left over from an earlier "
+                                           "session while the bot is switched OFF. They have been "
+                                           "cancelled — no action needed.")))
                 except Exception:  # noqa: BLE001
                     pass
     if pregame_exec is not None:
@@ -272,8 +285,17 @@ async def _run(cfg: Any, log: Any) -> int:
             log.warning("[MAKER_RT][LIVE] startup reconciliation failed: %s", exc)
     driver = QuoteDriver(cfg, state, log=log, inplay_exec=None, pregame_exec=pregame_exec)
     horizon = cfg.inplay.horizon_hours
-    universe = build_universe(load_trees(), time.time(), max_games=cfg.max_games,
-                              expire_before_kickoff_s=cfg.expire_before_kickoff_s, horizon_hours=horizon)
+    # The trees are kept in a variable, not re-read from scratch each time: ``load_trees`` falls back to
+    # the tree it already had for any sport whose file will not parse this pass (N13).
+    trees = load_trees(log=log)
+    try:
+        universe = build_universe(trees, time.time(), max_games=cfg.max_games,
+                                  expire_before_kickoff_s=cfg.expire_before_kickoff_s,
+                                  horizon_hours=horizon)
+    except Exception as exc:  # noqa: BLE001 — a malformed tree must not crash-loop the maker at startup
+        log.error("[MAKER_RT] STARTUP universe build FAILED (%s) — starting with an EMPTY universe; the "
+                  "next tree rebuild retries.", exc)
+        universe = []
     driver.set_universe(universe)
     log.info("[MAKER_RT] universe: %d markets (%s), %d poly tokens, %d kalshi tickers.",
              len(universe), _sport_breakdown(universe), len(poly_tokens(universe)),
@@ -432,29 +454,46 @@ async def _run(cfg: Any, log: Any) -> int:
                     return 0
                 nm = tree_mtimes()
                 if nm != mtimes:                          # trees rebuilt -> rebuild the universe
-                    mtimes = nm
-                    universe = build_universe(load_trees(), now_ts, max_games=cfg.max_games,
-                                              expire_before_kickoff_s=cfg.expire_before_kickoff_s,
-                                              horizon_hours=horizon)
-                    driver.set_universe(universe)
-                    # RESPAWN ONLY IF THE SUBSCRIPTION SET ACTUALLY CHANGED. A tree mtime bump is not a
-                    # reason to drop two healthy websockets: the scanners rewrite the trees every few
-                    # minutes, and tearing the sockets down on every bump is what produced the 113
-                    # "Kalshi WS DOWN" flaps (only 25 were real socket errors). Each teardown also
-                    # cancelled every open rest-kalshi quote and cost queue position.
-                    new_tokens, new_tickers = poly_tokens(universe), kalshi_tickers(universe)
-                    if set(new_tokens) != set(sub_tokens) or set(new_tickers) != set(sub_tickers):
-                        sub_tokens, sub_tickers = new_tokens, new_tickers
-                        for t in tasks:
-                            t.cancel()
-                        pm.stop(); ks.stop()
-                        pm, ks = _spawn_wired()    # callbacks attached at construction — never lost
-                        tasks = [asyncio.create_task(pm.run()), asyncio.create_task(ks.run())]
-                        log.info("[MAKER_RT] trees changed — universe now %d markets; feeds resubscribed "
-                                 "(%d tokens, %d tickers).", len(universe), len(sub_tokens), len(sub_tickers))
+                    # KEEP-OLD-UNIVERSE. A rebuild that yields NOTHING while markets are live is not a
+                    # quiet fixture list — it is a failed read, and adopting it cancels every resting
+                    # order. The mtimes are NOT committed in that case, so the next heartbeat retries.
+                    try:
+                        new_trees = load_trees(previous=trees, log=log)
+                        new_universe = build_universe(new_trees, now_ts, max_games=cfg.max_games,
+                                                      expire_before_kickoff_s=cfg.expire_before_kickoff_s,
+                                                      horizon_hours=horizon)
+                    except Exception as exc:  # noqa: BLE001 — a bad tree must never kill the live loop
+                        log.error("[MAKER_RT] tree reload FAILED (%s) — keeping the current universe of "
+                                  "%d market(s); retrying next heartbeat.", exc, len(universe))
+                        new_trees, new_universe = None, None
+                    if new_universe is None or (not new_universe and universe):
+                        if new_universe is not None:
+                            log.error("[MAKER_RT] tree rebuild produced an EMPTY universe while %d "
+                                      "market(s) were live — KEEPING the old universe (adopting it "
+                                      "would cancel every resting order); retrying next heartbeat.",
+                                      len(universe))
                     else:
-                        log.info("[MAKER_RT] trees changed — universe now %d markets; subscription set "
-                                 "unchanged, feeds kept alive.", len(universe))
+                        mtimes, trees, universe = nm, new_trees, new_universe
+                        driver.set_universe(universe)
+                        # RESPAWN ONLY IF THE SUBSCRIPTION SET ACTUALLY CHANGED. A tree mtime bump is not
+                        # a reason to drop two healthy websockets: the scanners rewrite the trees every
+                        # few minutes, and tearing the sockets down on every bump is what produced the
+                        # 113 "Kalshi WS DOWN" flaps (only 25 were real socket errors). Each teardown
+                        # also cancelled every open rest-kalshi quote and cost queue position.
+                        new_tokens, new_tickers = poly_tokens(universe), kalshi_tickers(universe)
+                        if set(new_tokens) != set(sub_tokens) or set(new_tickers) != set(sub_tickers):
+                            sub_tokens, sub_tickers = new_tokens, new_tickers
+                            for t in tasks:
+                                t.cancel()
+                            pm.stop(); ks.stop()
+                            pm, ks = _spawn_wired()   # callbacks attached at construction — never lost
+                            tasks = [asyncio.create_task(pm.run()), asyncio.create_task(ks.run())]
+                            log.info("[MAKER_RT] trees changed — universe now %d markets; feeds "
+                                     "resubscribed (%d tokens, %d tickers).", len(universe),
+                                     len(sub_tokens), len(sub_tickers))
+                        else:
+                            log.info("[MAKER_RT] trees changed — universe now %d markets; subscription "
+                                     "set unchanged, feeds kept alive.", len(universe))
             await asyncio.sleep(cfg.debounce_ms / 1000.0)
     except asyncio.CancelledError:
         raise

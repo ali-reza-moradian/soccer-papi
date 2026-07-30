@@ -189,6 +189,13 @@ def _cska_executor(tmp_path, *, hedge_result=None, sell_price=0.23, auto_flatten
                                                      freeze_market=True), poly=poly)
     ex, cfg = _exec_kalshi(tmp_path, kalshi_oc=koc, kalshi=kex, poly=poly, hedger=hedger)
     ex.auto_flatten_max_usd = auto_flatten_max_usd
+    # PRODUCTION SIZING. The real CSKA order was a 318-lot at 22c (~$70, the live quote_usd_max) of which
+    # 114.49 filled — a genuine PARTIAL. Sizing the test order at the default $5 cap instead would make it
+    # a 22-lot "filling" 114.49, which a resting order cannot do; the executor now says so out loud, and a
+    # regression suite should reproduce the incident rather than an impossible shorthand for it.
+    ex.caps.quote_usd_max = 70.0
+    ex.caps.max_pair_stake_usd = 350.0
+    ex.caps.max_daily_stake_usd = 800.0
     kex.positions[TICKER] = FILL_SHARES
     return ex, koc, kex, poly
 
@@ -197,6 +204,7 @@ def _fill_cska(ex, koc, store):
     c = _cand_kalshi(ticker=TICKER, htoken="TOKH")
     ex.place_or_reprice(c, _dec(FILL_PRICE, hedge_ask=0.76), None, store, _DT, 1.0, "pre")
     oid = koc.rests[0]["oid"]
+    assert ex.open_orders[c.key].size >= FILL_SHARES, "the test order must be able to hold this fill"
     ex.on_kalshi_fill({"order_id": oid, "count": FILL_SHARES}, store, _DT, 2.0)
     return oid
 

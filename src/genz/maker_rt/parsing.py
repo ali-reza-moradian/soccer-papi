@@ -159,9 +159,20 @@ def parse_kalshi(raw: Any) -> list:
                  "count": _f(msg.get("count")), "taker_side": str(msg.get("taker_side") or "").lower(),
                  "seq": seq, "sid": sid, "ts": msg.get("ts")}]
     if t == "fill":
+        # ``trade_id`` is the venue's identity for THIS execution, and carrying it is what makes a fill
+        # DEDUPE-ABLE across detectors. Dropping it (as this parser did) left the socket handler with no
+        # way to know the account fill-sweep had already seen the same execution — three detectors, no
+        # shared identity, and the first partial Kalshi fill with a successful hedge double-hedges real
+        # money (F5/N3). ``count`` also needs the ``_fp`` fallback for the same reason every REST count
+        # does: v2 serializes contract counts as fixed-point STRINGS, so reading only the bare name made
+        # this accelerator a silent no-op against a real payload.
         return [{"kind": "kalshi_fill", "ticker": msg.get("market_ticker"),
-                 "order_id": msg.get("order_id"), "side": str(msg.get("side") or "").lower(),
-                 "count": _f(msg.get("count")), "yes_price": msg.get("yes_price"),
+                 "order_id": msg.get("order_id"),
+                 "trade_id": msg.get("trade_id") or msg.get("fill_id") or msg.get("id"),
+                 "side": str(msg.get("side") or "").lower(),
+                 "count": _f(msg.get("count") if msg.get("count") not in (None, "")
+                             else msg.get("count_fp")),
+                 "yes_price": msg.get("yes_price"),
                  "no_price": msg.get("no_price"), "is_taker": msg.get("is_taker"), "ts": msg.get("ts")}]
     if t == "error":
         return [{"kind": "kalshi_error", "detail": raw.get("msg")}]

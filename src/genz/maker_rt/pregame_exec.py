@@ -65,6 +65,15 @@ HEDGE_EXECUTION_FLOOR = -0.010
 PAIR_SUM_TOL = 0.03
 HEDGE_SHARE_TOL = 0.5            # share tolerance for "fully hedged"/"flat" position reads (< 1 contract)
 UNWIND_MAX_ATTEMPTS = 3         # reconcile-to-flat: re-sell the naked remainder up to this many times
+# Consecutive hedge-chain EXCEPTIONS on one order before we stop retrying and hand it to a human. The
+# delta is not consumed by a raise (N10), which is what makes a retry possible at all; this bounds it.
+MAX_HEDGE_ERRORS = 3
+# A persist failure is usually a CONDITION (full disk, bad permissions), not an event, so it repeats on
+# every write. Log it every time; Telegram it at most this often per file.
+PERSIST_ALERT_EVERY_S = 900.0
+# An EXPECTED position still open this long after we booked it is not "settling slowly" any more. Kalshi
+# took ~3 days over KXATPMATCH-26JUL26ZHELAN and the sweep said nothing for 2.5 of them (F1).
+SETTLE_AGE_ALERT_S = 24 * 3600.0
 # SMALLEST SIZE EACH VENUE WILL PRICE. Below it there is no order we are able to place, so a residue that
 # small is not an orphan — it is un-closable dust that must ride to settlement (and gets booked there at
 # venue truth). Kalshi orders carry whole contracts (fmt_count/clamp_count); Poly's floor is 5 shares.
@@ -109,7 +118,16 @@ class _LiveOrder:
     placed_ts: float
     phase: str = "pre"
     best_bid: Optional[float] = None
+    #: CUMULATIVE matched shares we have already routed to a hedge — a HIGH-WATER MARK, never a running
+    #: sum of deltas, and never above ``size`` (see ``_on_fill_detected``).
     matched_seen: float = 0.0
+    #: CUMULATIVE hedge shares already attributed to this order. The venue tells us the TOTAL complement
+    #: we hold, which on a second fill includes the FIRST fill's hedge; subtracting this is what turns
+    #: that cumulative read back into "what did THIS fill get hedged with" (N4).
+    hedged_seen: float = 0.0
+    #: Consecutive exceptions out of the hedge chain for this order. The fill delta is deliberately NOT
+    #: consumed when the chain raises (N10), so this is what stops a poisoned fill retrying forever.
+    hedge_errors: int = 0
     rest_venue: str = "polymarket"     # "polymarket" | "kalshi" — dispatches place/cancel/fill/unwind/verify
     kalshi_side: str = ""              # YES|NO when rest_venue == "kalshi" (rest_ref[2])
     teams: str = ""                   # 'AWAY vs HOME' — for the human alert name
@@ -231,6 +249,7 @@ class PregameLiveExecutor:
         # WS-INDEPENDENT FILL AUTHORITY: REST is the primary detector, the socket is an accelerator.
         self.fill_poll_s = float(getattr(getattr(cfg, "live", None), "fill_poll_s", 10.0))
         self._force_fill_poll = False        # set by a cancel that failed because the order FILLED
+        self._routing_raced_fill = False     # re-entrancy guard: _cancel -> fill route -> _cancel
         self._last_fills_sweep_ts = 0.0      # unix-seconds low-water mark for the /portfolio/fills sweep
         self._seen_fill_ids: set = set()     # fill_id dedupe across sweeps + the socket
         # PLACE-FAILURE BACKOFF: a venue refusal (esp. "market closed") must not retry ~1x/s forever.
@@ -263,6 +282,10 @@ class PregameLiveExecutor:
         # and false-halted (3rd occurrence 2026-07-24, HANHAL). Keyed by (venue, instrument).
         self._expected: dict = {}
         self._expected_path = mrt_config.runtime_path("expected_positions")
+        # SETTLEMENT AGE WATCHDOG (F1): instrument -> the UTC day we last screamed about it, so a leg that
+        # is stuck for a week alerts seven times, not every 15 minutes.
+        self._settle_age_alerted: dict = {}
+        self._persist_alert_at: dict = {}    # what -> last persist-failure Telegram (see _persist_json)
         from .settle import SettledPnlReconciler
         self._settle_reconciler = SettledPnlReconciler(
             kalshi=self.kalshi, poly=self.poly,
@@ -283,6 +306,84 @@ class PregameLiveExecutor:
         self._load_provisional()
         self._load_orphan()
         self._load_quarantine()
+
+    # -- state I/O: one atomic writer, loaders that scream ---------------------
+    def _persist_json(self, path: Optional[str], obj: Any, what: str) -> bool:
+        """THE persister for every runtime file this executor owns. Returns True iff the bytes landed.
+
+        Routes through ``state.atomic_json`` — per-pid tmp, retry-on-Windows-lock, ``assert_writable`` —
+        instead of the seven hand-rolled ``path + ".tmp"`` writes that used to live here. A FIXED tmp
+        name collides between an old and a new process, and this system restarts 11-21 times on a working
+        day, so two runs writing the same file at once could publish a torn document.
+
+        And a failure is LOUD. Every one of these writers used to end in ``except: pass``. That is how a
+        spent daily budget silently reopens: the file the next start reads its counters from simply never
+        got written, and nothing anywhere said so."""
+        from .state import atomic_json
+        if not path:
+            return False
+        try:
+            if atomic_json(path, obj, default=str):
+                return True
+            err: Any = "atomic replace blocked (target held open)"
+        except Exception as exc:  # noqa: BLE001 — persistence must NEVER crash live trading
+            err = exc
+        if self.log:
+            self.log.error("[MAKER_RT][LIVE] COULD NOT PERSIST %s to %s (%s) — this state will NOT "
+                           "survive a restart. Fix the file/permissions.", what, path, err)
+        # THROTTLED alert. ``persist_daily_caps`` runs every 30s and on every fill, so a full disk would
+        # otherwise Telegram ~120x/hour — and a rate-limited alert channel is one that cannot deliver the
+        # ORPHAN scream when it matters (Telegram 429'd 1,682 times during one incident).
+        import time as _time
+        if _time.time() - self._persist_alert_at.get(what, -1e18) >= PERSIST_ALERT_EVERY_S:
+            self._persist_alert_at[what] = _time.time()
+            # "problem", not "error": ``format_event("error", ...)`` ignores ``detail`` and renders a line
+            # with no content in it at all. An alert that says nothing is worse than no alert.
+            self._send_telegram(alerts.format_event("problem", detail=(
+                f"I couldn't save my {what} to disk. Trading continues, but if I restart before this is "
+                f"fixed I'll come back not knowing it — please check the bot's data folder.")))
+        return False
+
+    def _load_json(self, path: Optional[str], what: str, *, fail_closed: bool) -> Any:
+        """Read one runtime JSON file. Returns the parsed object, or ``None`` when absent.
+
+        ``utf-8-sig``, always: a file hand-edited on Windows very likely carries a BOM (PowerShell's
+        ``Out-File``/``>`` write one by default), ``json.load`` chokes on it at position 0, and this
+        exact failure — silent — wiped $329.96 of committed stake on 2026-07-28. utf-8-sig reads BOM and
+        BOM-less files identically, so there is no reason for any loader here to use plain utf-8.
+
+        ``fail_closed=True`` HALTS on an unreadable file instead of continuing with a default. That is
+        the right answer for the two files whose absence makes us BLIND rather than merely ignorant: the
+        ORPHAN latch (a default drops a "manual check required" freeze over a naked position) and the
+        traded-token watch-set (a default means reconciliation stops looking at the very instruments a
+        crashed prior run may have left open). Everything else screams and carries on."""
+        if not path or not os.path.exists(path):
+            return None
+        try:
+            import json
+            with open(path, "r", encoding="utf-8-sig") as fh:
+                return json.load(fh)
+        except Exception as exc:  # noqa: BLE001
+            if fail_closed:
+                self._halt_unreadable(what, path, exc)
+            elif self.log:
+                self.log.error("[MAKER_RT][LIVE] could not read %s from %s (%s) — continuing with "
+                               "defaults for it. CHECK THAT FILE.", what, path, exc)
+            return None
+
+    def _halt_unreadable(self, what: str, path: str, exc: Any) -> None:
+        """FAIL CLOSED on a state file we cannot parse: halt live quoting until a human looks at it."""
+        self.caps.halted = True
+        self.caps.halt_reason = "unreadable_state"
+        if self.log:
+            self.log.error("[MAKER_RT][LIVE] UNREADABLE %s at %s (%s) — HALTED. Continuing would mean "
+                           "trading BLIND to what that file records (a dropped orphan latch, or a "
+                           "watch-set that no longer names the positions to reconcile). Repair or "
+                           "delete the file and restart.", what, path, exc)
+        self._send_telegram(alerts.format_event("halted", detail=(
+            f"Trading is PAUSED — I could not read my own {what} file, so I don't know what I might be "
+            "holding. What to check: confirm both venues are flat or fully hedged, then repair or delete "
+            "that file in the bot's data folder and restart me.")))
 
     # -- daily roll ----------------------------------------------------------
     def roll_day(self, now: Any) -> None:
@@ -329,60 +430,72 @@ class PregameLiveExecutor:
 
     # -- daily-caps persistence (survives a mid-day restart) -----------------
     def _load_daily_caps(self) -> None:
-        """Restore today's committed stake / fills / pnl at startup so a restart can't reopen a spent
-        daily cap. Only a SAME-UTC-DAY snapshot is restored; a stale (prior-day) file is ignored. Sets
-        ``caps._day`` to the restored day so the first roll_day does NOT wipe the restored counters."""
-        import json
+        """Restore today's committed stake / fills / pnl AND the in-play circuit at startup, so a restart
+        can neither reopen a spent daily cap nor re-arm a tripped in-play halt. Only a SAME-UTC-DAY
+        snapshot is restored; a stale (prior-day) file is ignored. Sets ``caps._day`` to the restored day
+        so the first roll_day does NOT wipe the restored counters.
+
+        A file we cannot read is reported, not swallowed: failing here means the day restarts with a
+        fully-reopened stake/loss budget, which is the exact failure this file exists to prevent, and the
+        one thing worse than not having the guard is thinking you have it."""
         from .state import utcnow
-        if not self._daily_caps_path or not os.path.exists(self._daily_caps_path):
-            return
-        try:
-            # utf-8-SIG, not utf-8: a file that has been hand-edited on Windows very likely carries a BOM
-            # (PowerShell's Out-File/`>` write one by default), and json.load chokes on it at position 0.
-            # That is not hypothetical — it happened on 2026-07-28 while repairing the fill counter, and
-            # because the failure was silent the process started the day at zero and re-persisted the
-            # zeros, wiping $329.96 of committed stake and reopening the entire daily budget. utf-8-sig
-            # reads BOM and BOM-less files identically.
-            with open(self._daily_caps_path, "r", encoding="utf-8-sig") as fh:
-                data = json.load(fh)
-            today = utcnow().strftime("%Y%m%d")
-            if not isinstance(data, dict) or str(data.get("day")) != today:
-                return                                # prior day -> let the normal midnight roll reset it
-            self.caps.stake_today = float(data.get("stake_today", 0.0) or 0.0)
-            self.caps.fills_today = int(data.get("fills_today", 0) or 0)
-            self.caps.pnl_today = float(data.get("pnl_today", 0.0) or 0.0)
-            self.caps._day = today                    # so caps.roll(today) is a no-op (don't wipe on restart)
-            if self.log:
-                self.log.warning("[MAKER_RT][LIVE] restored today's daily caps across restart: "
-                                 "stake $%.2f, fills %d, pnl $%.2f (cap $%.0f).", self.caps.stake_today,
-                                 self.caps.fills_today, self.caps.pnl_today, self.caps.max_daily_stake_usd)
-        except Exception as exc:  # noqa: BLE001 — a corrupt/locked file must never block startup
-            # ...but it must never be SILENT either. Failing to read this file means the day restarts with
-            # a fully-reopened stake/loss budget, which is the exact failure the file exists to prevent —
-            # the one thing worse than not having the guard is thinking you have it.
-            if self.log:
-                self.log.error("[MAKER_RT][LIVE] COULD NOT RESTORE today's daily caps from %s (%s) — this "
+        data = self._load_json(self._daily_caps_path, "today's daily caps", fail_closed=False)
+        if data is None:
+            if os.path.exists(self._daily_caps_path or "") and self.log:
+                # _load_json already logged the cause; this names the CONSEQUENCE, which is the part an
+                # operator needs: the one thing worse than not having the guard is thinking you have it.
+                self.log.error("[MAKER_RT][LIVE] COULD NOT RESTORE today's daily caps from %s — this "
                                "process starts with stake/fills/pnl at ZERO and will re-persist them, so "
-                               "today's spent budget is REOPENED. Check that file.",
-                               self._daily_caps_path, exc)
+                               "today's spent budget is REOPENED and any in-play halt is re-armed. Check "
+                               "that file.", self._daily_caps_path)
+            return
+        today = utcnow().strftime("%Y%m%d")
+        if not isinstance(data, dict) or str(data.get("day")) != today:
+            return                                # prior day -> let the normal midnight roll reset it
+        self.caps.stake_today = float(data.get("stake_today", 0.0) or 0.0)
+        self.caps.fills_today = int(data.get("fills_today", 0) or 0)
+        self.caps.pnl_today = float(data.get("pnl_today", 0.0) or 0.0)
+        self.caps._day = today                    # so caps.roll(today) is a no-op (don't wipe on restart)
+        # IN-PLAY CIRCUIT (N5). The -2% day-halt, the first-fill pause and the in-play fill counter used
+        # to be plain attributes, so a tripped in-play halt silently re-armed on the NEXT DEPLOY — and
+        # gitguard deploys 11-21 times on a working day. A circuit that only survives until the next
+        # commit is not a circuit. The pause is stored as REMAINING seconds, because it is measured
+        # against a monotonic-ish wall clock this process does not share with the one that set it.
+        self.inplay_halted = bool(data.get("inplay_halted", False))
+        self.inplay_fills_today = int(data.get("inplay_fills_today", 0) or 0)
+        import time as _time
+        pause_left = float(data.get("inplay_pause_left_s", 0.0) or 0.0)
+        self.inplay_pause_until = (_time.time() + pause_left) if pause_left > 0 else 0.0
+        self._day = today                         # already primed: roll_day must not "reset" what we read
+        if self.log:
+            self.log.warning("[MAKER_RT][LIVE] restored today's daily caps across restart: stake $%.2f, "
+                             "fills %d, pnl $%.2f (cap $%.0f); in-play: halted=%s fills=%d pause %.0fs "
+                             "left.", self.caps.stake_today, self.caps.fills_today, self.caps.pnl_today,
+                             self.caps.max_daily_stake_usd, self.inplay_halted,
+                             self.inplay_fills_today, max(0.0, pause_left))
+        if self.inplay_halted:
+            self.log and self.log.error(
+                "[MAKER_RT][INPLAY] the in-play day-halt from earlier today is STILL IN FORCE after this "
+                "restart (it used to clear on every deploy) — in-play stays stopped; pre-game continues.")
 
     def persist_daily_caps(self) -> None:
-        """Atomically write today's caps counters (best-effort — never blocks trading)."""
-        import json
+        """Atomically write today's caps counters + the in-play circuit. Never blocks trading; a failure
+        is reported (see ``_persist_json``) rather than swallowed."""
+        import time as _time
         from .state import utcnow
         if not self._daily_caps_path:
             return
-        try:
-            mrt_config.assert_writable(self._daily_caps_path)
-            tmp = self._daily_caps_path + ".tmp"
-            with open(tmp, "w", encoding="utf-8") as fh:
-                json.dump({"day": utcnow().strftime("%Y%m%d"),
-                           "stake_today": round(float(self.caps.stake_today), 4),
-                           "fills_today": int(self.caps.fills_today),
-                           "pnl_today": round(float(self.caps.pnl_today), 4)}, fh)
-            os.replace(tmp, self._daily_caps_path)
-        except Exception:  # noqa: BLE001
-            pass
+        self._persist_json(self._daily_caps_path, {
+            "day": utcnow().strftime("%Y%m%d"),
+            "stake_today": round(float(self.caps.stake_today), 4),
+            "fills_today": int(self.caps.fills_today),
+            "pnl_today": round(float(self.caps.pnl_today), 4),
+            # The in-play circuit rides in the SAME day-keyed file: it is day-scoped state with the same
+            # lifetime and the same "must survive a deploy" requirement as the counters beside it.
+            "inplay_halted": bool(self.inplay_halted),
+            "inplay_fills_today": int(self.inplay_fills_today),
+            "inplay_pause_left_s": round(max(0.0, float(self.inplay_pause_until) - _time.time()), 1),
+        }, "daily caps + in-play circuit")
 
     def maybe_persist_daily_caps(self, now_ts: float) -> None:
         """Throttled daily-caps persist for the heartbeat loop (fills persist immediately)."""
@@ -514,11 +627,11 @@ class PregameLiveExecutor:
         best_ask = getattr(live_rest, "best_ask", None)
         if best_ask is not None and price > best_ask - tick + 1e-9:    # would CROSS now -> never place
             if c.key in self.open_orders:
-                self._cancel(c.key, now, "would_cross_at_post")
+                self._cancel(c.key, now, "would_cross_at_post", store, now_ts)
             return
         if price < tick - 1e-9:
             if c.key in self.open_orders:
-                self._cancel(c.key, now, "below_tick")
+                self._cancel(c.key, now, "below_tick", store, now_ts)
             return
         existing = self.open_orders.get(c.key)
         if existing is not None:
@@ -529,7 +642,7 @@ class PregameLiveExecutor:
             if crosses or below_floor:
                 # MANDATORY reprice: the resting price is now UNECONOMIC (crosses the live book / under
                 # target). Cancel + replace immediately.
-                if not self._cancel(c.key, now, "reprice_cross" if crosses else "reprice_floor"):
+                if not self._cancel(c.key, now, "reprice_cross" if crosses else "reprice_floor", store, now_ts):
                     return
             else:
                 if abs(cur - price) < tick - 1e-9:
@@ -542,7 +655,7 @@ class PregameLiveExecutor:
                 no_longer_best = rest_bid is not None and rest_bid > cur + 1e-9
                 if not (rested and (higher or no_longer_best)):
                     return
-                if not self._cancel(c.key, now, "reprice"):            # cancel not confirmed -> do NOT dup-place
+                if not self._cancel(c.key, now, "reprice", store, now_ts):            # cancel not confirmed -> do NOT dup-place
                     return
         hedge_ask = dec.hedge_best_ask if dec.hedge_best_ask is not None else price
         hedge_depth, book_depth = self._depths_for(c, hedge_ask, store, live_rest)
@@ -634,10 +747,10 @@ class PregameLiveExecutor:
         how the alert channel earns HTTP 429s (1,682 of them during the invisible-fill incident), and a
         rate-limited alert channel is one that cannot deliver the ORPHAN scream when it matters."""
         msg = str(exc)
-        msg_l = msg.lower()          # venues return error codes in mixed case — match case-INSENSITIVELY
-        # TERMINAL = the market itself is gone/finished, so no amount of waiting brings it back.
-        terminal = any(s in msg_l for s in ("market_closed", "market_not_active", "market_settled",
-                                            "market_not_found", "not_active", "closed"))
+        import re as _re
+        m = _re.search(r'"(?:code|error|errorMsg|message)"\s*:\s*"([^"]+)"', msg)
+        code = (m.group(1).lower().strip() if m else "")
+        terminal = self._terminal_place_failure(msg, code)
         n = self._place_fail_n.get(c.key, 0) + 1
         self._place_fail_n[c.key] = n
         # Non-terminal refusals escalate (60s, 120s, 240s... capped at an hour) so a persistently
@@ -646,11 +759,8 @@ class PregameLiveExecutor:
                 else min(self.place_backoff_s * (2 ** (n - 1)), 3600.0))
         self._place_fail_until[c.key] = now_ts + wait
         subj = alerts.bet_name(c.sport, c.game, c.market_key, c.rest_side, getattr(c, "teams", ""))
-        # Prefer the venue's error CODE ("market_closed", "too_many_requests"); NEVER put the raw HTTP
-        # line / exception in the Telegram text (that goes to the log). Fall back to a plain generic.
-        import re as _re
-        m = _re.search(r'"code"\s*:\s*"([^"]+)"', msg)
-        code = (m.group(1).lower() if m else "")
+        # The venue's error CODE ("market_closed", "too_many_requests") drives the human line; NEVER put
+        # the raw HTTP line / exception in the Telegram text (that goes to the log).
         why = ("the market has closed or finished" if terminal
                else (alerts.humanize_reason(code) if code else "the venue refused it"))
         detail = (f"Couldn't place my offer on {subj} — {why}."
@@ -662,6 +772,33 @@ class PregameLiveExecutor:
                 self.log.warning("[MAKER_RT][LIVE] PLACE FAILED %s: %s", subj, msg)
         elif self.log:
             self.log.warning("[MAKER_RT][LIVE] PLACE FAILED %s: %s (suppressed repeat #%d)", subj, msg, n)
+
+    #: Venue error CODES that mean the market itself is gone — the only reason to stop trying for a day.
+    TERMINAL_PLACE_CODES = ("market_closed", "market_not_active", "market_settled", "market_not_found",
+                            "market_inactive", "market_expired", "not_accepting_orders",
+                            "invalid_market", "market_not_open", "order_book_closed")
+    #: Substrings that mark a TRANSPORT failure. These can never be terminal, whatever else they contain.
+    TRANSPORT_HINTS = ("connection", "timed out", "timeout", "remote end closed", "ssl", "eof occurred",
+                       "max retries", "read timed out", "broken pipe", "reset by peer", "name resolution",
+                       "temporarily unavailable", "502", "503", "504")
+
+    @classmethod
+    def _terminal_place_failure(cls, msg: str, code: str = "") -> bool:
+        """Is this placement refusal PERMANENT for the day (the market is gone), or just a failure?
+
+        This used to be a substring scan that included the bare word ``"closed"``, so
+        ``"Remote end closed connection without response"`` — a plain network blip — blacklisted a live,
+        tradeable candidate for a full 24 hours (N21). The distinction now rests on what the VENUE said,
+        not on English: an explicit error code, or one of the unambiguous snake_case market codes in the
+        body. And a transport failure is checked FIRST and can never be terminal, because no network error
+        is evidence about the state of a market."""
+        msg_l = str(msg or "").lower()
+        if any(h in msg_l for h in cls.TRANSPORT_HINTS):
+            return False
+        if code and code in cls.TERMINAL_PLACE_CODES:
+            return True
+        # No parseable code: accept only the full snake_case market codes, which do not occur in prose.
+        return any(t in msg_l for t in cls.TERMINAL_PLACE_CODES)
 
     def set_viable_directions(self, dirs: Any) -> None:
         """The driver reports which directions currently have a viable candidate. A reserved slot is then
@@ -773,7 +910,8 @@ class PregameLiveExecutor:
     def cancel_key(self, key: tuple, now: Any, reason: str) -> bool:
         return self._cancel(key, now, reason)
 
-    def _cancel(self, key: tuple, now: Any, reason: str) -> bool:
+    def _cancel(self, key: tuple, now: Any, reason: str, store: Any = None,
+                now_ts: float = 0.0) -> bool:
         """Cancel the tracked order and CONFIRM cancellation. Returns True only when confirmed cancelled
         (so a reprice never double-places). An unconfirmed cancel leaves it tracked for a later sweep."""
         lo = self.open_orders.get(key)
@@ -785,12 +923,15 @@ class PregameLiveExecutor:
         except Exception as exc:  # noqa: BLE001 — order id + raw error are LOG-ONLY (never Telegram)
             if self.log:
                 self.log.warning("[MAKER_RT][LIVE] cancel raised for %s: %s", lo.order_id, exc)
-        if not self._cancel_confirmed(lo, resp):
+        if not self._cancel_confirmed(lo, resp, store, now, now_ts):
             if self.log:
                 self.log.warning("[MAKER_RT][LIVE] cancel NOT confirmed %s (%s) — keeping tracked.",
                                  lo.order_id, reason)
             return False
-        self.open_orders.pop(key, None)
+        if self.open_orders.pop(key, None) is None:
+            # The raced-fill router (see _cancel_confirmed) already closed this order out and freed its
+            # slot. Popping again is harmless; decrementing caps again is not — that silently loses a slot.
+            return True
         self.caps.on_close()
         self._record_lifetime(lo, now)
         self._record_lo(lo, "expire", now, reason=reason)
@@ -805,28 +946,60 @@ class PregameLiveExecutor:
     #: venue order statuses that mean "this order is gone because it TRADED", not because we cancelled it.
     _FILLED_STATUSES = ("EXECUTED", "FILLED", "MATCHED", "COMPLETE", "COMPLETED")
 
-    def _cancel_confirmed(self, lo: _LiveOrder, resp: Any) -> bool:
+    def _cancel_confirmed(self, lo: _LiveOrder, resp: Any, store: Any = None, now: Any = None,
+                          now_ts: float = 0.0) -> bool:
         """True ONLY when the cancel is VENUE-CONFIRMED terminal (canceled). A cancel that "succeeded"
         with a 404/empty response is NOT proof the order is gone — the 2026-07-25 ghost orders came from
         exactly that: DELETEs 404'd, the response/single-read looked empty, this returned True, the slot
         was freed, and a replacement stacked on top of the STILL-LIVE order. Now:
 
-          * the cancel response's own ``canceled`` list is honored (fast path);
-          * otherwise VENUE TRUTH decides — canceled -> True; FILLED -> route to fill detection + False
-            (a fill is not a cancel; the position must be hedged, not replaced); still RESTING or an
-            UNREADABLE/UNKNOWN state -> False (keep it tracked and retry, NEVER free the slot)."""
+          * A MATCHED DELTA IS CHECKED FIRST, before any status is honored. A fill that raced into the
+            cancel window arrives as a CANCELED order carrying a non-zero fill count, and the old order
+            of these checks read the status, returned "canceled", and let the caller pop the order —
+            discarding the delta. The position was then naked and untracked for up to five minutes until
+            reconciliation found it and false-orphaned the whole bot (N9). ``poll_open_orders`` always had
+            the opposite priority; this now matches it, because a fill is a fill regardless of what else
+            happened to the order.
+          * the cancel response's own ``canceled`` list is honored (fast path) — after the delta check;
+          * otherwise VENUE TRUTH decides — canceled -> True; still-FILLING -> False (a fill is not a
+            cancel; the position must be hedged, not replaced); still RESTING or an UNREADABLE/UNKNOWN
+            state -> False (keep it tracked and retry, NEVER free the slot)."""
+        state, matched = self._venue_order_state(lo)
+        raced = matched is not None and float(matched) > lo.matched_seen + 1e-9
+        if raced:
+            self._force_fill_poll = True           # belt: the poll re-reads it next tick regardless
+            if self.log:
+                self.log.error("[MAKER_RT][LIVE] cancel of %s raced a FILL (venue matched %.2f vs seen "
+                               "%.2f, state %s) — hedging the fill BEFORE deciding the cancel.",
+                               lo.order_id, float(matched), lo.matched_seen, state)
+            if store is not None and not self._routing_raced_fill:
+                # Re-entrancy is real: _on_fill_detected can itself call _cancel ("halt_after_partial").
+                # One level is all this needs — the flag makes the inner call skip straight to the status
+                # decision, and the fill it would have routed is already being routed by the outer one.
+                self._routing_raced_fill = True
+                try:
+                    from .state import utcnow
+                    self._on_fill_detected(lo.key, float(matched), lo.price, store,
+                                           now or utcnow(), now_ts)
+                finally:
+                    self._routing_raced_fill = False
+            elif not self._routing_raced_fill:
+                # No book to hedge against on this path (shutdown / feed-down / arm-state cancel-alls do
+                # not carry one). REFUSE to confirm: keeping the order tracked is what leaves the fill
+                # visible to poll_open_orders, which does have a store and will route it on the forced
+                # poll. Confirming here would pop the order and the fill would be lost exactly as before.
+                return False
         if isinstance(resp, dict):
             canceled = resp.get("canceled") or resp.get("cancelled") or []
             if lo.order_id in canceled:
                 return True
-        state, _matched = self._venue_order_state(lo)
         if state == "canceled":
+            # Terminal AND its fill (if any) has now been routed, so releasing the slot is correct — the
+            # remainder of a partially-filled cancelled order is genuinely no longer resting.
             return True
-        if state == "filled":
-            self._force_fill_poll = True          # NOT a cancel — the venue filled us; route to the hedge
-            if self.log:
-                self.log.error("[MAKER_RT][LIVE] cancel of %s did NOT cancel — the order FILLED; routing "
-                               "to fill detection (slot NOT released).", lo.order_id)
+        if state == "filled" and self.log:
+            self.log.error("[MAKER_RT][LIVE] cancel of %s did NOT cancel — the order FILLED; routing "
+                           "to fill detection (slot NOT released).", lo.order_id)
         return False
 
     def _venue_order_state(self, lo: _LiveOrder, o: Any = _UNREAD) -> tuple:
@@ -1033,11 +1206,22 @@ class PregameLiveExecutor:
         self._on_fill_detected(key, float(matched), event.get("price"), store, now, now_ts)
 
     def on_kalshi_fill(self, event: dict, store: Any, now: Any, now_ts: float) -> None:
-        """Kalshi WS 'fill' message -> detect our rest-kalshi fills by order_id. Kalshi fills arrive as
-        DELTAS (contracts filled in this print), so accumulate onto matched_seen. A maker fill executes at
-        our resting price (lo.price)."""
+        """Kalshi WS 'fill' frame -> route OUR rest-kalshi fill, DEDUPED and against VENUE CUMULATIVE.
+
+        Kalshi sends a fill as a DELTA (contracts filled in this print) and this used to add it straight
+        onto ``matched_seen``. Two detectors doing that with no shared identity is F5/N3: the same
+        execution arrives on the socket AND in the account sweep, both add, ``matched_seen`` climbs above
+        what the venue says we hold, and the first partial fill whose hedge SUCCEEDS gets hedged twice
+        with real money. So the frame is now a TRIGGER, not an arithmetic input — it marks its
+        ``trade_id`` in the ONE shared seen-set and asks the venue for the cumulative."""
+        fid = event.get("trade_id") or event.get("fill_id")
+        if fid and fid in self._seen_fill_ids:
+            return                                           # already observed by ANY detector
         key = self._key_for_oid(event.get("order_id"))
         if key is None:
+            # A fill on no tracked order is the account sweep's business (it can prove nakedness against
+            # the venue); a socket frame alone cannot. Force the sweep to run on the next tick.
+            self._force_fill_poll = True
             return
         lo = self.open_orders.get(key)
         if lo is None or lo.rest_venue != "kalshi":
@@ -1045,8 +1229,9 @@ class PregameLiveExecutor:
         count = event.get("count")
         if count in (None, ""):
             return
-        total = lo.matched_seen + float(count)               # DELTA -> cumulative high-water mark
-        self._on_fill_detected(key, total, lo.price, store, now, now_ts)
+        if fid:
+            self._seen_fill_ids.add(fid)
+        self._route_venue_cumulative(key, lo, float(count), store, now, now_ts, source="socket")
 
     def set_kalshi_feed_ok(self, ok: bool, now: Any = None, now_ts: Optional[float] = None) -> None:
         """Kalshi WS health (rest-kalshi FILL signal), DEBOUNCED. The socket drops `connected` on every
@@ -1124,8 +1309,13 @@ class PregameLiveExecutor:
             price = o.get("price") if lo.rest_venue == "polymarket" else lo.price   # kalshi maker fills at our rest
             if matched is not None and float(matched) > lo.matched_seen + 1e-9:
                 self._on_fill_detected(key, float(matched), price, store, now, now_ts)
-            elif status in ("CANCELED", "CANCELLED") and lo.matched_seen <= 1e-9:
-                self._release_stale(key, lo, now)    # cancelled out-of-band -> stop tracking, free the slot
+            elif status in ("CANCELED", "CANCELLED"):
+                # Terminal at the venue -> nothing of it is resting, so the slot is free. This used to
+                # additionally require matched_seen == 0, which permanently STRANDED the slot of a
+                # partially-filled-then-cancelled order (the N9 shape, once its fill is routed): the
+                # release branch could not fire, and neither could age-out, which has the same condition.
+                # Any unrouted delta is handled by the branch above, in this pass or the next.
+                self._release_stale(key, lo, now)
             elif (self.max_quote_age_s > 0 and now_ts - lo.placed_ts >= self.max_quote_age_s
                   and lo.matched_seen <= 1e-9):
                 # AGE-OUT: a resting order this old is holding a slot indefinitely (behind best, edge gone,
@@ -1136,7 +1326,7 @@ class PregameLiveExecutor:
                 if self.log:
                     self.log.info("[MAKER_RT][LIVE] AGE-OUT %s — resting %.0fmin > %.0fmin cap; freeing slot.",
                                   self._name_for(lo), (now_ts - lo.placed_ts) / 60, self.max_quote_age_s / 60)
-                self._cancel(key, now, "age_out")    # emits the human 'CANCELLED … held too long (aged out)'
+                self._cancel(key, now, "age_out", store, now_ts)    # emits the human 'CANCELLED … held too long (aged out)'
         # RESYNC the caps counter to ground truth. can_place() gates on caps.open_quotes while the reserve
         # counts len(open_orders); if they ever drift (a release/fill path that missed a decrement), one
         # slot is silently lost. len(open_orders) is authoritative — every entry is a tracked live order.
@@ -1174,6 +1364,14 @@ class PregameLiveExecutor:
         first = self._last_fills_sweep_ts == 0.0
         since = int(self._last_fills_sweep_ts or (now_ts - 3600.0)) - 5
         fills = self.kalshi_order_client.fills_since(since)
+        if fills is None:
+            # THE READ FAILED — that is not "no fills". Leaving the low-water mark where it is re-reads
+            # this interval next pass; advancing it would step the window PAST fills we never looked at,
+            # and they would be invisible forever (N22) — the exact ghost class this sweep exists for.
+            if self.log:
+                self.log.warning("[MAKER_RT][LIVE] fills sweep read FAILED — window kept at %s (not "
+                                 "advanced); re-reading it next pass.", since)
+            return 0
         self._last_fills_sweep_ts = now_ts
         if first:
             # PRIME ONLY. Fills that predate this process were already hedged (or are covered by the
@@ -1205,11 +1403,53 @@ class PregameLiveExecutor:
             cnt = fp_num(f, "count") or 0.0
             if cnt <= 0:
                 continue
+            # NEVER `matched_seen + cnt`. This sweep and the socket both see the SAME execution, and both
+            # adding is the latent double-hedge (F5/N3) — the ADD also pushes matched_seen ABOVE venue
+            # truth, which then SUPPRESSES the next genuine delta. Ask the venue what the order's
+            # cumulative fill count is instead; the sweep's own count is only the fallback.
             routed += 1
-            self._on_fill_detected(key, lo.matched_seen + cnt, lo.price, store, now, now_ts)
+            self._route_venue_cumulative(key, lo, cnt, store, now, now_ts, source="sweep")
         if len(self._seen_fill_ids) > 5000:           # bound the dedupe set
             self._seen_fill_ids = set(list(self._seen_fill_ids)[-2500:])
         return routed
+
+    def _route_venue_cumulative(self, key: tuple, lo: _LiveOrder, delta_hint: float, store: Any,
+                                now: Any, now_ts: float, *, source: str) -> None:
+        """Route a Kalshi fill signal using the order's VENUE-CUMULATIVE matched count.
+
+        THE INVARIANT this exists to hold: ``matched_seen`` is a high-water mark of what the VENUE says
+        is filled — never a running total of deltas observed by whichever detector happened to see them.
+        Kalshi's fill signals (private socket frame, account sweep row) are DELTAS, and there are two of
+        them watching the same executions, so adding is how the same fill gets counted twice and hedged
+        twice. Reading the order's own ``fill_count`` is idempotent by construction: two detectors seeing
+        one fill compute the same cumulative, and ``_on_fill_detected`` acts only on the increase.
+
+        The fallback matters too. When the single-order read is unusable (Kalshi's per-order GET can 404
+        on a live order) we do fall back to ``matched_seen + delta_hint`` — but CLAMPED to the order size
+        by ``_on_fill_detected``, so even a duplicated delta can at worst reach the order's own size and
+        never invent shares we do not hold. Missing a real fill is the worse failure of the two."""
+        cumulative: Optional[float] = None
+        try:
+            o = self._venue_get_order(lo)
+            if isinstance(o, dict) and o:
+                m = self._order_matched(lo, o)
+                cumulative = float(m) if m is not None else None
+        except Exception as exc:  # noqa: BLE001 — an unreadable order falls back to the clamped delta
+            if self.log:
+                self.log.warning("[MAKER_RT][LIVE] %s fill on %s: order read failed (%s) — using the "
+                                 "clamped delta instead of venue cumulative.", source,
+                                 self._name_for(lo), exc)
+        if cumulative is None:
+            # OUR OWN ARITHMETIC, so it gets OUR OWN bound: a resting order cannot fill for more than it
+            # was placed for, and this is the only path where a duplicated delta could still compound (a
+            # venue frame arriving twice with no trade_id to dedupe on). Clamping here is provably safe and
+            # caps the damage at the order's own size instead of letting it grow without limit.
+            cumulative = min(float(lo.size), lo.matched_seen + float(delta_hint))
+            if self.log:
+                self.log.info("[MAKER_RT][LIVE] %s fill on %s: no readable cumulative — falling back to "
+                              "matched_seen %.2f + %.2f, bounded by size %.2f -> %.2f.", source,
+                              self._name_for(lo), lo.matched_seen, float(delta_hint), lo.size, cumulative)
+        self._on_fill_detected(key, cumulative, lo.price, store, now, now_ts)
 
     def on_feed_reconnect(self, venue: str, store: Any, now: Any, now_ts: float) -> None:
         """A socket just came back UP. NEVER trust the stream to have carried what happened while it was
@@ -1302,38 +1542,100 @@ class PregameLiveExecutor:
         lo = self.open_orders.get(key)
         if lo is None:
             return
-        delta = float(total_matched) - lo.matched_seen
+        total = float(total_matched)
+        delta = total - lo.matched_seen
         if delta <= 1e-9:
             return
+        # A cumulative ABOVE the order's own size is impossible for a resting order. It is NOT silently
+        # truncated: this value came from a venue read, and under-hedging a real position is the worse of
+        # the two errors — so hedge all of it and scream, letting reconciliation judge the excess. (The one
+        # place our own arithmetic could produce this, the additive fallback in _route_venue_cumulative,
+        # is bounded there, where the bound is provably correct.)
+        if total > float(lo.size) + HEDGE_SHARE_TOL and self.log:
+            self.log.error("[MAKER_RT][LIVE] %s reports %.2f sh filled on an order placed for %.2f — that "
+                           "is not possible for a resting order. Hedging the FULL reported amount (never "
+                           "leave shares naked); reconciliation will judge the excess.",
+                           self._name_for(lo), total, float(lo.size))
         # ONE in-flight hedge GLOBALLY (pre+inplay). If busy, DEFER without advancing matched_seen so the
         # next detection (socket or REST poll) retries this delta once the guard frees.
         if self.in_flight is not None and not self.in_flight.acquire(("live", key)):
             if self.log:
                 self.log.warning("[MAKER_RT][LIVE] hedge in-flight busy — deferring fill of %s", lo.game)
             return
+        # EVERY path below this point must release the guard — a leaked in-flight token stops the maker
+        # hedging anything, ever, so the release lives in a finally that wraps all of it.
+        fill_price = lo.price
         try:
-            lo.matched_seen = float(total_matched)
-            fill_price = float(avg_price) if avg_price not in (None, "") else lo.price
-            result = self._hedge_fill(lo, delta, fill_price, store, now, now_ts)
+            try:
+                fill_price = float(avg_price) if avg_price not in (None, "") else lo.price
+            except (TypeError, ValueError):
+                fill_price = lo.price
+            result = self._hedge_fill(lo, delta, fill_price, store, now, now_ts, cumulative=total)
+        except Exception as exc:  # noqa: BLE001 — see _on_hedge_exception: the delta must NOT be consumed
+            self._on_hedge_exception(lo, delta, fill_price, exc, now)
+            return
         finally:
             if self.in_flight is not None:
                 self.in_flight.release(("live", key))
+        # ADVANCE ONLY NOW — after the hedge chain returned (locked, declined, or unwound). It used to be
+        # set BEFORE the call, inside the same try, so an exception anywhere in the chain consumed the
+        # delta permanently: the fill was then never hedged, never unwound, and never seen again by any
+        # detector, because every detector compares against matched_seen (N10).
+        lo.matched_seen = total
+        lo.hedge_errors = 0
         self._digest["fills"] += 1                          # count for the digest (the hedge is instant-alerted)
         self.persist_daily_caps()                           # a fill moved stake/fills/pnl -> persist NOW
         if lo.phase == "inplay":
             self._apply_inplay_circuit(lo, result, now, now_ts)
-        if total_matched >= lo.size - 1e-9:                # fully filled -> no remainder resting
+        if total >= lo.size - 1e-9:                        # fully filled -> no remainder resting
             self._record_lifetime(lo, now)
             self.open_orders.pop(key, None)
             self.caps.on_close()
         elif self.caps.halted or (lo.phase == "inplay" and self.inplay_halted):
-            self._cancel(key, now, "halt_after_partial")   # partial + a cap/circuit tripped -> pull remainder
+            self._cancel(key, now, "halt_after_partial", store, now_ts)   # partial + a cap/circuit tripped -> pull remainder
+
+    def _on_hedge_exception(self, lo: _LiveOrder, delta: float, fill_price: float, exc: Any,
+                            now: Any) -> None:
+        """The hedge chain RAISED. Scream, leave the fill delta unconsumed, and escalate if it repeats.
+
+        Not advancing ``matched_seen`` is the whole point: the next detector re-observes the same
+        cumulative and tries again. That retry is safe precisely because the chain proves nakedness
+        against VENUE TRUTH before it unwinds anything — a pair that already locked reads as fully hedged
+        and books LOCKED rather than hedging twice. The alternative (the old behaviour) was to consume the
+        delta and leave a naked position that no code path would ever look at again.
+
+        A raise that REPEATS is different: something structural is wrong and retrying is not converging,
+        so after ``MAX_HEDGE_ERRORS`` we stop and latch an ORPHAN halt for a human — a position we cannot
+        even attempt to hedge is exactly what that latch is for."""
+        lo.hedge_errors += 1
+        if self.log:
+            import traceback
+            crit = getattr(self.log, "critical", None) or self.log.error
+            crit("[MAKER_RT][LIVE][CRITICAL] HEDGE CHAIN RAISED for %s (attempt %d/%d, fill %.2f sh @ "
+                 "%.4f): %s — the fill delta is NOT consumed, so the next detection retries it (the "
+                 "retry re-reads the venue complement first, so it cannot double-hedge).\n%s",
+                 self._name_for(lo), lo.hedge_errors, MAX_HEDGE_ERRORS, float(delta), float(fill_price),
+                 exc, traceback.format_exc(limit=8))
+        self._emit_event("problem", lo, instant=True, detail=(
+            "Something went wrong while I was hedging a fill just now. I have NOT written it off — I'll "
+            "retry it on the next check and I re-read the exchange first so I can't hedge it twice."))
+        if lo.hedge_errors >= MAX_HEDGE_ERRORS:
+            self._orphan_detected(lo.game, lo.token, lo.phase, delta,
+                                  f"hedge chain raised {lo.hedge_errors}x in a row (last: {exc})", now)
 
     def _hedge_fill(self, lo: _LiveOrder, matched: float, fill_price: float, store: Any,
-                    now: Any, now_ts: float) -> dict:
+                    now: Any, now_ts: float, *, cumulative: Optional[float] = None) -> dict:
         """Hedge one fill: re-verify -> DECLINE+unwind, or lift the Kalshi IOC (a miss/partial unwinds the
         UNHEDGED remainder). EVERY unwind goes through _verified_unwind (REST-confirm flat or SCREAM+HALT).
-        Returns the result dict (outcome, locked_net, pnl, hedge order id, chain)."""
+        Returns the result dict (outcome, locked_net, realized_net, pnl, hedge order id, chain).
+
+        ``matched`` is THIS FILL's delta. ``cumulative`` is the order's total matched INCLUDING it, passed
+        in rather than read off ``lo.matched_seen`` because that field is deliberately not advanced until
+        this method returns (N10). Keeping the two apart is not bookkeeping neatness — conflating them is
+        N4: the venue's complement read is CUMULATIVE (it includes the previous fill's hedge), and using
+        it as this fill's hedged count makes a second fill's remainder compute 0, so genuinely naked
+        shares are never unwound and ride to the 5-minute reconcile as an orphan halt."""
+        cum = float(cumulative if cumulative is not None else (lo.matched_seen + matched))
         self.caps.commit_stake(matched * fill_price)              # rest leg committed
         hl = lo.hedge_lookup
         hedge_venue = hl.get("venue", "kalshi")
@@ -1396,27 +1698,37 @@ class PregameLiveExecutor:
         # hedge masquerades as a partial). Read the COMPLEMENT position we actually hold; the truly naked
         # amount is (rest held) - (complement held). If that is ~0 the fill IS hedged and the unwind is
         # UNREACHABLE — a successful hedge must never fall through to an unwind + phantom orphan (TBTOR).
-        complement = self._complement_shares(hedge_venue, hl, lo.matched_seen)
+        complement = self._complement_shares(hedge_venue, hl, cum)
         if complement is not None:
-            naked = max(0.0, lo.matched_seen - complement)
+            # NAKEDNESS is a CUMULATIVE-vs-CUMULATIVE question: everything this order has filled against
+            # everything we hold on the complement. That comparison is correct and stays as it was.
+            naked = max(0.0, cum - complement)
+            # THIS FILL's hedge, on the other hand, is the INCREMENT — the complement we hold now minus
+            # the complement already attributed to earlier fills of this same order. Using the cumulative
+            # here is N4: on a second fill it swallows the first fill's hedge, so `remainder` computes 0
+            # and genuinely naked shares are never unwound.
+            new_complement = max(0.0, complement - lo.hedged_seen)
             if naked <= HEDGE_SHARE_TOL:                       # venue confirms fully hedged -> LOCKED
-                true_hedged = min(lo.matched_seen, max(hedged, complement))
+                true_hedged = min(matched, max(hedged, new_complement))
                 locked_actual = self._actual_locked_net(fill_price, hedge_avg, hedge_fee, true_hedged, locked)
                 pnl = float(locked_actual) * true_hedged if locked_actual is not None else 0.0
                 # OVER-FILL ACCOUNTING: a $-sized Poly hedge sweep can fill at a better avg price and return
                 # MORE shares than requested. pnl is booked on the PAIRED amount (true_hedged), but the
-                # EXPECTED position must register the ACTUAL VENUE-HELD shares (``complement``) — never the
-                # clamped/derived amount — so a benign over-hedge can never read as a naked orphan on the
-                # next reconcile (the 2026-07-27 19:09 halt: 82.59 held vs 79 registered).
+                # EXPECTED position must register the ACTUAL VENUE-HELD shares — never the clamped/derived
+                # amount — so a benign over-hedge can never read as a naked orphan on the next reconcile
+                # (the 2026-07-27 19:09 halt: 82.59 held vs 79 registered). That is the INCREMENT too:
+                # registering the cumulative on every fill double-counts the registry itself.
                 return self._record_hedge_locked(lo, matched, fill_price, true_hedged, hedge_avg,
                                                  hedge_oid, locked_actual, hedge_venue, now, pnl=pnl,
                                                  hedge_fee=hedge_fee, verified=True,
-                                                 actual_hedge_shares=complement)
-            hedged = max(hedged, complement)                   # never unwind shares we actually hold hedged
+                                                 actual_hedge_shares=max(new_complement, true_hedged))
+            hedged = max(hedged, new_complement)               # never unwind shares we actually hold hedged
         # MISS / PARTIAL / ERROR -> unwind the genuinely UNHEDGED remainder (verified). A partial hedge
         # locks its part.
+        hedged = min(hedged, matched)                          # this fill cannot be hedged beyond itself
         if hedged > 0:
-            self.caps.commit_stake(min(hedged, matched) * float(hedge_avg or 0.0))
+            self.caps.commit_stake(hedged * float(hedge_avg or 0.0))
+            lo.hedged_seen += hedged                           # attribute it before the remainder is judged
         remainder = max(0.0, matched - hedged)
         return self._unwind_and_record(lo, remainder, fill_price, locked, "hedge_unwound", now,
                                        hedge_oid=hedge_oid)
@@ -1530,23 +1842,12 @@ class PregameLiveExecutor:
         review, cancel opens, scream. Deliberately the same shape as the ORPHAN latch — an impossible
         number in the books is at least as dangerous as a naked position, because it silently re-bases
         every cap and rail that reads those books."""
-        import json
         if self.quarantine is None:
             self.quarantine = {"reason": reason, "entry": entry,
                                "detected": _iso(now), "pending_review": True}
             self.caps.halted = True
             self.caps.halt_reason = "booking_quarantine"
-            path = self._quarantine_path
-            if path:
-                try:
-                    mrt_config.assert_writable(path)
-                    tmp = path + ".tmp"
-                    with open(tmp, "w", encoding="utf-8") as fh:
-                        json.dump(self.quarantine, fh, default=str, indent=1)
-                    os.replace(tmp, path)
-                except Exception as exc:  # noqa: BLE001 — persistence must never crash the halt path
-                    if self.log:
-                        self.log.error("[MAKER_RT][LIVE] could not persist QUARANTINE: %s", exc)
+            self._persist_json(self._quarantine_path, self.quarantine, "booking QUARANTINE latch")
             self.cancel_all("booking_quarantine", now)
         if self.log:
             self.log.error("[MAKER_RT][LIVE] BOOKING REFUSED (%s) — NOT booked, quarantined for review: %s",
@@ -1611,7 +1912,9 @@ class PregameLiveExecutor:
             self._note_expected_legs(lo, matched,
                                      actual_hedge_shares if actual_hedge_shares is not None else hedged,
                                      hedge_venue, now)
-            return {"outcome": "book_refused", "locked_net": None, "pnl": 0.0,
+            # realized_net stays None ONLY here: a refused booking has no number we are willing to
+            # believe, and the quarantine has already halted everything, so the in-play circuit is moot.
+            return {"outcome": "book_refused", "locked_net": None, "realized_net": None, "pnl": 0.0,
                     "hedge_order_id": hedge_oid, "quarantined": refuse,
                     "chain": self._chain(lo, matched, fill_price, "book_refused", locked, 0.0, hedge_oid)}
         self.caps.commit_stake(float(hedged) * float(hedge_avg or 0.0) + float(hedge_fee or 0.0))
@@ -1634,16 +1937,22 @@ class PregameLiveExecutor:
                          hedge_price=hedge_avg, hedge_venue=hedge_venue,
                          rest_price=fill_price, rest_shares=matched, hedge_shares=hedged,
                          hedge_fee=hedge_fee, **self._live_ctx())
-        self._note_pair_legs(lo, matched, fill_price, hedged, hedge_avg, hedge_fee)   # fee-honest cost basis
+        # fee-honest cost basis + the fill-time ESTIMATE this pair contributed to today's loss rail, so
+        # settlement can restate the difference rather than double-count (F4).
+        self._note_pair_legs(lo, matched, fill_price, hedged, hedge_avg, hedge_fee, booked_pnl=pnl)
         # Register the ACTUAL venue-held hedge shares (never the derived/clamped amount) so an over-fill is
         # accounted, not orphaned. Falls back to ``hedged`` when the caller has no separate venue read.
         hedge_held = actual_hedge_shares if actual_hedge_shares is not None else hedged
         self._note_expected_legs(lo, matched, hedge_held, hedge_venue, now)    # rest+hedge legs we now HOLD
+        # ATTRIBUTE this fill's hedge to the order, so the NEXT fill's complement read is read as an
+        # increment and not as its own hedge (N4).
+        lo.hedged_seen += float(hedge_held or 0.0)
         if verified and self.log:
             self.log.warning("[MAKER_RT][LIVE] hedge reported non-locked but the COMPLEMENT position "
                              "confirms FULLY HEDGED (%.2f sh) — booked LOCKED, unwind suppressed (no "
                              "phantom orphan). %s", float(hedged), self._name_for(lo))
-        return {"outcome": "hedge_locked", "locked_net": locked, "pnl": pnl, "hedge_order_id": hedge_oid,
+        return {"outcome": "hedge_locked", "locked_net": locked, "realized_net": locked, "pnl": pnl,
+                "hedge_order_id": hedge_oid,
                 "chain": self._chain(lo, matched, fill_price, "locked", locked, pnl, hedge_oid)}
 
     def _complement_shares(self, hedge_venue: str, hl: dict, target: float) -> Optional[float]:
@@ -1694,7 +2003,8 @@ class PregameLiveExecutor:
         all live quoting -- NO 'unwound' row is ever written without a venue-confirmed flat position."""
         if shares <= 1e-9:                                    # nothing naked (fully hedged) -> flat by construction
             self._record_lo(lo, ok_outcome, now, price=fill_price, size=0, locked_net=locked, unwind_cost=0.0)
-            return {"outcome": ok_outcome, "locked_net": locked, "pnl": 0.0, "hedge_order_id": hedge_oid,
+            return {"outcome": ok_outcome, "locked_net": locked, "realized_net": locked, "pnl": 0.0,
+                    "hedge_order_id": hedge_oid,
                     "chain": self._chain(lo, 0, fill_price, ok_outcome, locked, 0.0, hedge_oid)}
         if shares < MIN_TRADABLE.get(lo.rest_venue, 1.0):
             # UN-CLOSABLE DUST. Kalshi fills fractional counts but only accepts WHOLE contracts on the way
@@ -1713,7 +2023,9 @@ class PregameLiveExecutor:
                             unwind_cost=cost)
             self._emit_event("unwound", lo, instant=True, size=u["sold"], price=u["sell_px"], cost=cost,
                              reason=("hedge too dear" if ok_outcome == "hedge_declined" else "hedge missed"))
-            return {"outcome": ok_outcome, "locked_net": locked, "pnl": -cost, "hedge_order_id": hedge_oid,
+            return {"outcome": ok_outcome, "locked_net": locked,
+                    "realized_net": self._per_share(-cost, shares), "pnl": -cost,
+                    "hedge_order_id": hedge_oid,
                     "chain": self._chain(lo, shares, fill_price, ok_outcome, locked, -cost, hedge_oid)}
         # The unwind did not leave us provably flat. Before booking anything, try the BOUNDED AUTO-FLATTEN:
         # if the whole position is small enough that its worst case is affordable, sweep it out and carry
@@ -1721,42 +2033,76 @@ class PregameLiveExecutor:
         # trip the daily-loss rail on a position we are about to close for a fraction of that.
         rem = u["remaining"]
         naked = float(rem if rem is not None else shares)
+        # WHAT DID SELL WAS REAL MONEY. A partial unwind that failed to reach flat still paid the spread
+        # and the taker fee on the part it DID sell, and this branch used to book only the remainder's
+        # worst case — silently dropping the realized cost of the sold part (N24). Carry it into both the
+        # auto-flatten and the orphan bookings below.
+        sold_cost = float(u.get("cost") or 0.0)
         flat = self._auto_flatten_orphan(lo, naked, fill_price, now)
         if flat is not None:
-            self.caps.on_fill(flat, locked=False)
+            realized = round(flat - sold_cost, 4)             # flatten pnl MINUS the first sweep's cost
+            self.caps.on_fill(realized, locked=False)
             self._record_lo(lo, "auto_flattened", now, price=fill_price, size=naked, locked_net=locked,
-                            unwind_cost=-flat)
+                            unwind_cost=-realized)
             self.persist_daily_caps()
-            return {"outcome": ok_outcome, "locked_net": locked, "pnl": flat, "hedge_order_id": hedge_oid,
-                    "chain": self._chain(lo, naked, fill_price, "auto_flattened", locked, flat, hedge_oid)}
+            return {"outcome": ok_outcome, "locked_net": locked,
+                    "realized_net": self._per_share(realized, shares), "pnl": realized,
+                    "hedge_order_id": hedge_oid,
+                    "chain": self._chain(lo, naked, fill_price, "auto_flattened", locked, realized,
+                                         hedge_oid)}
         # VERIFY-OR-SCREAM: still naked -> ORPHAN. Book the worst-case loss as a PROVISIONAL mark (the
         # position is open; its real outcome is unknown), so it can be rebooked at VENUE TRUTH the moment
         # it closes or settles — see ``settle_provisional_marks``.
-        est_loss = round(float(fill_price) * naked, 4)
+        est_loss = round(float(fill_price) * naked + sold_cost, 4)
         self.caps.on_fill(-est_loss, locked=False)
         self._record_lo(lo, "unwind_FAILED", now, price=fill_price, size=shares, locked_net=locked,
                         unwind_cost=est_loss)
-        self._mark_provisional(lo, naked, fill_price, -est_loss, now, "unwind_FAILED")
+        # The PROVISIONAL mark covers only the still-open remainder — that is the part a settlement can
+        # restate. The sold part is already realized and must not be rebooked later.
+        self._mark_provisional(lo, naked, fill_price, -round(float(fill_price) * naked, 4), now,
+                               "unwind_FAILED")
         self._orphan(lo, rem, u.get("sell_res"), now)
-        return {"outcome": "unwind_FAILED", "locked_net": locked, "pnl": -est_loss,
+        return {"outcome": "unwind_FAILED", "locked_net": locked,
+                "realized_net": self._per_share(-est_loss, shares), "pnl": -est_loss,
                 "hedge_order_id": hedge_oid,
                 "chain": self._chain(lo, shares, fill_price, "unwind_FAILED", locked, -est_loss, hedge_oid)}
 
+    @staticmethod
+    def _per_share(pnl: float, shares: float) -> Optional[float]:
+        """Realized pnl expressed PER SHARE — the same units as ``locked_net``, so the in-play circuit can
+        judge a decline or an unwind on exactly the terms it judges a hedged pair (N23)."""
+        try:
+            n = float(shares)
+            return round(float(pnl) / n, 6) if n > 1e-9 else None
+        except (TypeError, ValueError, ZeroDivisionError):
+            return None
+
     def _apply_inplay_circuit(self, lo: _LiveOrder, result: dict, now: Any, now_ts: float) -> None:
-        """After an IN-PLAY fill: (a) if locked_net <= halt threshold -> HALT in-play for the day + cancel
-        in-play opens; (b) on the day's FIRST in-play fill -> pause in-play placement + Telegram the chain.
-        Pre-game is never affected."""
+        """After an IN-PLAY fill: (a) if the fill's REALIZED per-share net <= the halt threshold -> HALT
+        in-play for the day + cancel in-play opens; (b) on the day's FIRST in-play fill -> pause in-play
+        placement + Telegram the chain. Pre-game is never affected.
+
+        The circuit reads ``realized_net``, not ``locked_net``. ``locked_net`` is the estimate of a hedge
+        we intended; it is None for every outcome that did NOT lock — a no-hedge-book decline, a missed
+        hedge, an unwind — and the old gate skipped all of those (N23). Those are exactly the bad fills
+        this circuit exists to stop: a decline that market-unwound at −4% is a −4% in-play fill whatever
+        the hedge estimate was. ``realized_net`` is that outcome per share, in the same units."""
         self.inplay_fills_today += 1
-        locked = (result or {}).get("locked_net")
+        res = result or {}
+        locked = res.get("realized_net", res.get("locked_net"))
+        if locked is None:
+            locked = res.get("locked_net")
         if locked is not None and locked <= self.inplay_halt_locked_net and not self.inplay_halted:
             self.inplay_halted = True
             self._emit_event("halted", instant=True,
-                             detail=(f"in-play day-halt — fill locked {locked*100:.2f}% "
+                             detail=(f"in-play day-halt — fill realized {locked*100:.2f}% "
                                      f"≤ {self.inplay_halt_locked_net*100:.1f}% floor; in-play stopped "
                                      f"for the day (pre-game continues)"))
             self.cancel_inplay_open(now, "inplay_day_halt")
+            self.persist_daily_caps()          # the halt must survive the next deploy (N5)
         if self.inplay_fills_today == 1:
             self.inplay_pause_until = now_ts + self.inplay_first_fill_pause_s
+            self.persist_daily_caps()                    # the pause + the counter survive a restart (N5)
             if self.log:                                 # the technical chain (order ids) is LOG-ONLY
                 self.log.warning("[MAKER_RT][INPLAY] first in-play fill — pausing in-play %.0fs. chain: %s",
                                  self.inplay_first_fill_pause_s, (result or {}).get("chain"))
@@ -1875,10 +2221,36 @@ class PregameLiveExecutor:
         if not flat and total_sold > 0 and self.log:
             self.log.error("[MAKER_RT][LIVE] partial unwind NOT reconciled to flat on %s: sold %.2f, "
                            "remaining %s.", lo.token[:12], total_sold, remaining)
-        cost = round((float(fill_price) - float(sell_px)) * total_sold, 4) \
+        fee = self._exit_fee("polymarket", sell_res, total_sold, sell_px, lo.poly_rate)
+        cost = round((float(fill_price) - float(sell_px)) * total_sold + fee, 4) \
             if (sell_px is not None and total_sold > 0) else None
-        return {"ok": bool(flat), "sold": total_sold, "sell_px": sell_px, "cost": cost,
+        return {"ok": bool(flat), "sold": total_sold, "sell_px": sell_px, "cost": cost, "fee": fee,
                 "remaining": remaining, "sell_res": sell_res}
+
+    def _exit_fee(self, venue: str, sell_res: Any, sold: float, sell_px: Any,
+                  poly_rate: float = 0.05) -> float:
+        """The TAKER FEE paid to EXIT a position ($). An unwind is a taker sell, so it is charged one —
+        and the unwind cost this fee belongs to used to be computed as pure spread, ``(entry − exit) ×
+        sold``, with no fee term at all (N26). That understates every unwind by roughly the size of the
+        edge the whole strategy is chasing: a Kalshi exit near 50c costs ~1.75c/contract, versus a
+        +0.6% target.
+
+        Venue truth first where it exists (Kalshi's normalized response carries the actual ``fee``), else
+        the official formula. Poly reports no fee field, so its charge is computed from the published
+        sports schedule (``rate × min(p, 1−p) × shares``)."""
+        try:
+            n = float(sold or 0.0)
+            px = float(sell_px) if sell_px is not None else None
+        except (TypeError, ValueError):
+            return 0.0
+        if n <= 0 or px is None:
+            return 0.0
+        if str(venue).lower().startswith("poly"):
+            from ...executor.fees_sizing import poly_fee_usd
+            return round(poly_fee_usd(n, px, float(poly_rate or 0.0)), 6)
+        from .hedge import kalshi_actual_fee                 # venue-reported when it agrees with official
+        return round(kalshi_actual_fee(sell_res if isinstance(sell_res, dict) else None,
+                                       int(math.floor(n)), px), 6)
 
     def _verified_unwind_kalshi(self, lo: _LiveOrder, shares: float, fill_price: float) -> dict:
         """IOC-sell the naked Kalshi position, REST-verify FLAT via the portfolio positions endpoint, and
@@ -1923,9 +2295,10 @@ class PregameLiveExecutor:
         if not flat and total_sold > 0 and self.log:
             self.log.error("[MAKER_RT][LIVE] partial kalshi unwind NOT reconciled to flat on %s: sold "
                            "%.0f, remaining %s.", lo.token, total_sold, remaining)
-        cost = round((float(fill_price) - float(sell_px)) * total_sold, 4) \
+        fee = self._exit_fee("kalshi", sell_res, total_sold, sell_px)
+        cost = round((float(fill_price) - float(sell_px)) * total_sold + fee, 4) \
             if (sell_px is not None and total_sold > 0) else None
-        return {"ok": bool(flat), "sold": total_sold, "sell_px": sell_px, "cost": cost,
+        return {"ok": bool(flat), "sold": total_sold, "sell_px": sell_px, "cost": cost, "fee": fee,
                 "remaining": remaining, "sell_res": sell_res}
 
     def _kalshi_position(self, ticker: str) -> Optional[float]:
@@ -2016,18 +2389,9 @@ class PregameLiveExecutor:
     def _persist_orphan(self) -> None:
         """Write the latched orphan to disk (atomic). The panel reads this file, so the red ORPHAN banner
         appears even if every alert channel is down, and a restart re-latches the halt."""
-        import json
-        if not self._orphan_path or self.orphan is None:
+        if self.orphan is None:
             return
-        try:
-            mrt_config.assert_writable(self._orphan_path)   # never write live state under pytest
-            tmp = self._orphan_path + ".tmp"
-            with open(tmp, "w", encoding="utf-8") as fh:
-                json.dump(self.orphan, fh, default=str)
-            os.replace(tmp, self._orphan_path)
-        except Exception as exc:  # noqa: BLE001 — persistence must never crash the halt path
-            if self.log:
-                self.log.error("[MAKER_RT][LIVE] could not persist ORPHAN banner: %s", exc)
+        self._persist_json(self._orphan_path, self.orphan, "ORPHAN banner")
 
     def _load_quarantine(self) -> None:
         """Re-latch a persisted booking quarantine at startup. Unlike ORPHAN there is no venue read that
@@ -2035,12 +2399,9 @@ class PregameLiveExecutor:
         deleting the file. FAILS CLOSED: a quarantine file we cannot parse still halts."""
         if not self._quarantine_path or not os.path.exists(self._quarantine_path):
             return
-        import json
-        try:
-            with open(self._quarantine_path, "r", encoding="utf-8-sig") as fh:
-                data = json.load(fh)
-        except Exception as exc:  # noqa: BLE001
-            data = {"reason": "unreadable_quarantine_file", "error": str(exc)}
+        data = self._load_json(self._quarantine_path, "the booking quarantine", fail_closed=False)
+        if data is None:                      # present but unparseable -> the latch still stands
+            data = {"reason": "unreadable_quarantine_file", "path": self._quarantine_path}
         self.quarantine = data if isinstance(data, dict) and data else {"reason": "empty_quarantine_file"}
         self.caps.halted = True
         self.caps.halt_reason = "booking_quarantine"
@@ -2051,23 +2412,27 @@ class PregameLiveExecutor:
     def _load_orphan(self) -> None:
         """Re-latch a persisted orphan at startup: an unresolved naked position must NOT be cleared by a
         restart. The latch is marked ``pending_verify`` so ``verify_latched_orphan`` can retire it against
-        VENUE TRUTH — see that method for why an un-retirable latch is an availability bug."""
-        import json
+        VENUE TRUTH — see that method for why an un-retirable latch is an availability bug.
+
+        FAILS CLOSED. This file exists to say "a human must check a naked position", and the old loader
+        answered an unparseable one with ``except: pass`` — i.e. by DROPPING the halt and resuming
+        quoting over exactly the position it was written about. A file we cannot read is not an absent
+        file; ``_halt_unreadable`` stops trading and says which file to look at."""
         if not self._orphan_path or not os.path.exists(self._orphan_path):
             return
-        try:
-            with open(self._orphan_path, "r", encoding="utf-8") as fh:
-                data = json.load(fh)
-            if isinstance(data, dict) and data:
-                data["pending_verify"] = True     # re-check against the venue before trusting it forever
-                self.orphan = data
-                self.caps.halted = True
-                self.caps.halt_reason = "orphan_position"
-                if self.log:
-                    self.log.error("[MAKER_RT][LIVE] STARTUP: persisted ORPHAN re-latched — live HALTED "
-                                   "(pending venue verification). %s", data)
-        except Exception:  # noqa: BLE001
-            pass
+        data = self._load_json(self._orphan_path, "the ORPHAN latch", fail_closed=True)
+        if data is None:
+            return                            # _halt_unreadable already halted + screamed
+        if not (isinstance(data, dict) and data):
+            self._halt_unreadable("the ORPHAN latch", self._orphan_path, "file is empty / not an object")
+            return
+        data["pending_verify"] = True          # re-check against the venue before trusting it forever
+        self.orphan = data
+        self.caps.halted = True
+        self.caps.halt_reason = "orphan_position"
+        if self.log:
+            self.log.error("[MAKER_RT][LIVE] STARTUP: persisted ORPHAN re-latched — live HALTED "
+                           "(pending venue verification). %s", data)
 
     def _clear_orphan(self, why: str, now: Any = None) -> None:
         """Retire a latched orphan that VENUE TRUTH says is not a position, and resume live quoting.
@@ -2148,7 +2513,13 @@ class PregameLiveExecutor:
             self.log.warning("[MAKER_RT][LIVE] %s left %.2f sh on %s — below the %g the venue will price, "
                              "so there is no closing order to place. Booked as dust; it settles on its own.",
                              ok_outcome, float(shares), lo.token, MIN_TRADABLE.get(lo.rest_venue, 1.0))
-        return {"outcome": ok_outcome, "locked_net": locked, "pnl": 0.0, "hedge_order_id": hedge_oid,
+        # The in-play circuit is handed ``locked`` here, not 0.0. Dust books no pnl (its outcome arrives at
+        # settlement), but an in-play fill we DECLINED and then could not even close is unambiguously a bad
+        # in-play fill, and the number that describes it is the net the gate judged it at. Booking zero to
+        # the daily rail while telling the circuit zero would let a −9% declined fill read as neutral.
+        return {"outcome": ok_outcome, "locked_net": locked,
+                "realized_net": (locked if locked is not None else 0.0), "pnl": 0.0,
+                "hedge_order_id": hedge_oid,
                 "chain": self._chain(lo, shares, fill_price, f"{ok_outcome}(dust)", locked, 0.0, hedge_oid)}
 
     # -- provisional marks: worst-case now, VENUE TRUTH when it resolves -------
@@ -2175,32 +2546,14 @@ class PregameLiveExecutor:
         self._persist_provisional()
 
     def _persist_provisional(self) -> None:
-        import json
-        if not self._provisional_path:
-            return
-        try:
-            mrt_config.assert_writable(self._provisional_path)
-            tmp = self._provisional_path + ".tmp"
-            with open(tmp, "w", encoding="utf-8") as fh:
-                json.dump(list(self._provisional.values()), fh, default=str)
-            os.replace(tmp, self._provisional_path)
-        except Exception as exc:  # noqa: BLE001 — bookkeeping must never crash the loop
-            if self.log:
-                self.log.error("[MAKER_RT][LIVE] could not persist provisional marks: %s", exc)
+        self._persist_json(self._provisional_path, list(self._provisional.values()),
+                           "provisional marks")
 
     def _load_provisional(self) -> None:
-        import json
-        if not self._provisional_path or not os.path.exists(self._provisional_path):
-            return
-        try:
-            with open(self._provisional_path, "r", encoding="utf-8") as fh:
-                rows = json.load(fh)
-            for r in rows or []:
-                if isinstance(r, dict) and r.get("instrument"):
-                    self._provisional[r["instrument"]] = r
-        except Exception as exc:  # noqa: BLE001
-            if self.log:
-                self.log.warning("[MAKER_RT][LIVE] could not load provisional marks: %s", exc)
+        rows = self._load_json(self._provisional_path, "the provisional marks", fail_closed=False)
+        for r in rows or []:
+            if isinstance(r, dict) and r.get("instrument"):
+                self._provisional[r["instrument"]] = r
 
     def settle_provisional_marks(self, now: Any) -> list:
         """Rebook every provisional mark whose position has CLOSED or SETTLED, at the venue's own number.
@@ -2329,43 +2682,42 @@ class PregameLiveExecutor:
         return round(-cost, 4)
 
     def _load_traded_tokens(self) -> None:
-        """Reload the persisted watch-set at startup (best-effort; a corrupt/locked file never blocks
-        startup). This is what lets the startup reconcile catch a position stranded by a crashed run."""
-        import json
+        """Reload the persisted watch-set at startup. This is what lets the startup reconcile catch a
+        position stranded by a crashed run.
+
+        FAILS CLOSED. ``reconcile_positions`` is scoped to this set on purpose (the funder wallet holds
+        hundreds of unrelated positions), so an unreadable watch-set does not make the bot cautious — it
+        makes it BLIND: every instrument a crashed prior run may have left open silently stops being
+        looked at, and nothing ever reports it. The old loader's ``except: pass`` was fail-OPEN over
+        exactly the positions this file exists to remember."""
         if not self._traded_path or not os.path.exists(self._traded_path):
             return
-        try:
-            with open(self._traded_path, "r", encoding="utf-8") as fh:
-                data = json.load(fh)
-            if isinstance(data, list):                       # legacy bare list = poly tokens only
-                self._traded_tokens.update(str(t) for t in data if t)
-            elif isinstance(data, dict):
-                self._traded_tokens.update(str(t) for t in (data.get("tokens") or []) if t)
-                self._traded_tickers.update(str(t) for t in (data.get("tickers") or []) if t)
-        except Exception:  # noqa: BLE001
-            pass
+        data = self._load_json(self._traded_path, "the traded-instrument watch-set", fail_closed=True)
+        if data is None:
+            return                                           # halted + screamed
+        if isinstance(data, list):                           # legacy bare list = poly tokens only
+            self._traded_tokens.update(str(t) for t in data if t)
+        elif isinstance(data, dict):
+            self._traded_tokens.update(str(t) for t in (data.get("tokens") or []) if t)
+            self._traded_tickers.update(str(t) for t in (data.get("tickers") or []) if t)
+        else:
+            self._halt_unreadable("the traded-instrument watch-set", self._traded_path,
+                                  f"unexpected JSON type {type(data).__name__}")
 
     def _persist_traded_tokens(self) -> None:
-        """Atomically write the watch-set (poly tokens + kalshi tickers). Best-effort: persistence must
-        NEVER crash live trading."""
-        import json
-        if not self._traded_path:
-            return
-        try:
-            mrt_config.assert_writable(self._traded_path)   # never write live state under pytest
-            tmp = self._traded_path + ".tmp"
-            with open(tmp, "w", encoding="utf-8") as fh:
-                json.dump({"tokens": sorted(self._traded_tokens),
-                           "tickers": sorted(self._traded_tickers)}, fh)
-            os.replace(tmp, self._traded_path)
-        except Exception:  # noqa: BLE001
-            pass
+        """Atomically write the watch-set (poly tokens + kalshi tickers). Never crashes live trading; a
+        failure is reported rather than swallowed — a watch-set that did not persist is a reconcile that
+        will not run after the next restart."""
+        self._persist_json(self._traded_path, {"tokens": sorted(self._traded_tokens),
+                                               "tickers": sorted(self._traded_tickers)},
+                           "traded-instrument watch-set")
 
     # -- settled-P&L cost basis + reconciliation -----------------------------
     _LEG_SEP = "\x1f"                                    # (game, market_key) -> one JSON string key
 
     def _note_pair_legs(self, lo: _LiveOrder, rest_shares: float, rest_price: float,
-                        hedge_shares: Any, hedge_avg: Any, hedge_fee: Any = 0.0) -> None:
+                        hedge_shares: Any, hedge_avg: Any, hedge_fee: Any = 0.0,
+                        booked_pnl: float = 0.0) -> None:
         """Accumulate the FEE-HONEST COST BASIS of a hedged pair (rest leg + hedge leg), keyed by
         (game, market_key), for the settled-pnl reconciler. The rest leg is a MAKER order (fee 0 on both
         venues for our series); the hedge is a TAKER lift whose ACTUAL fee is added here so settled net
@@ -2387,7 +2739,12 @@ class PregameLiveExecutor:
                 rec = {"sport": lo.sport, "game": lo.game, "market_key": lo.market_key,
                        "side": lo.side, "teams": getattr(lo, "teams", ""), "rest_venue": lo.rest_venue,
                        "kalshi": {"ticker": k_ticker, "side": k_side, "shares": 0.0, "cost": 0.0},
-                       "poly": {"token": p_token, "shares": 0.0, "cost": 0.0}}
+                       "poly": {"token": p_token, "shares": 0.0, "cost": 0.0},
+                       # BOOKED-vs-SETTLED restatement (F4): the day this pair was first booked and the
+                       # fill-time pnl estimate that went into that day's loss rail. When the venue tells
+                       # us what it really came to, ``reconcile_settlements`` applies the DIFFERENCE, so
+                       # the $50 rail converges on truth instead of on an estimate.
+                       "booked_day": getattr(self.caps, "_day", "") or self._day, "booked_pnl": 0.0}
                 self._market_legs[key] = rec
             rec["kalshi"].update(ticker=k_ticker, side=k_side)
             rec["kalshi"]["shares"] = round(rec["kalshi"]["shares"] + k_sh, 4)
@@ -2395,6 +2752,7 @@ class PregameLiveExecutor:
             rec["poly"]["token"] = p_token
             rec["poly"]["shares"] = round(rec["poly"]["shares"] + p_sh, 4)
             rec["poly"]["cost"] = round(rec["poly"]["cost"] + p_cost, 4)
+            rec["booked_pnl"] = round(float(rec.get("booked_pnl") or 0.0) + float(booked_pnl or 0.0), 4)
             self._persist_settled_ledger()
         except Exception:  # noqa: BLE001 — cost-basis bookkeeping must never crash the hedge
             pass
@@ -2418,8 +2776,12 @@ class PregameLiveExecutor:
         k = self._exp_key(venue, instrument)
         rec = self._expected.get(k)
         if rec is None:
+            # ``since_ts`` is the epoch we FIRST booked this leg and is deliberately never refreshed by a
+            # later fill on the same instrument: the age watchdog asks "how long has this been unsettled",
+            # and a second fill on the same market must not reset that clock (F1).
             rec = {"venue": str(venue), "instrument": str(instrument), "side": str(side or ""),
-                   "shares": 0.0, "game": game, "market_key": market_key, "ts": ts}
+                   "shares": 0.0, "game": game, "market_key": market_key, "ts": ts,
+                   "since_ts": _epoch(now)}
             self._expected[k] = rec
         rec["shares"] = round(float(rec["shares"]) + float(shares), 4)
         rec["game"], rec["market_key"], rec["ts"] = game, market_key, ts
@@ -2514,40 +2876,31 @@ class PregameLiveExecutor:
             self._persist_expected_positions()
 
     def _load_expected_positions(self) -> None:
-        """Reload the expected-position registry at startup (best-effort). This is what lets a settlement
-        or reconcile landing after a restart still recognise a leg we hold on purpose."""
-        import json
-        if not self._expected_path or not os.path.exists(self._expected_path):
-            return
-        try:
-            with open(self._expected_path, "r", encoding="utf-8") as fh:
-                data = json.load(fh)
-            if isinstance(data, dict):
-                for k, r in data.items():
-                    if isinstance(r, dict) and r.get("instrument"):
-                        self._expected[str(k)] = r
-        except Exception:  # noqa: BLE001
-            pass
+        """Reload the expected-position registry at startup. This is what lets a settlement or reconcile
+        landing after a restart still recognise a leg we hold on purpose.
+
+        Screams but does not fail closed: losing this registry makes the reconciler MORE suspicious, not
+        less — every genuinely-held hedge reads as unexplained and the first reconcile pass halts on its
+        own. The failure mode is a false halt, which is safe and self-announcing."""
+        data = self._load_json(self._expected_path, "the expected-position registry", fail_closed=False)
+        if isinstance(data, dict):
+            for k, r in data.items():
+                if isinstance(r, dict) and r.get("instrument"):
+                    self._expected[str(k)] = r
 
     def _persist_expected_positions(self) -> None:
-        """Atomically write the expected-position registry. Best-effort: persistence must NEVER crash
-        live trading."""
-        import json
-        if not self._expected_path:
-            return
-        try:
-            mrt_config.assert_writable(self._expected_path)   # never write live state under pytest
-            tmp = self._expected_path + ".tmp"
-            with open(tmp, "w", encoding="utf-8") as fh:
-                json.dump(self._expected, fh)
-            os.replace(tmp, self._expected_path)
-        except Exception:  # noqa: BLE001
-            pass
+        """Atomically write the expected-position registry; a failure is reported, never swallowed."""
+        self._persist_json(self._expected_path, self._expected, "expected-position registry")
 
     def reconcile_settlements(self, now: Any) -> list:
         """Pull BOTH venues' settlement for our booked hedged pairs and write the venue-truth
         ``trade_settled`` rows (net + ROI, both legs). Idempotent; prunes reconciled markets from the
-        local ledger + alerts each settled trade. Best-effort — never raises into the loop."""
+        local ledger + alerts each settled trade. Best-effort — never raises into the loop.
+
+        Also runs the SETTLEMENT AGE WATCHDOG on every pass, whether or not anything settled: this sweep
+        was silent for 2.5 days over ZHELAN's $25.81 (F1), and a reconciler that only speaks when it
+        succeeds cannot report the one failure that matters — nothing arriving at all."""
+        self._settlement_age_watchdog(now)
         if not self._market_legs:
             return []
         try:
@@ -2557,6 +2910,7 @@ class PregameLiveExecutor:
                 self.log.warning("[MAKER_RT][SETTLE] reconcile pass failed: %s", exc)
             return []
         if emitted:
+            self._restate_same_day(emitted, now)              # F4: settled minus booked -> the daily rail
             recs = {}
             for key in list(self._market_legs):
                 game, _, mk = key.partition(self._LEG_SEP)
@@ -2572,6 +2926,123 @@ class PregameLiveExecutor:
                 self._send_telegram(self._settled_alert(row, recs.get((row.get("game"),
                                                                        row.get("market_key")))))
         return emitted
+
+    def _restate_same_day(self, emitted: list, now: Any) -> None:
+        """Apply ``(venue-truth settled − fill-time booked estimate)`` to TODAY's pnl, for every bucket.
+
+        ``caps.pnl_today`` is the only feeder of the $50 daily-loss rail, and until now the only thing
+        that ever corrected it was the provisional-mark path — i.e. the NAKED bucket. A hedged pair booked
+        an ESTIMATE at fill time and, when the venue later said what it actually came to, the rail never
+        heard about it (F4). PHIMIA's +$8.1627 reached lifetime pnl and never touched ``pnl_today``.
+
+        Three properties make this safe to run on live money:
+          * ONE restatement per market, ever (``restated``), so a re-emitted row cannot double-apply;
+          * only markets first booked TODAY — yesterday's rail is closed, and moving it would corrupt a
+            day that has already been reported;
+          * skipped when either leg still carries a PROVISIONAL mark, because ``settle_provisional_marks``
+            owns that restatement and computes it from the same venue fills. Two owners of one correction
+            is a double-count, and the naked path was there first."""
+        from .state import utcnow
+        today = getattr(self.caps, "_day", "") or self._day or utcnow().strftime("%Y%m%d")
+        totals: dict = {}
+        for row in emitted:
+            k = f"{row.get('game')}{self._LEG_SEP}{row.get('market_key')}"
+            try:
+                totals[k] = totals.get(k, 0.0) + float(row.get("realized_pnl_usd") or 0.0)
+            except (TypeError, ValueError):
+                continue
+        for k, realized in totals.items():
+            rec = self._market_legs.get(k)
+            if not isinstance(rec, dict) or rec.get("restated"):
+                continue
+            if str(rec.get("booked_day") or "") != str(today):
+                continue                                      # not today's rail -> not ours to move
+            insts = [(rec.get("kalshi") or {}).get("ticker"), (rec.get("poly") or {}).get("token")]
+            if any(i and i in self._provisional for i in insts):
+                if self.log:
+                    self.log.info("[MAKER_RT][SETTLE] not restating %s — a provisional mark on the same "
+                                  "instrument owns that correction (no double-count).", k.split(self._LEG_SEP)[0])
+                continue
+            booked = float(rec.get("booked_pnl") or 0.0)
+            delta = round(float(realized) - booked, 4)
+            rec["restated"] = True
+            if abs(delta) < 0.005:                            # the estimate was right; nothing to move
+                continue
+            self.caps.adjust_pnl(delta)      # a RESTATEMENT, not a fill — see LiveCaps.adjust_pnl
+            self.persist_daily_caps()
+            if self.log:
+                self.log.warning("[MAKER_RT][SETTLE] RESTATED today's pnl for %s: booked estimate "
+                                 "$%+.4f -> venue truth $%+.4f = $%+.4f applied (pnl_today now $%+.2f, "
+                                 "loss rail $%.0f).", k.split(self._LEG_SEP)[0], booked, float(realized),
+                                 delta, self.caps.pnl_today, self.caps.max_daily_loss_usd)
+
+    def _settlement_age_watchdog(self, now: Any) -> None:
+        """Scream about any EXPECTED position still open more than ``SETTLE_AGE_ALERT_S`` after we booked it.
+
+        The failure this exists for is SILENCE. ZHELAN's two legs sat unbooked for ~2.5 days while the
+        settlement sweep ran every 15 minutes and wrote not one line, because the sweep only ever spoke
+        when a settlement arrived — and no settlement arriving is precisely the condition worth reporting
+        (F1). A market that has not settled a day after the event is either void, refunded, adjudicated by
+        hand (a walkover), or simply not paid out, and all four need a human.
+
+        Also RE-READS the venue position for an aging leg, because the deficit is the information: a leg
+        the venue no longer shows is a redemption we failed to book, while a leg still held is genuinely
+        awaiting settlement. Throttled to once per UTC day per instrument."""
+        if not self._expected:
+            return
+        try:
+            day = now.strftime("%Y%m%d")
+            now_epoch = float(now.timestamp())
+        except Exception:  # noqa: BLE001 — a clock we cannot read is not a reason to raise into the loop
+            return
+        for rec in list(self._expected.values()):
+            inst, venue = rec.get("instrument"), rec.get("venue")
+            if not inst:
+                continue
+            since = self._expected_since_ts(rec)
+            if since <= 0 or (now_epoch - since) < SETTLE_AGE_ALERT_S:
+                continue
+            if self._settle_age_alerted.get(inst) == day:
+                continue
+            self._settle_age_alerted[inst] = day
+            age_h = (now_epoch - since) / 3600.0
+            try:
+                held = self._instrument_shares(inst)
+            except Exception:  # noqa: BLE001
+                held = None
+            expected = float(rec.get("shares") or 0.0)
+            if self.log:
+                self.log.error("[MAKER_RT][SETTLE] STALE EXPECTED POSITION: %s %s (%s %s) booked %.1fh "
+                               "ago and still not settled — expected %g sh, venue reads %s. Void/refund, "
+                               "a hand-adjudicated result, or a settlement we never booked. RECONCILE BY "
+                               "HAND.", venue, inst, rec.get("game"), rec.get("market_key"), age_h,
+                               expected, ("unreadable" if held is None else f"{held:g}"))
+            deficit = (held is not None and held < expected - HEDGE_SHARE_TOL)
+            self._send_telegram(alerts.format_event("problem", detail=(
+                f"One of my bets on {rec.get('game') or 'a market'} still hasn't been paid out "
+                f"{age_h:.0f} hours after it should have settled"
+                + (" — and the exchange no longer shows me holding it, so a payout may have been missed."
+                   if deficit else ". I'm still holding the position and waiting.")
+                + " Worth a look at the exchange statement; I'll mention it once a day until it clears.")))
+
+    @staticmethod
+    def _expected_since_ts(rec: dict) -> float:
+        """Epoch seconds this expected leg was booked, from ``since_ts`` or the ISO ``ts``. 0 if unknown."""
+        try:
+            v = float(rec.get("since_ts") or 0.0)
+            if v > 0:
+                return v
+        except (TypeError, ValueError):
+            pass
+        ts = str(rec.get("ts") or "")
+        if not ts:
+            return 0.0
+        try:
+            from datetime import datetime, timezone
+            dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+            return (dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)).timestamp()
+        except (TypeError, ValueError):
+            return 0.0
 
     def _settled_alert(self, row: dict, rec: Optional[dict]) -> str:
         """Render the plain-language SETTLED alert (no ticker) from the settled row + booked leg meta."""
@@ -2604,29 +3075,12 @@ class PregameLiveExecutor:
                 "lifetime_pnl": round(life + self.caps.pnl_today, 4)}
 
     def _persist_settled_ledger(self) -> None:
-        import json
-        if not self._settled_path:
-            return
-        try:
-            mrt_config.assert_writable(self._settled_path)
-            tmp = self._settled_path + ".tmp"
-            with open(tmp, "w", encoding="utf-8") as fh:
-                json.dump(self._market_legs, fh)
-            os.replace(tmp, self._settled_path)
-        except Exception:  # noqa: BLE001
-            pass
+        self._persist_json(self._settled_path, self._market_legs, "settled-pnl cost basis")
 
     def _load_settled_ledger(self) -> None:
-        import json
-        if not self._settled_path or not os.path.exists(self._settled_path):
-            return
-        try:
-            with open(self._settled_path, "r", encoding="utf-8") as fh:
-                data = json.load(fh)
-            if isinstance(data, dict):
-                self._market_legs.update(data)
-        except Exception:  # noqa: BLE001
-            pass
+        data = self._load_json(self._settled_path, "the settled-pnl cost basis", fail_closed=False)
+        if isinstance(data, dict):
+            self._market_legs.update(data)
 
     def reconcile_positions(self, now: Any) -> Optional[dict]:
         """Read ACTUAL positions and diff against the bot's belief (flat -- a resting order is NOT a

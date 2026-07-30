@@ -24,6 +24,17 @@ class Component:
     name: str
     match: str      # substring that identifies this component's process in a command line
     cmd: str        # inner PowerShell launch command; {py}/{repo}/{data} filled by the supervisor
+    # ADDITIONAL substrings that ALSO prove this component is alive. ``match`` is the wrapper, but a
+    # wrapper is not the work: if the wrapper dies and its python child keeps running, matching only the
+    # wrapper reads as "missing" and the supervisor starts a SECOND worker against the same account.
+    # For maker_rt that means two processes each believing they own the whole daily budget, each
+    # cancelling the other's resting orders at startup, each false-orphaning the other (audit N7). So a
+    # component may name the WORK as well as its launcher.
+    alt_matches: tuple = ()
+
+    def matches(self, cmd: str) -> bool:
+        """True when ``cmd`` (a running process's command line) is this component — wrapper OR work."""
+        return any(m in cmd for m in (self.match,) + tuple(self.alt_matches))
 
 
 # -------------------------------------------------------------------------------------------------- #
@@ -53,8 +64,11 @@ COMPONENTS: list[Component] = [
     # UFC — a FOURTH sport, fully isolated (own tree/price loops, own data files, own logs).
     Component("ufc_tree", "run_ufc_tree_loop.ps1", "& '{repo}\\scripts\\run_ufc_tree_loop.ps1'"),
     Component("ufc", "run_ufc_loop.ps1", "& '{repo}\\scripts\\run_ufc_loop.ps1'"),
-    # maker_rt (#11) — the realtime maker/hedger (SHADOW: real sockets, paper quotes, zero orders).
-    Component("maker_rt", "run_maker_rt_loop.ps1", "& '{repo}\\scripts\\run_maker_rt_loop.ps1'"),
+    # maker_rt (#11) — the realtime maker/hedger. This one carries an alt_match on the PYTHON module,
+    # because it is the component that handles real money: a surviving `-m src.genz.maker_rt` whose
+    # wrapper died is emphatically NOT missing, and starting a second one is the N7 incident.
+    Component("maker_rt", "run_maker_rt_loop.ps1", "& '{repo}\\scripts\\run_maker_rt_loop.ps1'",
+              alt_matches=("src.genz.maker_rt",)),
     # og_multi (#12) — the 4-book MLB/tennis/UFC scanner loop (ALERT-ONLY; per-sport cadence inside).
     Component("og_multi", "run_og_multi_loop.ps1", "& '{repo}\\scripts\\run_og_multi_loop.ps1'"),
 ]
@@ -63,14 +77,18 @@ STOP_FLAG = "STOP_ALL"
 
 def missing_components(running: Iterable[Optional[str]],
                        components: list[Component] = COMPONENTS) -> list[str]:
-    """Component names whose match substring appears in NO running command line -> (re)start these."""
+    """Component names that match NO running command line -> (re)start these. A component is satisfied
+    by its wrapper OR by any of its ``alt_matches`` (the work itself) — see Component.matches."""
     cmds = [c for c in running if c]
-    return [c.name for c in components if not any(c.match in cmd for cmd in cmds)]
+    return [c.name for c in components if not any(c.matches(cmd) for cmd in cmds)]
 
 
 def component_specs(components: list[Component] = COMPONENTS) -> list[dict]:
-    """The launch spec for every component: [{name, match, cmd}] — consumed by run_all.ps1 (`specs`)."""
-    return [{"name": c.name, "match": c.match, "cmd": c.cmd} for c in components]
+    """The launch spec for every component: [{name, match, alt_matches, cmd}] — consumed by run_all.ps1
+    (`specs`). ``match`` remains the single substring the supervisor uses for pid reporting; the
+    start-if-missing decision is made HERE (`missing`), which is what honors alt_matches."""
+    return [{"name": c.name, "match": c.match, "alt_matches": list(c.alt_matches), "cmd": c.cmd}
+            for c in components]
 
 
 def stop_requested(ops_dir: str) -> bool:

@@ -148,9 +148,15 @@ def test_phimia_thin_book_fill_declines_before_the_hedge_fires(tmp_path):
     ex, _ = _exec_kalshi(tmp_path, kalshi_oc=koc, kalshi=kex, poly=poly, hedger=hedger)
     ex.caps.quote_usd_max = 20.0
     ex.roll_day(_DT)
-    store = _ThinStore(poly_best_ask=0.05, kalshi_ask=0.95)
+    # THE PRODUCTION SEQUENCE, in order: the 21-lot was PLACED at 01:18:21 against a hedge book 14,240
+    # deep, and only then (by 01:21:04) did the Poly side thin out to 6 shares — which is why the order is
+    # 21 lots at all. Placing against the thinned book would size the order at 6 by hedge depth, and a
+    # 6-lot order filling 21 is not a thing a resting order can do.
+    deep, thin = _Store(poly_best_ask=0.05, kalshi_ask=0.95), _ThinStore(poly_best_ask=0.05, kalshi_ask=0.95)
     c = _cand_kalshi(ticker="KXMLBGAME-26JUL271840PHIMIA-PHI", htoken="TOK_MIA")
-    ex.place_or_reprice(c, _dec(_PHIMIA_FILL_PX, hedge_ask=0.05), None, store, _DT, 100.0, "inplay")
+    ex.place_or_reprice(c, _dec(_PHIMIA_FILL_PX, hedge_ask=0.05), None, deep, _DT, 100.0, "inplay")
+    assert ex.open_orders[c.key].size == _PHIMIA_SIZE          # 21 lots, exactly as production
+    store = thin                                               # ...and NOW the hedge book thins out
     ex.on_kalshi_fill({"order_id": koc.rests[0]["oid"], "count": _PHIMIA_SIZE}, store, _DT, 101.0)
 
     assert hedger.calls == [], "the hedge order must not be sent when the walk cannot cover the fill"

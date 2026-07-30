@@ -61,6 +61,38 @@ class _BaseFeed:
         self.reconnect_attempts = 0
         self.reconnect_success = 0
         self._awaiting_reconnect = False
+        self.callback_errors = 0     # wired-callback raises (application bugs, NOT socket errors)
+        self._cb_error_logged_at = -1e18
+
+    def _dispatch(self, what: str, fn: Callable, *args: Any) -> None:
+        """Run a wired callback so an APPLICATION error can never masquerade as a socket error.
+
+        These callbacks reach deep into the executor — a Kalshi ``fill`` frame runs the entire
+        fill -> hedge -> book chain from inside this coroutine — while ``run()`` treats ANY exception out
+        of ``_session`` as "socket error: reconnect". So a raising hedge chain was reported as a network
+        blip at WARNING, and the connection was torn down as the remedy: the failure that actually
+        mattered was invisible, and the socket paid for it (N10).
+
+        Two decisions here, both deliberate. Log CRITICAL with the traceback, because a callback that
+        raises mid-hedge is the most serious thing this process can do quietly. And KEEP the connection
+        open: REST is the fill authority of record, so a live socket plus a screaming log is strictly
+        better than a reconnect that loses queue position and fixes nothing."""
+        try:
+            fn(*args)
+        except Exception as exc:  # noqa: BLE001 — an application raise must not kill the feed
+            self.callback_errors += 1
+            # THROTTLED, because the Poly market channel delivers thousands of frames a minute and a
+            # persistently-raising callback would otherwise bury the log it is trying to be visible in.
+            # The first one is always logged; after that, once per minute with the running count.
+            now = time.monotonic()
+            if self.log and (self.callback_errors == 1 or now - self._cb_error_logged_at >= 60.0):
+                self._cb_error_logged_at = now
+                import traceback
+                crit = getattr(self.log, "critical", None) or self.log.error
+                crit("[MAKER_RT][CRITICAL] %s callback %r RAISED (%d this run): %s — the socket is kept "
+                     "OPEN (REST is the fill authority); this is an application bug, not a network "
+                     "error.\n%s", self.name, what, self.callback_errors, exc,
+                     traceback.format_exc(limit=8))
 
     @property
     def connected(self) -> bool:
@@ -141,8 +173,8 @@ class PolyMarketFeed(_BaseFeed):
             return
         prints = self.store.apply_poly(parsing.parse_poly_market(data), time.time())
         if prints:
-            self.on_prints(prints)
-        self.on_update()
+            self._dispatch("on_prints", self.on_prints, prints)
+        self._dispatch("on_update", self.on_update)
 
 
 class KalshiFeed(_BaseFeed):
@@ -219,11 +251,11 @@ class KalshiFeed(_BaseFeed):
         events = parsing.parse_kalshi(data)
         for e in events:                                  # OUR fills (private 'fill' channel) -> executor
             if isinstance(e, dict) and e.get("kind") == "kalshi_fill":
-                self.on_fill(e)
+                self._dispatch("on_fill", self.on_fill, e)
         prints = self.store.apply_kalshi(events, time.time())
         if prints:
-            self.on_prints(prints)
-        self.on_update()
+            self._dispatch("on_prints", self.on_prints, prints)
+        self._dispatch("on_update", self.on_update)
 
 
 class PolyUserFeed(_BaseFeed):
@@ -262,9 +294,9 @@ class PolyUserFeed(_BaseFeed):
                     continue
                 for e in parsing.parse_poly_user(data):
                     if e.get("kind") == "poly_user_trade":
-                        self.on_user_trade(e)
+                        self._dispatch("on_user_trade", self.on_user_trade, e)
                     elif e.get("kind") == "poly_user_order":
-                        self.on_user_order(e)
+                        self._dispatch("on_user_order", self.on_user_order, e)
         finally:
             self.connected = False
             await ws.close()

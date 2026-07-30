@@ -168,18 +168,24 @@ class KalshiOrderClient:
                 return o
         return None
 
-    def fills_since(self, min_ts: int) -> list:
+    def fills_since(self, min_ts: int) -> Optional[list]:
         """WS-INDEPENDENT fill authority: every account fill since ``min_ts`` (one call covers all open
-        orders). Empty list when the venue read fails — the caller treats that as 'no news', never as
-        'no fills'."""
+        orders).
+
+        Returns ``None`` when the venue read FAILED, and ``[]`` only when the account genuinely had no
+        fills in the window. Those two are NOT the same answer and the old contract collapsed them:
+        both came back ``[]``, so the caller advanced its low-water mark past a window it had never
+        actually read, and any fill inside it was permanently unseen — precisely the ghost-fill class
+        the sweep exists to catch (N22). The caller must not move the mark on ``None``."""
         if not hasattr(self.ex, "get_fills"):
             return []
         try:
             return list(self.ex.get_fills(min_ts=min_ts) or [])
         except Exception as exc:  # noqa: BLE001
             if self.log:
-                self.log.warning("[MAKER_RT] kalshi fills poll failed: %s", exc)
-            return []
+                self.log.warning("[MAKER_RT] kalshi fills poll failed (%s) — the sweep window is NOT "
+                                 "advanced, so this interval is re-read next pass.", exc)
+            return None
 
     # -- marketable hedge / unwind (both directions) -------------------------
     def marketable_limit(self, best_ask: float) -> float:

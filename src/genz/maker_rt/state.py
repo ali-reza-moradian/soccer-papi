@@ -226,7 +226,7 @@ class MakerState:
     def load_tuning(self) -> None:
         """Restore the cross-restart counters at startup. Without this the 'last 20 fills' windows
         would reset on every deploy (~10x/day) and never accumulate enough fills to judge target_net."""
-        obj = load_tuning()
+        obj = load_tuning(self.log)
         if not obj:
             return
         self.lifetime_quotes = int(obj.get("lifetime_quotes", 0) or 0)
@@ -386,20 +386,40 @@ class MakerState:
             return
         b.add_achievable(float(value), self._rng)
 
-    def _append_csv(self, row: dict, now: datetime) -> None:
+    def _append_csv(self, row: dict, now: datetime, *, retries: int = 4,
+                    backoff_s: float = 0.05) -> bool:
+        """Append one event row to the dated CSV. RETRIES a transient lock and NEVER raises.
+
+        This open used to be unguarded, and it is called from the middle of the fill -> hedge chain
+        (``record`` runs before the hedge is booked). On Windows a reader holding the file — the panel
+        HTTP server, antivirus — makes the open fail with PermissionError, and that exception,
+        propagating out of ``_record_fill``, would abandon the chain between advancing the fill and
+        hedging it (N10). The ledger is important; it is not more important than the hedge. So: retry
+        briefly, then WARN and drop this one row rather than take the trading path down with it."""
         path = mrt_config.events_path_for(now.strftime("%Y%m%d"))   # resolver-guarded
         mrt_config.assert_writable(path)          # guard at the WRITE site too, not just the resolver
-        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-        new = not os.path.exists(path)
         full = {c: "" for c in CSV_COLUMNS}
         full.update({k: v for k, v in row.items() if k in CSV_COLUMNS})
         full["ts"] = now.strftime("%Y-%m-%dT%H:%M:%SZ")
         full["day"] = now.strftime("%Y%m%d")
-        with open(path, "a", encoding="utf-8", newline="") as fh:
-            w = csv.DictWriter(fh, fieldnames=CSV_COLUMNS, extrasaction="ignore")
-            if new:
-                w.writeheader()
-            w.writerow(full)
+        last: Optional[Exception] = None
+        for i in range(max(1, retries)):
+            try:
+                os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+                new = not os.path.exists(path)
+                with open(path, "a", encoding="utf-8", newline="") as fh:
+                    w = csv.DictWriter(fh, fieldnames=CSV_COLUMNS, extrasaction="ignore")
+                    if new:
+                        w.writeheader()
+                    w.writerow(full)
+                return True
+            except OSError as exc:                 # PermissionError is an OSError on Windows
+                last = exc
+                time.sleep(backoff_s * (i + 1))
+        (self.log or logging.getLogger("maker_rt")).warning(
+            "[MAKER_RT] events CSV append blocked after %d retries (%s) — DROPPED one %r row rather "
+            "than raising into the trading path.", retries, last, row.get("event"))
+        return False
 
     # -- summary + heartbeat -------------------------------------------------
     def _by_sport(self) -> dict:
@@ -493,22 +513,28 @@ class MakerState:
                      self.heartbeat(mode, sockets, open_quotes, now))
 
 
-def _atomic_json(path: str, obj: dict, *, retries: int = 5, backoff_s: float = 0.04) -> None:
-    """Atomically write ``obj`` as JSON. ROBUST on Windows: ``os.replace`` raises PermissionError when a
-    reader (the panel HTTP server / antivirus) momentarily holds the target open — the #1 crash of the
-    weekend (50/51 tracebacks) took the whole maker process down here. Retry with a short backoff, and
-    if still blocked, WARN and skip this write rather than crash. A per-pid tmp avoids old/new-process
-    collisions during a restart."""
+def _atomic_json(path: str, obj: Any, *, retries: int = 5, backoff_s: float = 0.04,
+                 default: Any = None) -> bool:
+    """Atomically write ``obj`` as JSON; returns True iff the bytes actually landed.
+
+    ROBUST on Windows: ``os.replace`` raises PermissionError when a reader (the panel HTTP server /
+    antivirus) momentarily holds the target open — the #1 crash of the weekend (50/51 tracebacks) took
+    the whole maker process down here. Retry with a short backoff, and if still blocked, WARN and skip
+    this write rather than crash. A per-pid tmp avoids old/new-process collisions during a restart.
+
+    The RETURN VALUE is the point of the bool: a persister that cannot tell whether it wrote is how a
+    spent daily budget silently reopens. Callers holding money state (see ``_persist_json``) escalate a
+    False to an ERROR + Telegram instead of shrugging."""
     mrt_config.assert_writable(path)     # GUARD at the write site: also covers explicit-path callers
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     tmp = f"{path}.{os.getpid()}.tmp"
     with open(tmp, "w", encoding="utf-8") as fh:
-        json.dump(obj, fh, ensure_ascii=False, indent=2)
+        json.dump(obj, fh, ensure_ascii=False, indent=2, default=default)
     last: Optional[Exception] = None
     for i in range(max(1, retries)):
         try:
             os.replace(tmp, path)
-            return
+            return True
         except (PermissionError, OSError) as exc:      # a reader holds the target -> transient on Windows
             last = exc
             time.sleep(backoff_s * (i + 1))
@@ -519,6 +545,39 @@ def _atomic_json(path: str, obj: dict, *, retries: int = 5, backoff_s: float = 0
         os.remove(tmp)
     except OSError:
         pass
+    return False
+
+
+#: Public name for the atomic writer. EVERY runtime persister in the package goes through this one
+#: function: per-pid tmp, retry, ``assert_writable``, and a truthful return value. Seven persisters in
+#: pregame_exec used to hand-roll ``path + ".tmp"`` instead, which collides between an old and a new
+#: process during the ~11-21 restarts a working day sees.
+atomic_json = _atomic_json
+
+
+def preserve_unreadable(path: str, log: Any = None, *, what: str = "state") -> Optional[str]:
+    """Rename a file we could not parse to ``<path>.unreadable.bak`` and return the new name.
+
+    An unreadable file is NOT an absent one, and the difference is money. Every loader here answers a
+    parse failure with a default — ``{}``, an empty set — and the next persist then writes that default
+    back over the only copy. That is exactly how one BOM wiped $329.96 of committed stake on
+    2026-07-28: the read failed silently, the day started at zero, and the zeros were persisted. Moving
+    the bytes aside keeps them recoverable by hand instead of letting the next write destroy them."""
+    try:
+        if not os.path.exists(path):
+            return None
+        bak = f"{path}.unreadable.bak"
+        os.replace(path, bak)
+        if log:
+            log.error("[MAKER_RT] could not parse %s at %s — moved it to %s so its contents survive; "
+                      "starting from defaults. RECOVER BY HAND if those numbers mattered.",
+                      what, path, bak)
+        return bak
+    except OSError as exc:
+        if log:
+            log.error("[MAKER_RT] could not parse %s at %s AND could not move it aside (%s) — the next "
+                      "write will overwrite it.", what, path, exc)
+        return None
 
 
 def _runstate_path() -> str:
@@ -532,7 +591,7 @@ def bump_restart(now: datetime) -> int:
     day = now.strftime("%Y%m%d")
     obj: Any = {}
     try:
-        with open(_runstate_path(), "r", encoding="utf-8") as fh:
+        with open(_runstate_path(), "r", encoding="utf-8-sig") as fh:
             obj = json.load(fh)
     except (FileNotFoundError, ValueError, OSError):
         obj = {}
@@ -547,21 +606,34 @@ def _tuning_path() -> str:
     return mrt_config.runtime_path("tuning")
 
 
-def load_tuning() -> dict:
-    """Read the persisted cross-restart tuning counters. Never raises; missing/corrupt -> empty."""
-    try:
-        with open(_tuning_path(), "r", encoding="utf-8") as fh:
-            obj = json.load(fh)
-        return obj if isinstance(obj, dict) else {}
-    except (FileNotFoundError, ValueError, OSError, TypeError):
+def load_tuning(log: Any = None) -> dict:
+    """Read the persisted cross-restart tuning counters. Never raises; missing -> empty.
+
+    UNREADABLE is handled differently from MISSING, because this file carries lifetime settled pnl and
+    the realized-locked-net windows. Returning ``{}`` for a parse error zeroes those in memory, and the
+    very next ``persist_tuning`` writes the zeros back over the only copy — a silent lifetime-pnl reset
+    with no event anywhere. So read ``utf-8-sig`` (a hand-edit on Windows very likely carries a BOM, and
+    a BOM has already cost this system a day's committed stake), and if it still will not parse, move
+    the bytes aside via ``preserve_unreadable`` and scream."""
+    path = _tuning_path()
+    if not os.path.exists(path):
         return {}
+    try:
+        with open(path, "r", encoding="utf-8-sig") as fh:
+            obj = json.load(fh)
+        if isinstance(obj, dict):
+            return obj
+    except (ValueError, OSError, TypeError):
+        pass
+    preserve_unreadable(path, log, what="the tuning counters (lifetime settled pnl)")
+    return {}
 
 
 def read_restarts(now: datetime) -> int:
     """Today's persisted restart count (0 when absent / a prior day). Never raises."""
     day = now.strftime("%Y%m%d")
     try:
-        with open(_runstate_path(), "r", encoding="utf-8") as fh:
+        with open(_runstate_path(), "r", encoding="utf-8-sig") as fh:
             obj = json.load(fh)
         return int(obj.get("restarts", 0)) if isinstance(obj, dict) and obj.get("day") == day else 0
     except (FileNotFoundError, ValueError, OSError, TypeError):

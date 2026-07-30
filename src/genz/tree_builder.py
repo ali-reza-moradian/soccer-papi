@@ -1375,25 +1375,43 @@ def build_meta(tree: dict[str, Any], *, now: datetime, sport: str = "?") -> dict
     return meta
 
 
+def _atomic_write_json(path: str, obj: Any) -> None:
+    """Write ``obj`` to ``path`` via a per-pid tmp + ``os.replace``, so a READER never sees a partial file.
+
+    A plain truncate-write leaves the tree empty and then half-parsed for as long as ``json.dump`` takes
+    on a ~1MB document, and maker_rt reloads on mtime change — a poll that lands inside that window gets
+    a JSONDecodeError. That raced three times on 2026-07-29 (07:36, 12:07, 12:37), and because the
+    exception surfaced inside the maker's event loop it killed the LIVE process each time, cancelling
+    every resting order on the way out (nine of them at 12:06:58) and losing all their queue position.
+    ``os.replace`` is atomic on both POSIX and Windows, so the reader sees either the old tree or the new
+    one and never the seam. (``save_series_map`` a few hundred lines up already did exactly this.)"""
+    tmp = f"{path}.{os.getpid()}.tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(obj, fh, ensure_ascii=False, indent=2)
+    os.replace(tmp, path)
+
+
 def write_tree(tree: dict[str, Any], *, now: Optional[datetime] = None,
                tree_path: Optional[str] = None, meta_path: Optional[str] = None,
                sport: str = "?") -> tuple[str, str]:
-    """Persist match_tree.json + tree_meta.json under data/genz/. Returns the two paths written."""
+    """Persist match_tree.json + tree_meta.json under data/genz/ ATOMICALLY. Returns the paths written."""
     now = now or datetime.now(timezone.utc)
     gz_config.ensure_dirs()
     tp = tree_path or gz_config.MATCH_TREE_PATH
     mp = meta_path or gz_config.TREE_META_PATH
-    with open(tp, "w", encoding="utf-8") as fh:
-        json.dump(tree, fh, ensure_ascii=False, indent=2)
-    with open(mp, "w", encoding="utf-8") as fh:
-        json.dump(build_meta(tree, now=now, sport=sport), fh, ensure_ascii=False, indent=2)
+    _atomic_write_json(tp, tree)
+    _atomic_write_json(mp, build_meta(tree, now=now, sport=sport))
     return tp, mp
 
 
 def load_tree(tree_path: Optional[str] = None) -> dict[str, Any]:
-    """Load match_tree.json (the engine reads this every cycle). {} if absent."""
+    """Load match_tree.json (the engine reads this every cycle). {} if absent.
+
+    Reads ``utf-8-sig`` so a hand-edited tree carrying a Windows BOM still parses. A file that is
+    present but UNPARSEABLE still raises — that is information, and the maker's own reader
+    (``universe.load_trees``) is where it is turned into "keep the previous tree for this sport"."""
     tp = tree_path or gz_config.MATCH_TREE_PATH
     if not os.path.exists(tp):
         return {"games": {}}
-    with open(tp, "r", encoding="utf-8") as fh:
+    with open(tp, "r", encoding="utf-8-sig") as fh:
         return json.load(fh)

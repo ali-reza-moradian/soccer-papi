@@ -120,7 +120,9 @@ class LiveCaps:
     #: things do not become resolved because the clock rolled over. This happened twice in production
     #: (TBTOR 2026-07-23, ZAYRZE 2026-07-25): a "MANUAL CHECK REQUIRED" freeze silently expired at
     #: 00:00Z and the bot resumed quoting over a naked, unverified position.
-    STICKY_HALTS = ("orphan_position", "booking_quarantine")
+    #: ``unreadable_state`` joins them for the same reason: a state file we cannot parse is still
+    #: unparseable tomorrow, and it is the file that tells us which positions to watch.
+    STICKY_HALTS = ("orphan_position", "booking_quarantine", "unreadable_state")
 
     def roll(self, day: str) -> None:
         """Reset the per-DAY counters (stake/fills/pnl + daily-cap halt) at a new UTC day.

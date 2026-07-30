@@ -50,6 +50,9 @@ RUNTIME_FILES: dict[str, tuple[str, str]] = {
     # Settlements REFUSED by the sanity rails — real money whose numbers we don't trust. Queued for
     # manual reconciliation instead of being dropped (they used to just vanish).
     "refused_settlements": ("ops", "maker_rt_REFUSED_SETTLEMENTS.json"),
+    # SINGLETON LOCK: an OS-held exclusive lock proving this is the only maker on the host. See
+    # singleton.py — the kernel releases it on process death, so there is no stale-lock failure mode.
+    "lock":          ("ops",  "maker_rt.lock"),
     "stop_all":      ("ops",  "STOP_ALL"),
 }
 
@@ -185,17 +188,48 @@ class LiveConfig:
     kalshi_feed_grace_s: float = 20.0
 
 
+#: PER-PHASE CAP KEYS THAT ARE NOT ENFORCED, mapped to the shared ``live`` cap that actually governs.
+#:
+#: SHARED-CAPS GOVERNANCE, stated once: there is exactly ONE :class:`~.caps.LiveCaps`, ONE in-flight
+#: hedge guard and ONE daily budget, and they span PRE-GAME **and** IN-PLAY by design — pre+inplay
+#: exposure is a single pool (see :class:`~.pregame_exec.PregameLiveExecutor`). These four keys were
+#: therefore declared and never read: ``live_inplay.quote_usd_max: 5`` sat in config while in-play
+#: quotes sized against ``live.quote_usd_max``, so raising that 5 -> 70 silently raised in-play sizing
+#: 14x (observed: in-play fills at $19.74 rest / $17.65 hedge) while the config claimed a $5 cap.
+#:
+#: A risk limit that is DECLARED and NOT ENFORCED is worse than no limit — it is a limit an operator
+#: will reason with. So they are no longer read at all, and re-adding one says so out loud rather than
+#: quietly doing nothing. (Enforcing them per-phase instead was the other option and was rejected: it
+#: would impose a materially tighter policy — 1 open quote, 4 in-play fills, a $20 in-play loss budget —
+#: that nobody chose, on a live armed bot, inside an audit-closeout commit. Changing the numbers is a
+#: decision for whoever owns the risk; making the config honest is not.)
+DEAD_INPLAY_CAP_KEYS: dict[str, str] = {
+    "quote_usd_max": "quote_usd_max",
+    "max_open_quotes": "max_open_quotes",
+    "max_fills_per_day": "max_fills_per_day",
+    "max_daily_loss_usd": "max_daily_loss_usd",
+}
+
+
 @dataclass
 class InplayLiveConfig:
     """The ``maker_rt.live_inplay:`` sub-block — the SECOND, INDEPENDENT live gate for IN-PLAY markets
     (the pre-game ``live`` gate is separate and unchanged). Defaults are the locked posture: enabled
-    False, so the in-play live path never arms in this build. Rails here are STRICTER than pre-game."""
+    False, so the in-play live path never arms in this build.
+
+    This block carries the in-play GATE (enabled + arm file) and the in-play CIRCUIT
+    (``first_fill_pause_s``, ``halt_locked_net``, ``freeze_cooloff_s``) — the things that are actually
+    enforced. It does NOT carry exposure caps: those are shared with pre-game, one budget across both
+    phases. See :data:`DEAD_INPLAY_CAP_KEYS` for why the four that used to sit here are gone.
+
+    The cap fields below survive only as the (dead, test-only) ``InplayLiveExecutor``'s own surface and
+    are NEVER populated from YAML, so nothing an operator edits can be mistaken for a live rail."""
     enabled: bool = False
     arm_file: str = os.path.join(OPS_DIR, "ARM_MAKER_INPLAY")
-    quote_usd_max: float = 25.0
-    max_open_quotes: int = 1
-    max_fills_per_day: int = 4
-    max_daily_loss_usd: float = 20.0
+    quote_usd_max: float = 25.0          # NOT a live rail — see DEAD_INPLAY_CAP_KEYS
+    max_open_quotes: int = 1             # NOT a live rail
+    max_fills_per_day: int = 4           # NOT a live rail
+    max_daily_loss_usd: float = 20.0     # NOT a live rail
     hedge_timeout_ms: int = 1500
     freeze_cooloff_s: float = 10.0   # place only after the node has been unfrozen AND both-books-fresh this long
     hedge_decline_floor: float = -0.010   # re-verify at fill: if walked hedge nets below this, decline+unwind
@@ -386,17 +420,25 @@ def load_maker_rt_config(config_path: Optional[str] = None,
     li_blk = blk.get("live_inplay")
     li_blk = dict(li_blk) if isinstance(li_blk, dict) else {}
     li = InplayLiveConfig()
-    for name in ("enabled", "arm_file", "quote_usd_max", "max_open_quotes", "max_fills_per_day",
-                 "max_daily_loss_usd", "hedge_timeout_ms", "freeze_cooloff_s", "hedge_decline_floor",
+    # The four EXPOSURE caps are deliberately NOT in this list — pre-game and in-play share one budget
+    # (see DEAD_INPLAY_CAP_KEYS). Only the gate + the in-play circuit are read from YAML.
+    for name in ("enabled", "arm_file", "hedge_timeout_ms", "freeze_cooloff_s", "hedge_decline_floor",
                  "first_fill_pause_s", "halt_locked_net"):
         if li_blk.get(name) is not None:
             setattr(li, name, li_blk[name])
     li.enabled = bool(li.enabled)
-    li.quote_usd_max = float(li.quote_usd_max)
-    li.max_open_quotes = int(li.max_open_quotes)
-    li.max_fills_per_day = int(li.max_fills_per_day)
-    li.max_daily_loss_usd = float(li.max_daily_loss_usd)
     li.hedge_timeout_ms = int(li.hedge_timeout_ms)
+    # A key that is silently ignored is indistinguishable from a key that works. Anyone re-adding one of
+    # these expects a per-phase rail, so name the shared cap that actually applies instead of shrugging.
+    for dead, shared in DEAD_INPLAY_CAP_KEYS.items():
+        if li_blk.get(dead) is None:
+            continue
+        import logging
+        logging.getLogger("maker_rt").warning(
+            "[MAKER_RT] config maker_rt.live_inplay.%s = %r is NOT ENFORCED and is IGNORED. Pre-game "
+            "and in-play share ONE budget, so maker_rt.live.%s (%s) governs BOTH phases. Remove the key, "
+            "or change the shared cap if you meant to change the limit.",
+            dead, li_blk[dead], shared, getattr(lc, shared, "?"))
     li.freeze_cooloff_s = float(li.freeze_cooloff_s)
     li.hedge_decline_floor = float(li.hedge_decline_floor)
     li.first_fill_pause_s = float(li.first_fill_pause_s)

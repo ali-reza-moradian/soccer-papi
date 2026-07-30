@@ -118,13 +118,34 @@ def kalshi_tickers(universe: list) -> list:
 _SPORTS = ("soccer", "mlb", "tennis", "ufc")
 
 
-def load_trees(paths_by_sport: Optional[dict] = None) -> dict:
-    """Load the soccer + MLB + tennis match trees from disk (missing -> None). Returns {sport: tree|None}."""
+def load_trees(paths_by_sport: Optional[dict] = None, *, previous: Optional[dict] = None,
+               log: Any = None) -> dict:
+    """Load every sport's match tree from disk (missing -> None). Returns {sport: tree|None}.
+
+    A tree that will not PARSE right now does NOT empty that sport's universe: we keep the tree we
+    already had for it (``previous``) and say so loudly. Before this, a JSONDecodeError from a torn read
+    propagated out of here, through ``build_universe``, into maker_rt's event loop and killed the LIVE
+    process — three times on 2026-07-29, cancelling every resting order each time. The writer is atomic
+    now (``tree_builder._atomic_write_json``), so a torn read should be impossible; this is the belt to
+    that braces, and it also covers a genuinely corrupt file on disk, which atomicity cannot."""
     from .. import tree_builder
+    prev = previous or {}
     out: dict = {}
+    failed: list = []
     for sport in _SPORTS:
         p = gz_config.paths_for_sport(sport).tree_path
-        out[sport] = tree_builder.load_tree(p) if os.path.exists(p) else None
+        if not os.path.exists(p):
+            out[sport] = None
+            continue
+        try:
+            out[sport] = tree_builder.load_tree(p)
+        except (ValueError, OSError) as exc:        # unparseable / unreadable -> keep what we had
+            out[sport] = prev.get(sport)
+            failed.append((sport, exc))
+    if failed and log:
+        log.error("[MAKER_RT] %d tree(s) unreadable this pass — kept the PREVIOUS tree for each rather "
+                  "than dropping its markets: %s",
+                  len(failed), "; ".join(f"{s}: {e}" for s, e in failed))
     return out
 
 

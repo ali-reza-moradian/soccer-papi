@@ -119,7 +119,9 @@ def test_the_day_roll_still_clears_a_daily_budget_halt(reason):
 
 
 def test_sticky_halts_are_exactly_the_manual_ones():
-    assert set(LiveCaps.STICKY_HALTS) == {"orphan_position", "booking_quarantine"}
+    # 'unreadable_state' joins the two latches for the same reason they are latched: a state file we
+    # cannot parse is still unparseable tomorrow, and it is the file that names the positions to watch.
+    assert set(LiveCaps.STICKY_HALTS) == {"orphan_position", "booking_quarantine", "unreadable_state"}
 
 
 # --------------------------------------------------------------------------- #
