@@ -310,6 +310,7 @@ class PregameLiveExecutor:
         self._fill_poll_applied_ts = 0.0
         self._reconcile_applied_ts = 0.0
         self._offloop_stall_alerted_ts = 0.0
+        self._offloop_ok_logged_ts: dict = {}   # throttles the "pass OK" heartbeat per pass name
         self._last_fills_sweep_ts = 0.0      # unix-seconds low-water mark for the /portfolio/fills sweep
         self._seen_fill_ids: set = set()     # fill_id dedupe across sweeps + the socket
         # PLACE-FAILURE BACKOFF: a venue refusal (esp. "market closed") must not retry ~1x/s forever.
@@ -1827,6 +1828,14 @@ class PregameLiveExecutor:
         self.poll_open_orders(store, now, now_ts, snapshot=res)
         if res.get("fills_read"):
             self.poll_kalshi_fills(store, now, now_ts, batch=res)
+        # SAY SO WHEN IT WORKS. These passes logged only on FAILURE, so a backstop that had gone quiet
+        # was indistinguishable from one with nothing to report — which is why a 17-hour degradation
+        # needed a forensic reconstruction from watchdog timestamps instead of being read off a line.
+        # Throttled to once a minute: the point is a heartbeat, not a per-cadence transcript.
+        self._note_offloop_pass("fill-poll", now_ts,
+                                f"{len(res.get('index') or {})} listed, "
+                                f"{len(res.get('per_order') or {})} read individually, "
+                                f"{len(self.open_orders)} open")
 
     def drain_offloop(self, store: Any, now: Any, now_ts: float) -> int:
         """Apply every finished off-loop job (cancel retries + the batched fill poll). Loop-thread only."""
@@ -1844,6 +1853,17 @@ class PregameLiveExecutor:
     OFFLOOP_HALT_AFTER_S = 1800.0
     #: Drains a held-for-book result may survive before it is dropped as stale (see _drain_cancel_results).
     EXPIRE_HELD_DRAINS = 240
+
+    def _note_offloop_pass(self, name: str, now_ts: float, detail: str, *,
+                           always: bool = False) -> None:
+        """Log that an off-loop safety pass COMPLETED. Throttled to 1/min unless ``always`` (the
+        reconcile cadence is 5 minutes, so every one of those is worth a line)."""
+        if not self.log:
+            return
+        if not always and now_ts - self._offloop_ok_logged_ts.get(name, -1e18) < 60.0:
+            return
+        self._offloop_ok_logged_ts[name] = now_ts
+        self.log.info("[MAKER_RT][LIVE] off-loop %s pass OK — %s.", name, detail)
 
     def _clear_offloop_halt(self, why: str) -> None:
         """An off-loop pass answered again -> retire the stall halt. Only ever clears THIS reason, so a
@@ -3939,6 +3959,10 @@ class PregameLiveExecutor:
             return
         try:
             self.reconcile_positions(now, balances=res)
+            self._note_offloop_pass(
+                "reconcile", now_ts,
+                f"{len(res.get('polymarket') or {})} poly + {len(res.get('kalshi') or {})} kalshi "
+                f"instrument(s) checked", always=True)
         except Exception as exc2:  # noqa: BLE001 — a reconcile failure must not kill the loop
             if self.log:
                 self.log.warning("[MAKER_RT][LIVE] reconciliation failed: %s", exc2)
