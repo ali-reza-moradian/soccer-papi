@@ -429,8 +429,11 @@ class KalshiExec:
     def get_balance(self) -> Any:
         return self._request("GET", "/portfolio/balance")
 
-    def get_positions(self) -> Any:
-        return self._request("GET", "/portfolio/positions")
+    def get_positions(self, *, limit: Optional[int] = None, cursor: Optional[str] = None) -> Any:
+        """Portfolio positions. ``limit``/``cursor`` are optional so a caller that needs EVERY position
+        (the balance audit) can page; omitting them is the previous behaviour byte for byte."""
+        params = {k: v for k, v in (("limit", limit), ("cursor", cursor)) if v}
+        return self._request("GET", "/portfolio/positions", params=params or None)
 
     def get_settlements(self, *, limit: Optional[int] = None) -> Any:
         """Settled markets for this account (GET /portfolio/settlements) — per-ticker market_result +

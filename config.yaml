@@ -606,6 +606,20 @@ maker_rt:
     conn_fresh_s: 30                # a venue connection is fresh if it had ANY protocol activity within this
     node_quiet_max_s: 180           # a node goes suspect only if its book hasn't ticked this long (live game)
     stale_grace_s: 5                # cancel a live order for staleness only after it holds continuously this long
+  # BALANCE — the 8-HOURLY VENUE-TRUTH AUDIT (src/genz/maker_rt/balance.py). Three times a day it reads
+  # both venues' cash + positions and compares the MOVEMENT against what the bot's own books claim
+  # happened (settled_pnl_lifetime). The ledger is a claim; the exchanges' cash is the truth.
+  # It has NO authority over trading: its own thread, its own venue clients, a hard timeout, and no
+  # ability to halt, pause or slow anything. A failed check reports itself and nothing else.
+  # Manual deposits/withdrawals/hand-placed trades go in data/ops/balance_adjustments.json as
+  #   [{"ts": "2026-08-01T09:00:00Z", "venue": "kalshi", "usd": 1000, "note": "deposit"}]
+  # (usd SIGNED the way the cash moved) — each is subtracted before the discrepancy and NAMED in the
+  # report, so nothing is ever silently absorbed.
+  balance:
+    enabled: true
+    slots_utc: [0, 8, 16]           # FIXED UTC hours (a drifting schedule can't produce comparable windows)
+    alert_usd: 5.00                 # |venue movement - book movement| above this = 🔴 BOOKS DISAGREE
+    timeout_s: 30                   # hard per-run deadline; past it the run is abandoned and reported failed
   # LIVE — BUILT, LOCKED. Refuses unless enabled AND the arm file exists AND the startup self-check
   # (balances on both venues, poly allowance/approvals, tick sizes) passes. DO NOT flip enabled here.
   live:

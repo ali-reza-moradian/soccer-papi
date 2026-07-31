@@ -143,6 +143,8 @@ def test_every_runtime_file_is_registered():
         "traded_tokens", "orphan", "settled_ledger", "expected_positions", "daily_caps", "stop_all",
         "provisional_marks", "quarantine", "refused_settlements", "closed_markets",
         "lock",            # the singleton lock (one maker per host) — see maker_rt/singleton.py
+        # the 8-hourly venue-truth audit: its append-only snapshot log + the human's adjustments file
+        "balance_snapshots", "balance_adjustments",
     }
 
 

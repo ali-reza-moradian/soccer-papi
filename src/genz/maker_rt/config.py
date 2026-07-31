@@ -58,6 +58,11 @@ RUNTIME_FILES: dict[str, tuple[str, str]] = {
     # singleton.py — the kernel releases it on process death, so there is no stale-lock failure mode.
     "lock":          ("ops",  "maker_rt.lock"),
     "stop_all":      ("ops",  "STOP_ALL"),
+    # THE 8-HOURLY VENUE-TRUTH AUDIT (balance.py). The snapshot log is append-only — it is the evidence
+    # trail the discrepancy numbers are computed from — and the adjustments file is the human's side of
+    # it: deposits, withdrawals and hand-placed trades the bot's books never saw.
+    "balance_snapshots": ("ops", "balance_snapshots.json"),
+    "balance_adjustments": ("ops", "balance_adjustments.json"),
 }
 
 
@@ -256,6 +261,23 @@ class InplayLiveConfig:
 
 
 @dataclass
+class BalanceConfig:
+    """The ``maker_rt.balance:`` sub-block — the 8-hourly venue-truth audit (see balance.py).
+
+    It reads balances and positions and writes a report. It has NO authority over trading: nothing in
+    this block can halt, pause, resize or block anything, and that is deliberate — an audit that can
+    stop the thing it audits is a second way to lose money, not a safety feature."""
+    enabled: bool = True
+    #: |venue movement - book movement| above this ($) on either window is a REAL disagreement.
+    alert_usd: float = 5.00
+    #: FIXED UTC hours. Fixed rather than "every 8h from start" because the maker restarts 10-21x a day
+    #: and a drifting schedule produces windows that cannot be compared.
+    slots_utc: tuple = (0, 8, 16)
+    #: Hard per-run deadline; past it the worker abandons the thread and the run is reported failed.
+    timeout_s: float = 30.0
+
+
+@dataclass
 class InplayConfig:
     """The ``maker_rt.inplay:`` sub-block — admission horizon + the anti-phantom rails for in-play
     shadow quoting. Live is HARD-refused in-play regardless (see LiveGate)."""
@@ -345,6 +367,7 @@ class MakerRtConfig:
     inplay: InplayConfig = field(default_factory=InplayConfig)
     live: LiveConfig = field(default_factory=LiveConfig)
     live_inplay: InplayLiveConfig = field(default_factory=InplayLiveConfig)
+    balance: BalanceConfig = field(default_factory=BalanceConfig)
 
     def sport_live(self, sport: Any, phase: str = "pre") -> bool:
         """May ``sport`` place REAL orders in ``phase``? (F13.)
@@ -500,6 +523,23 @@ def load_maker_rt_config(config_path: Optional[str] = None,
     li.first_fill_pause_s = float(li.first_fill_pause_s)
     li.halt_locked_net = float(li.halt_locked_net)
     cfg.live_inplay = li
+    # BALANCE — the 8-hourly venue-truth audit. ``balance_alert_usd`` is accepted as an alias for
+    # ``alert_usd`` because that is the name the requirement used, and a key that silently does nothing
+    # is the worst possible outcome for a threshold an operator is trying to set.
+    bal_blk = blk.get("balance")
+    bal_blk = dict(bal_blk) if isinstance(bal_blk, dict) else {}
+    bc = BalanceConfig()
+    bc.enabled = bool(bal_blk.get("enabled", bc.enabled))
+    for name in ("alert_usd", "balance_alert_usd"):
+        if bal_blk.get(name) is not None:
+            bc.alert_usd = float(bal_blk[name])
+    if bal_blk.get("timeout_s") is not None:
+        bc.timeout_s = float(bal_blk["timeout_s"])
+    if bal_blk.get("slots_utc"):
+        s = bal_blk["slots_utc"]
+        hours = s if isinstance(s, (list, tuple)) else [s]
+        bc.slots_utc = tuple(sorted({int(h) % 24 for h in hours})) or bc.slots_utc
+    cfg.balance = bc
     return cfg
 
 

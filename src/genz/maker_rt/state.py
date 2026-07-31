@@ -237,6 +237,12 @@ class MakerState:
     settled_max_net_usd: float = 100.0
     _tuning_saved_ts: float = 0.0                      # last persist (see maybe_persist_tuning)
     measurement_gates: dict = field(default_factory=dict)   # gates.report(), refreshed off the hot path
+    # SAFETY SYSTEMS: last-landed age per background pass (fill-poll / reconcile / settle / gates /
+    # balance), with the cadence each is supposed to keep. Set by the loop from the executor's
+    # ``safety_snapshot`` + the balance reconciler. It is on the HEARTBEAT as well as the summary
+    # because the heartbeat is the surface that survives when everything else is unavailable — and the
+    # whole point is that a quiet safety net must be visibly quiet, not invisibly absent.
+    safety: dict = field(default_factory=dict)
     gates: dict = field(default_factory=dict)          # {"pre": bool, "inplay": bool} — armed states, set at startup
     live: dict = field(default_factory=dict)           # PRE-GAME live snapshot (open_quotes/stake/fills/pnl/halt/feed_ok)
     buckets: dict = field(default_factory=dict)        # (sport, phase) -> _Bucket
@@ -249,13 +255,13 @@ class MakerState:
                     self.lifetime_fills, self.lifetime_unwinds, self.recent_outcomes,
                     self.lifetime_quotes, self.recent_locked_nets,
                     self.settled_pnl_lifetime, self.settled_cost_lifetime, self.settled_trades,
-                    self.settled_max_net_usd, self.settled_pnl_untracked_lifetime)
+                    self.settled_max_net_usd, self.settled_pnl_untracked_lifetime, self.safety)
             self.__init__(day=day)  # type: ignore[misc]
             (self.log, self.restarts_today, self.gates, self.live,
              self.lifetime_fills, self.lifetime_unwinds, self.recent_outcomes,
              self.lifetime_quotes, self.recent_locked_nets,
              self.settled_pnl_lifetime, self.settled_cost_lifetime, self.settled_trades,
-             self.settled_max_net_usd, self.settled_pnl_untracked_lifetime) = keep
+             self.settled_max_net_usd, self.settled_pnl_untracked_lifetime, self.safety) = keep
 
     def _bucket(self, sport: str, phase: str) -> _Bucket:
         return self.buckets.setdefault((str(sport or "?"), str(phase or "pre")), _Bucket())
@@ -548,6 +554,8 @@ class MakerState:
             "locked_net_p10": _pctl(list(self.recent_locked_nets), 0.1),   # the thin tail that kills us
             "locked_net_window": len(self.recent_locked_nets),
             "gates": dict(self.gates), "live": dict(self.live),
+            # SAFETY SYSTEMS — the last time each background safety pass actually LANDED. See the field.
+            "safety": dict(self.safety),
             "by_sport": self._by_sport(), "by_phase": self._by_phase(),
             # THE MEASUREMENT GATE for the panel — served from a CACHE that a SLOW cadence refreshes.
             #
@@ -579,7 +587,7 @@ class MakerState:
               "settled_pnl_untracked_lifetime": round(self.settled_pnl_untracked_lifetime, 4),
               "settled_trades": self.settled_trades,
               "restarts_today": self.restarts_today, "gates": dict(self.gates),
-              "live": dict(self.live)}
+              "safety": dict(self.safety), "live": dict(self.live)}
         # TOP-LEVEL ORPHAN + FLAP banner: a naked position must be visible in the heartbeat itself, not
         # buried under live{}. This is the surface that does NOT depend on Telegram being reachable.
         orph = (self.live or {}).get("orphan")

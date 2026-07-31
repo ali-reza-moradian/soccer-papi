@@ -19,6 +19,7 @@ from ...logsetup import get_logger, setup_logging
 from . import alerts
 from . import config as mrt_config
 from . import singleton
+from .balance import BalanceReconciler, books_from
 from .clients import build_pregame_order_clients
 from .driver import QuoteDriver
 from .feeds import KalshiFeed, PolyMarketFeed, PolyUserFeed
@@ -307,6 +308,12 @@ async def _run(cfg: Any, log: Any) -> int:
                 log.error("[MAKER_RT][LIVE] STARTUP reconciliation found an ORPHAN: %s — live halted.", orph)
         except Exception as exc:  # noqa: BLE001
             log.warning("[MAKER_RT][LIVE] startup reconciliation failed: %s", exc)
+    # THE 8-HOURLY VENUE-TRUTH AUDIT. Constructed independently of the executor and driven from the loop
+    # by nothing more than a clock comparison: it owns its own thread AND its own venue clients, so it
+    # cannot queue behind the fill poll, cannot slow a tick, and cannot halt anything. It runs whenever
+    # live is ENABLED — including a disarmed-but-enabled process, where "what is actually in the
+    # accounts" is if anything more worth knowing.
+    balance = BalanceReconciler(cfg, telegram=telegram, log=log)
     driver = QuoteDriver(cfg, state, log=log, inplay_exec=None, pregame_exec=pregame_exec)
     horizon = cfg.inplay.horizon_hours
     # The trees are kept in a variable, not re-read from scratch each time: ``load_trees`` falls back to
@@ -356,6 +363,7 @@ async def _run(cfg: Any, log: Any) -> int:
     last_fill_poll = 0.0
     last_reconcile = 0.0
     last_settle = 0.0
+    last_balance_err = 0.0                        # throttles the balance/safety block's failure log
     feed_up = {"kalshi": False, "poly_user": False}   # DOWN->UP edge detector for the reconnect poll
     # EVENT-LOOP LAG. Every pass is supposed to take debounce_ms; anything beyond that is time the loop
     # spent NOT repricing, which at the current market count is the difference between quoting the book
@@ -442,6 +450,30 @@ async def _run(cfg: Any, log: Any) -> int:
             poly_user_up = bool(pm_user is not None and pm_user.connected)
             sockets = {"poly_market": pm.connected, "poly_user": poly_user_up, "kalshi": ks.connected}
             if now_ts - last_hb >= HEARTBEAT_EVERY_S:
+                # THE 8-HOURLY BALANCE AUDIT, driven from here and NOWHERE else on the hot path. Both
+                # calls are deliberately trivial: ``drain`` takes finished results off a mailbox, and
+                # ``maybe_run`` compares the clock to the last completed slot and (three times a day)
+                # puts one job on its own thread. No venue read, no file write, no decision.
+                with STATS.timer("balance"):
+                    # WRAPPED, on purpose. Everything in this block is reporting: an audit of the books
+                    # and a freshness row for the panel. None of it is worth one tick of quoting, so a
+                    # bug in it must degrade to a log line rather than propagate into the loop that
+                    # holds live orders. (Throttled — this runs every 2.5s.)
+                    try:
+                        balance.drain(now_ts)
+                        balance.maybe_run(now, books_from(
+                            state, getattr(pregame_exec, "caps", None),
+                            int((state.live or {}).get("expected_positions") or 0)))
+                        # SAFETY SYSTEMS row: when each background safety pass last LANDED. A silent
+                        # safety net has to be visibly silent — see PregameLiveExecutor.safety_snapshot.
+                        safety = pregame_exec.safety_snapshot(now_ts) if pregame_exec is not None else {}
+                        safety["balance"] = balance.safety(now_ts)
+                        state.safety = safety
+                    except Exception as exc:  # noqa: BLE001
+                        if now_ts - last_balance_err >= 300.0:
+                            last_balance_err = now_ts
+                            log.error("[MAKER_RT][BALANCE] the balance/safety reporting block raised "
+                                      "(%s) — IGNORED; quoting and hedging are untouched.", exc)
                 # HEARTBEAT/SUMMARY WRITE — several synchronous JSON builds plus file writes, every 2.5s.
                 # Previously unattributed, so whatever it cost was reported as bare, unexplained loop lag.
                 with STATS.timer("heartbeat"):
@@ -545,6 +577,10 @@ async def _run(cfg: Any, log: Any) -> int:
                 pregame_exec.close()
             except Exception as exc:  # noqa: BLE001
                 log.warning("[MAKER_RT][LIVE] off-loop worker shutdown failed: %s", exc)
+        try:
+            balance.close()               # its own thread; stopped like any other, and never depended on
+        except Exception as exc:  # noqa: BLE001
+            log.warning("[MAKER_RT][BALANCE] worker shutdown failed: %s", exc)
         # FLUSH pending drift so a HEAD-change/restart never silently drops a fill's drift numbers.
         try:
             driver.flush_drift(utcnow())
@@ -605,6 +641,13 @@ def main(argv: Optional[list] = None) -> int:
         # restatement and why untracked windfalls are excluded.
         from .gates import run as run_gates
         return run_gates(log=log)
+    if "--balance" in args:
+        # THE VENUE-TRUTH AUDIT, on demand. READ-ONLY (balances + positions), places nothing, and
+        # prints exactly the report the 8-hourly run sends to Telegram. It records the snapshot (and
+        # creates the baseline if there is not one yet) but does NOT consume a scheduled slot: an
+        # operator looking now must not move the schedule the running process is keeping.
+        from .balance import run_cli
+        return run_cli(cfg, log=log)
     if "--selfcheck" in args:
         # READ-ONLY credential/readiness diagnostic — constructs the real order clients and probes
         # each self-check item individually. Places NOTHING; never starts the feeds.

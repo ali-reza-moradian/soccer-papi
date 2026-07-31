@@ -643,6 +643,32 @@ function mrtAchv(a){   // 'achv p50 -0.8% · ≥0.25%: 3%' from an achievable la
   return '<span class="v">achv p50 <b>'+p50+'</b> &middot; &ge;0.25%: <b>'+mrtPctInt(a.share_ge_25bp)
     +'</b> &middot; &ge;1%: <b>'+mrtPctInt(a.share_ge_100bp)+'</b> <span class="v">(n='+a.n+')</span></span>';
 }
+function mrtAge(s){   // 3.4 -> '3s'; 214 -> '3m'; 7900 -> '2h'; null -> 'never'
+  if(s==null)return 'never';
+  var v=Math.max(0,+s);
+  if(v<90)return Math.round(v)+'s';
+  if(v<5400)return Math.round(v/60)+'m';
+  return (v/3600).toFixed(1)+'h';
+}
+function mrtSafetyRow(sf){   // SAFETY SYSTEMS: when each background safety pass last LANDED.
+  // These run silently when they work, which is exactly how one of them (the REST fill poll) was
+  // blacked out ~4x an hour for 17 hours with nothing on the panel saying so. RED = past its cadence.
+  if(!sf)return '';
+  var NAMES=[['fill_poll','fill-poll'],['reconcile','positions'],['settle','settle sweep'],
+             ['gates','gates'],['balance','balance check']];
+  var parts=[],bad=0;
+  NAMES.forEach(function(p){
+    var v=sf[p[0]];if(!v)return;
+    var over=!!v.overdue;if(over)bad++;
+    var age=mrtAge(v.age_s);
+    var tip=p[1]+' last landed '+age+' ago (runs every '+mrtAge(v.cadence_s)+')';
+    parts.push('<span title="'+tip+'">'+p[1]+' <b'+(over?' style="color:#e5484d"':'')+'>'+age
+      +(over?' &#9888;':'')+'</b></span>');
+  });
+  if(!parts.length)return '';
+  return '<div class="mrtsub"><span class="'+(bad?'lv':'v')+'">safety:</span> '+parts.join(' &middot; ')
+    +(bad?' <b style="color:#e5484d">'+bad+' OVERDUE</b>':'')+'</div>';
+}
 function mrtSportRow(name,s){   // one per-sport mini-row; greyed when the sport has zero quotes
   var zero=!(s&&s.quotes);
   return '<div class="mrtsub'+(zero?' grey':'')+'"><b>'+name+'</b> q <b>'+((s&&s.quotes)||0)
@@ -741,7 +767,7 @@ function makerStripHtml(m){   // PURE: the MAKER RT v3 strip (top line + per-spo
   // Per-sport mini-rows (SPORTS order; only sports present in by_sport).
   var bys=m.by_sport||{},rows='';
   SPORTS.forEach(function(sp){var k=sp[0];if(bys[k])rows+=mrtSportRow(sp[1],bys[k]);});
-  return top+tuneLine+phaseLine+liveLine+rows;
+  return top+tuneLine+phaseLine+liveLine+mrtSafetyRow(m.safety)+rows;
 }
 function makerStrip(){   // MAKER RT v2 strip + a red banner when the heartbeat is >90s stale
   var el=document.getElementById('mrtstrip'),banner=document.getElementById('mrtbanner');
@@ -751,7 +777,11 @@ function makerStrip(){   // MAKER RT v2 strip + a red banner when the heartbeat 
   // Armed live (pre or in-play) but the user socket is down -> RED: fills we can't see can't be hedged.
   var userDown=!!(MRT.gates&&(MRT.gates.pre||MRT.gates.inplay))&&!(MRT.sockets&&MRT.sockets.poly_user);
   var orphan=!!(MRT.live&&MRT.live.orphan);
-  el.className='mrtstrip'+((stale||userDown||orphan)?' alarm':'');
+  // A safety pass past its cadence colours the WHOLE strip, not just its own row: the failure this
+  // exists for looked completely healthy from every other number on the panel.
+  var sf=MRT.safety||{};
+  var overdue=Object.keys(sf).some(function(k){return sf[k]&&sf[k].overdue;});
+  el.className='mrtstrip'+((stale||userDown||orphan||overdue)?' alarm':'');
   el.innerHTML=makerStripHtml(MRT)+(stale?' &middot; <span class="v">stale</span>':'');
   if(banner)banner.classList.toggle('show',stale);
 }

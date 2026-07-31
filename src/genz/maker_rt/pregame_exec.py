@@ -309,6 +309,12 @@ class PregameLiveExecutor:
         self._fill_poll_submitted_ts = 0.0
         self._fill_poll_applied_ts = 0.0
         self._reconcile_applied_ts = 0.0
+        # ...and the two slower passes, tracked for the SAME reason but reported rather than halted on:
+        # the settlement sweep and the measurement-gate report. They do not gate trading, so a stall in
+        # them is not a halt — but silence from a safety pass must never be indistinguishable from
+        # health, which is the whole lesson of the 17-hour blackout. See safety_snapshot().
+        self._settle_applied_ts = 0.0
+        self._gates_applied_ts = 0.0
         self._offloop_stall_alerted_ts = 0.0
         self._offloop_ok_logged_ts: dict = {}   # throttles the "pass OK" heartbeat per pass name
         self._last_fills_sweep_ts = 0.0      # unix-seconds low-water mark for the /portfolio/fills sweep
@@ -1364,8 +1370,10 @@ class PregameLiveExecutor:
             self._apply_reconcile_batch(res, exc, store, now, now_ts)
             return
         if isinstance(wkey, tuple) and wkey and wkey[0] == "gates":
-            if exc is None and isinstance(res, dict) and self.state is not None:
-                self.state.measurement_gates = res
+            if exc is None and isinstance(res, dict):
+                self._gates_applied_ts = float(now_ts or 0.0) or self._gates_applied_ts
+                if self.state is not None:
+                    self.state.measurement_gates = res
             return
         if self.log:
             self.log.warning("[MAKER_RT][LIVE] unclaimed off-loop result %s (exc=%s).", wkey, exc)
@@ -1932,6 +1940,34 @@ class PregameLiveExecutor:
             "My routine double-check with the exchanges has stopped answering. I am still watching the "
             "live feeds, so fills are still being seen and hedged — but the slower safety net behind "
             "them is not responding. Worth a look if this repeats.")))
+
+    #: The cadence each safety pass is supposed to keep, and how far past it counts as OVERDUE. The
+    #: multiplier matches the stall watchdog's own tolerance (4 cadences) so the panel turns red at the
+    #: same moment the log starts screaming, rather than telling a different story.
+    SAFETY_OVERDUE_CADENCES = 4.0
+
+    def safety_snapshot(self, now_ts: float) -> dict:
+        """{pass: {last, age_s, cadence_s, overdue}} for the panel + heartbeat SAFETY row.
+
+        These four passes are the machinery that catches what the live path misses — a fill the socket
+        never delivered, a position we should not be holding, a settlement nobody booked, a cap raise
+        argued from stale numbers. Every one of them runs silently when it is working, which is exactly
+        why a 17-hour outage in one of them was invisible until someone read the logs by hand. A safety
+        system that cannot be SEEN working is indistinguishable from one that has stopped."""
+        out: dict = {}
+        for name, applied, cadence in (
+                ("fill_poll", self._fill_poll_applied_ts, self.fill_poll_s),
+                ("reconcile", self._reconcile_applied_ts, self.reconcile_every_s),
+                ("settle", self._settle_applied_ts, 900.0),
+                ("gates", self._gates_applied_ts, 900.0)):
+            age = (now_ts - applied) if (applied and now_ts) else None
+            out[name] = {"age_s": round(age, 1) if age is not None else None,
+                         "cadence_s": float(cadence),
+                         # NEVER-RUN is not overdue: a process that started 10 seconds ago has not
+                         # missed anything, and a red row on every restart is a red row nobody reads.
+                         "overdue": bool(age is not None
+                                         and age > float(cadence) * self.SAFETY_OVERDUE_CADENCES)}
+        return out
 
     def submit_gates(self) -> bool:
         """Refresh the measurement-gate report ON THE WORKER. False if one is already in flight.
@@ -3715,6 +3751,8 @@ class PregameLiveExecutor:
         Also runs the SETTLEMENT AGE WATCHDOG on every pass, whether or not anything settled: this sweep
         was silent for 2.5 days over ZHELAN's $25.81 (F1), and a reconciler that only speaks when it
         succeeds cannot report the one failure that matters — nothing arriving at all."""
+        import time as _time
+        self._settle_applied_ts = _time.time()       # a PASS happened, whether or not it emitted rows
         self._settlement_age_watchdog(now)
         if not self._market_legs:
             return []

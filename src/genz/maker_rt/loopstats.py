@@ -27,7 +27,12 @@ import time
 from typing import Any, Optional
 
 #: Declared up front so the log line keeps a stable shape even on a window where a bucket never fired.
-BUCKETS = ("quotes", "cancel", "fill_poll", "reconcile", "settle", "ws_cb", "heartbeat", "telegram")
+BUCKETS = ("quotes", "cancel", "fill_poll", "reconcile", "settle", "ws_cb", "heartbeat", "telegram",
+           # The 8-hourly balance audit's LOOP-SIDE cost — a clock comparison and a queue put, three
+           # times a day plus a cheap drain every heartbeat. It has its own bucket rather than hiding
+           # inside ``heartbeat`` precisely because "this reporting job is cheap" is the assumption
+           # that cost us a 17-hour blackout of the fill-poll backstop. Now it is a number.
+           "balance")
 
 
 class _Timer:
