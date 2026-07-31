@@ -51,10 +51,29 @@ GATES: dict = {"soccer": 10, "mlb": 13, "tennis": 33, "ufc": 10}
 LOCKED_EVENT = "hedge_locked"
 
 
+def _relevant_files() -> list:
+    """Only the daily event files that CAN contain a row at or after the cut.
+
+    The file name carries its UTC day (``maker_rt_YYYYMMDD.csv``), so a file older than the cut cannot
+    hold a qualifying row and must not be opened. This is not a micro-optimisation: the corpus reached
+    **543 MB across 16 files** and re-scanning all of it took **25.3 seconds** — on the single off-loop
+    worker thread, every 15 minutes, with the REST fill poll and position reconciliation queued behind
+    it. That is what produced ~30s blackouts of the fill-poll backstop 4x an hour for 17 hours.
+
+    A file whose name does not parse is INCLUDED, not skipped: a rename should cost time, never rows."""
+    out = []
+    cut = RESTATEMENT_TS.replace("-", "")
+    for f in sorted(glob.glob(os.path.join(gz_config.GENZ_DIR, "maker_rt_2*.csv"))):
+        day = os.path.basename(f)[len("maker_rt_"):-len(".csv")]
+        if len(day) == 8 and day.isdigit() and day < cut:
+            continue
+        out.append(f)
+    return out
+
+
 def _rows(paths: Optional[list] = None) -> list:
     """Every LIVE ``hedge_locked`` row at or after the F14 fix, newest file last."""
-    files = paths if paths is not None else sorted(
-        glob.glob(os.path.join(gz_config.GENZ_DIR, "maker_rt_2*.csv")))
+    files = paths if paths is not None else _relevant_files()
     out: list = []
     for f in files:
         try:

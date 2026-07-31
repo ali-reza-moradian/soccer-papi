@@ -141,7 +141,7 @@ def test_every_runtime_file_is_registered():
     assert set(mrt_config.RUNTIME_FILES) == {
         "events", "heartbeat", "summary", "runstate", "tuning",
         "traded_tokens", "orphan", "settled_ledger", "expected_positions", "daily_caps", "stop_all",
-        "provisional_marks", "quarantine", "refused_settlements",
+        "provisional_marks", "quarantine", "refused_settlements", "closed_markets",
         "lock",            # the singleton lock (one maker per host) — see maker_rt/singleton.py
     }
 

@@ -423,7 +423,8 @@ def digest_line(minutes: float, *, placed: int, cancelled: int, fills: int, open
                 reconnects: Optional[dict] = None, prehedge_declines: int = 0,
                 binding: Optional[str] = None, stake_today: Optional[float] = None,
                 stake_cap: Optional[float] = None, today_pnl: Optional[float] = None,
-                why_no_fills: Optional[str] = None, refuse_suppressed: int = 0) -> str:
+                why_no_fills: Optional[str] = None, refuse_suppressed: int = 0,
+                closed_markets: Optional[list] = None) -> str:
     """The periodic plain-language roll-up. Line 1: activity + best edge. Line 2: current state + daily
     usage. Then, when they happened: feed flakiness, reconnect attempt/success totals, pre-hedge declines,
     and (on 0 fills) WHY in plain words."""
@@ -459,5 +460,11 @@ def digest_line(minutes: float, *, placed: int, cancelled: int, fills: int, open
     # more offers", and it was write-only for as long as it existed.
     wait = (f"\n   ⏳ {int(refuse_suppressed)} times I wanted to offer but every slot was busy"
             ) if refuse_suppressed else ""
+    # FINISHED MATCHES, batched and NAMED. Each of these used to be its own instant "something went
+    # wrong" alert that did not even say which game — and a dozen arrive together at the end of a slate.
+    # A market closing is the ordinary end of its life, not an incident, so it belongs in the roll-up.
+    cm = [str(x) for x in (closed_markets or [])]
+    shown = ", ".join(cm[:4]) + (f" +{len(cm) - 4} more" if len(cm) > 4 else "")
+    closed = f"\n   🏁 {len(cm)} market(s) finished, dropped for today: {shown}" if cm else ""
     why = f"\n   Why no fills: {why_no_fills}" if (fills == 0 and why_no_fills) else ""
-    return l1 + l2 + flap + pflap + rec + decl + wait + why
+    return l1 + l2 + flap + pflap + rec + decl + wait + closed + why

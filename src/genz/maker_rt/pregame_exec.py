@@ -230,7 +230,7 @@ class PregameLiveExecutor:
         self.digest_min = float(getattr(cfg, "telegram_digest_min", 15.0))
         self._digest = {"quotes": 0, "cancels": {}, "fills": 0, "refuse_suppressed": 0, "best_edge": 0.0,
                         "kalshi_flaps": 0, "kalshi_down_s": 0.0, "poly_flaps": 0, "poly_down_s": 0.0,
-                        "prehedge_declines": 0, "binding": {}}
+                        "prehedge_declines": 0, "binding": {}, "closed_markets": []}
         self._digest_since = 0.0
         self._feed_health: dict = {}     # feed name -> (reconnect_attempts, reconnect_success)
         # BINDING-CONSTRAINT diagnostic: which limit set each quote's SIZE (quote_usd_max | pair_cap |
@@ -287,6 +287,11 @@ class PregameLiveExecutor:
         # key, results decided on the loop. Created eagerly but the THREAD only starts on first submit.
         from .offloop import Worker
         self._worker = Worker(log=self.log)
+        # A SEPARATE worker for local-file/report work. The measurement-gate report does NO venue I/O,
+        # so it needs none of the single-thread guarantees the venue worker exists to provide — and
+        # sharing that thread is what blacked out the fill-poll backstop: 25.3s of CSV scanning every
+        # 15 minutes with the 10s fill poll queued behind it. Different work, different thread.
+        self._report_worker = Worker(name="maker-rt-report", log=self.log, job_timeout_s=180.0)
         # CANCEL RETRY STATE, per candidate key: how many DELETEs we have issued, when the next one is
         # allowed, and the reason to attribute the eventual close-out to.
         self._cancel_attempts: dict = {}
@@ -310,6 +315,12 @@ class PregameLiveExecutor:
         # PLACE-FAILURE BACKOFF: a venue refusal (esp. "market closed") must not retry ~1x/s forever.
         self._place_fail_until: dict = {}    # candidate key -> ts before which we won't retry placement
         self._place_fail_n: dict = {}        # candidate key -> consecutive refusals (alert once, then log)
+        # CLOSED MARKETS, PERSISTED FOR THE UTC DAY (F7). A market the venue says is finished does not
+        # reopen, but the skip list lived only in memory — so each of the day's 10-21 restarts re-POSTed
+        # every closed market once more, re-earning the same 404 and the same alert. Keyed by candidate
+        # key and dropped at the day roll, because tomorrow's fixtures are genuinely new markets.
+        self._closed_markets: dict = {}
+        self._closed_path = mrt_config.runtime_path("closed_markets")
         self.place_backoff_s = 60.0
         self.place_backoff_terminal_s = 86400.0             # closed/settled market -> done for the day
         self.flaps = {"kalshi": 0, "poly_user": 0}          # reconnect counters (panel)
@@ -359,6 +370,7 @@ class PregameLiveExecutor:
         self._load_settled_ledger()
         self._load_expected_positions()
         self._load_provisional()
+        self._load_closed_markets()
         self._load_orphan()
         self._load_quarantine()
 
@@ -479,6 +491,7 @@ class PregameLiveExecutor:
         self._atbest_samples = 0
         self._place_fail_until = {}          # a new day reopens markets -> clear placement backoffs
         self._place_fail_n = {}
+        self._closed_markets = {}            # tomorrow's fixtures are new markets, not skipped ones
         if hasattr(self.caps, "roll"):
             self.caps.roll(day)
         self.persist_daily_caps()                    # a new UTC day -> persist the reset counters
@@ -878,7 +891,17 @@ class PregameLiveExecutor:
         detail = (f"Couldn't place my offer on {subj} — {why}."
                   + (" I'll stop trying this one today." if terminal
                      else f" I'll retry automatically in {wait:.0f}s."))
-        if n == 1:                                   # scream ONCE per candidate, then log-only
+        if terminal:
+            # A CLOSED MARKET IS NOT AN INCIDENT. It is the ordinary end of a market's life, it happens
+            # to every fixture eventually, and at the end of an evening slate a dozen arrive at once —
+            # each firing its own instant Telegram, none of them naming the match. Batch them into the
+            # 15-minute digest WITH the fixture name, so the operator gets one line that says which
+            # games finished instead of twelve that say something went wrong.
+            self._digest.setdefault("closed_markets", [])
+            if subj not in self._digest["closed_markets"]:
+                self._digest["closed_markets"].append(subj)
+            self._note_closed_market(c.key, subj, now_ts)
+        elif n == 1:                                 # scream ONCE per candidate, then log-only
             self._emit_event("problem", instant=True, detail=detail)
             if self.log:                             # the RAW error is log-only (has HTTP/UUID)
                 self.log.warning("[MAKER_RT][LIVE] PLACE FAILED %s: %s", subj, msg)
@@ -1188,6 +1211,32 @@ class PregameLiveExecutor:
         self._emit_event("cancelled", lo, instant=False, digest_kind="cancel", reason=reason, age_s=age_s)
         return True
 
+    def _note_closed_market(self, key: tuple, subject: str, now_ts: float) -> None:
+        """Remember, for the rest of the UTC day, that this market is finished."""
+        k = "\x1f".join(str(x) for x in key)
+        if k in self._closed_markets:
+            return
+        self._closed_markets[k] = {"subject": subject, "day": self._day, "ts": round(now_ts, 1)}
+        self._persist_json(self._closed_path, {"day": self._day, "markets": self._closed_markets},
+                           "the closed-market skip list")
+
+    def _load_closed_markets(self) -> None:
+        """Restore today's closed markets. A file from a PREVIOUS day is ignored, not carried forward —
+        the same fixture id never recurs, and a stale skip list would silently mute a live market."""
+        data = self._load_json(self._closed_path, "the closed-market skip list", fail_closed=False)
+        if not isinstance(data, dict):
+            return
+        if str(data.get("day") or "") != self._day:
+            return
+        got = data.get("markets")
+        if isinstance(got, dict):
+            self._closed_markets = got
+            for k in got:
+                self._place_fail_until[tuple(k.split("\x1f"))] = float("inf")
+            if self.log and got:
+                self.log.info("[MAKER_RT][LIVE] restored %d closed market(s) from today's skip list — "
+                              "they will not be re-POSTed.", len(got))
+
     def _forget_cancel_state(self, key: tuple) -> None:
         """Drop a key's retry bookkeeping (order closed out by ANY path — cancel, fill, stale release)."""
         for d in (self._cancel_attempts, self._cancel_next_ts, self._cancel_reason,
@@ -1254,15 +1303,31 @@ class PregameLiveExecutor:
         a row and latched an ORPHAN halt on a fill that was hedged fine three seconds later. So a
         non-cancel result arriving without a store is HELD, not applied and not dropped — the next drain
         that has a book applies it."""
-        drained = self._deferred_offloop + self._worker.drain() if store is not None             else self._worker.drain()
+        drained = list(self._worker.drain()) + list(self._report_worker.drain())
         if store is not None:
+            drained = self._deferred_offloop + drained
             self._deferred_offloop = []
+        else:
+            # AGE the held results. A result waiting for a book must not wait forever: if no drain with
+            # a store arrives, the venue read behind it is stale and re-reading is both cheaper and more
+            # correct than applying it late. Anything that survives EXPIRE_HELD_DRAINS is dropped and the
+            # next cadence re-submits — a held result may delay a decision, never block one.
+            aged = []
+            for held in self._deferred_offloop:
+                n = held[3] + 1 if len(held) > 3 else 1
+                if n <= self.EXPIRE_HELD_DRAINS:
+                    aged.append((held[0], held[1], held[2], n))
+                elif self.log:
+                    self.log.warning("[MAKER_RT][LIVE] dropping a held %s result after %d drains with "
+                                     "no book — the next cadence re-reads it.", held[0], n)
+            self._deferred_offloop = aged
         closed = 0
-        for wkey, res, exc in drained:
+        for _entry in drained:
+            wkey, res, exc = _entry[0], _entry[1], _entry[2]
             if not (isinstance(wkey, tuple) and len(wkey) == 2 and wkey[0] == "cancel"):
                 if store is None and not (isinstance(wkey, tuple) and wkey and wkey[0] == "gates"):
                     # Needs a book to decide; hold it for a drain that has one (see the docstring).
-                    self._deferred_offloop.append((wkey, res, exc))
+                    self._deferred_offloop.append((wkey, res, exc, 0))
                     if len(self._deferred_offloop) > 32:      # bound it; the loop drains every tick
                         self._deferred_offloop = self._deferred_offloop[-32:]
                     continue
@@ -1753,6 +1818,7 @@ class PregameLiveExecutor:
         # A FAILED batch still counts as "the worker is alive and answering" — the watchdog above is
         # about SILENCE, and a read error is not silence. Nothing is advanced; the next cadence re-reads.
         self._fill_poll_applied_ts = float(now_ts) or self._fill_poll_applied_ts
+        self._clear_offloop_halt("a fill-poll batch landed")
         if exc is not None or not isinstance(res, dict):
             if self.log:
                 self.log.warning("[MAKER_RT][LIVE] batched fill poll FAILED (%s) — nothing is advanced; "
@@ -1771,6 +1837,25 @@ class PregameLiveExecutor:
     #: How many fill-poll cadences may pass with nothing applied before we call it a stall.
     OFFLOOP_STALL_CADENCES = 4.0
     OFFLOOP_STALL_ALERT_EVERY_S = 300.0
+    #: ...and how long before we stop TRADING on it. An alert says "the backstop is quiet"; after this
+    #: long the honest statement is "we are trading on one feed with no independent confirmation", and
+    #: the WS path being healthy is not a reason to keep going — it is the single point of failure the
+    #: backstop exists to cover. Halting is reversible the moment a batch lands; a missed fill is not.
+    OFFLOOP_HALT_AFTER_S = 1800.0
+    #: Drains a held-for-book result may survive before it is dropped as stale (see _drain_cancel_results).
+    EXPIRE_HELD_DRAINS = 240
+
+    def _clear_offloop_halt(self, why: str) -> None:
+        """An off-loop pass answered again -> retire the stall halt. Only ever clears THIS reason, so a
+        landing batch can never wash away an orphan, a quarantine or a daily-cap halt."""
+        if self.caps.halt_reason != "offloop_stalled":
+            return
+        self.caps.halted = False
+        self.caps.halt_reason = None
+        if self.log:
+            self.log.warning("[MAKER_RT][LIVE] off-loop stall CLEARED (%s) — live quoting resumed.", why)
+        self._instant(alerts.format_event("problem", detail=(
+            "My double-check with the exchanges is answering again, so I have resumed placing bets.")))
 
     def _watch_offloop_stall(self, now_ts: float) -> None:
         """Scream when the off-loop fill poll stops producing results.
@@ -1794,14 +1879,35 @@ class PregameLiveExecutor:
                 stalls.append(("reconcile", stale, self.reconcile_every_s))
         if not stalls:
             return
+        worst = max(st[1] for st in stalls)
+        # ESCALATE. Under OFFLOOP_HALT_AFTER_S this is an alert: the sockets are still routing fills and
+        # a brief backstop gap is survivable. Past it, we are trading with NO independent confirmation of
+        # our own fills, and "the websocket looks fine" is precisely the assumption the backstop exists
+        # to stop us making — the 2026-07-23 invisible fills were a healthy-looking socket reporting
+        # nothing for 6,126 polls. So we stop QUOTING (open orders stay hedged and watched) until a
+        # batch lands, which un-halts it automatically.
+        if worst >= self.OFFLOOP_HALT_AFTER_S and not self.caps.halted:
+            if self.log:
+                self.log.critical("[MAKER_RT][CRITICAL] no off-loop safety pass has landed for %.0fs — "
+                                  "HALTING live quoting rather than trading on one feed with no "
+                                  "independent fill confirmation. Clears itself when a batch lands.",
+                                  worst)
+            self.caps.halted = True
+            self.caps.halt_reason = "offloop_stalled"
+            self._instant(alerts.format_event("problem", detail=(
+                "My independent double-check with the exchanges has been silent for half an hour. I am "
+                "still watching the live feeds, but I will not keep placing new bets while the safety "
+                "net behind them is down — I have stopped quoting and I resume by myself as soon as it "
+                "answers again.")))
+            return
         if now_ts - self._offloop_stall_alerted_ts < self.OFFLOOP_STALL_ALERT_EVERY_S:
             return
         self._offloop_stall_alerted_ts = now_ts
         if self.log:
             for name, stale, cadence in stalls:
                 self.log.error("[MAKER_RT][LIVE] %s batch has not landed for %.0fs (cadence %.0fs, %d "
-                               "job(s) in flight) — an off-loop safety pass is STALLED.",
-                               name, stale, cadence, self._worker.pending())
+                               "job(s) in flight, worker %s) — an off-loop safety pass is STALLED.",
+                               name, stale, cadence, self._worker.pending(), self._worker.stats())
         self._instant(alerts.format_event("problem", detail=(
             "My routine double-check with the exchanges has stopped answering. I am still watching the "
             "live feeds, so fills are still being seen and hedged — but the slower safety net behind "
@@ -1816,14 +1922,15 @@ class PregameLiveExecutor:
         Cheap-looking reporting helpers are exactly the things that need to be measured before they are
         put on a path."""
         from .gates import report
-        return self._worker.submit(("gates",), report)
+        return self._report_worker.submit(("gates",), report)
 
     def close(self) -> None:
-        """Stop the off-loop worker (shutdown). Safe on a worker that never started a thread."""
-        try:
-            self._worker.close()
-        except Exception:  # noqa: BLE001 — shutdown must never raise out of here
-            pass
+        """Stop the off-loop workers (shutdown). Safe on a worker that never started a thread."""
+        for w in (self._worker, self._report_worker):
+            try:
+                w.close()
+            except Exception:  # noqa: BLE001 — shutdown must never raise out of here
+                pass
 
     def _read_order(self, lo: _LiveOrder, snapshot: Optional[dict]) -> tuple:
         """``(order_dict_or_None, readable)`` for ``lo``.
@@ -3824,6 +3931,7 @@ class PregameLiveExecutor:
     def _apply_reconcile_batch(self, res: Any, exc: Any, store: Any, now: Any, now_ts: float) -> None:
         """ON THE LOOP: run the unchanged reconciliation over batched reads."""
         self._reconcile_applied_ts = float(now_ts) or self._reconcile_applied_ts
+        self._clear_offloop_halt("a reconciliation batch landed")
         if exc is not None or not isinstance(res, dict):
             if self.log:
                 self.log.warning("[MAKER_RT][LIVE] batched reconcile FAILED (%s) — nothing pruned, nothing "
@@ -4166,7 +4274,8 @@ class PregameLiveExecutor:
                                   binding=top_binding, stake_today=round(self.caps.stake_today, 2),
                                   stake_cap=self.caps.max_daily_stake_usd,
                                   today_pnl=round(self.caps.pnl_today, 4), why_no_fills=why,
-                                  refuse_suppressed=int(d.get("refuse_suppressed", 0) or 0))
+                                  refuse_suppressed=int(d.get("refuse_suppressed", 0) or 0),
+                                  closed_markets=list(d.get("closed_markets") or []))
         self._send_telegram(line)
         if self.log:
             self.log.warning(line)
@@ -4176,7 +4285,7 @@ class PregameLiveExecutor:
     def _reset_digest(self) -> None:
         self._digest = {"quotes": 0, "cancels": {}, "fills": 0, "refuse_suppressed": 0, "best_edge": 0.0,
                         "kalshi_flaps": 0, "kalshi_down_s": 0.0, "poly_flaps": 0, "poly_down_s": 0.0,
-                        "prehedge_declines": 0, "binding": {}}
+                        "prehedge_declines": 0, "binding": {}, "closed_markets": []}
 
     def note_feed_health(self, feeds: dict) -> None:
         """Record live reconnect attempt/success totals from the feed objects for the digest."""

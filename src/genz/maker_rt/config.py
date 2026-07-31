@@ -50,6 +50,10 @@ RUNTIME_FILES: dict[str, tuple[str, str]] = {
     # Settlements REFUSED by the sanity rails — real money whose numbers we don't trust. Queued for
     # manual reconciliation instead of being dropped (they used to just vanish).
     "refused_settlements": ("ops", "maker_rt_REFUSED_SETTLEMENTS.json"),
+    # Markets the VENUE has said are finished, for the current UTC day. A closed market does not
+    # reopen, but the skip list lived only in memory, so each of the day's 10-21 restarts re-POSTed
+    # every one of them once more and re-earned the same 404 (and, before this, the same alert).
+    "closed_markets": ("ops", "maker_rt_closed_markets.json"),
     # SINGLETON LOCK: an OS-held exclusive lock proving this is the only maker on the host. See
     # singleton.py — the kernel releases it on process death, so there is no stale-lock failure mode.
     "lock":          ("ops",  "maker_rt.lock"),
