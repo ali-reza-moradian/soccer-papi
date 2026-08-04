@@ -266,6 +266,12 @@ class MakerState:
     # "has this correction been applied?" is answered by the same file the correction changed — there is
     # no window in which one landed and the other did not.
     restatements_applied: list = field(default_factory=list)
+    # The same corrections, DATED. A restatement moves the books at the moment it is applied, for money
+    # the venues moved at some earlier time — so to the 8-hourly audit it looks exactly like a book that
+    # changed while no cash did, which is the one thing that audit exists to scream about. Each entry
+    # carries ``applied_ts`` (when the books moved) and ``effective_ts`` (when the cash moved) so a
+    # window can tell a correction apart from a leak instead of raising a false alarm on our own fix.
+    restatement_log: list = field(default_factory=list)
     _tuning_saved_ts: float = 0.0                      # last persist (see maybe_persist_tuning)
     measurement_gates: dict = field(default_factory=dict)   # gates.report(), refreshed off the hot path
     # SAFETY SYSTEMS: last-landed age per background pass (fill-poll / reconcile / settle / gates /
@@ -287,14 +293,16 @@ class MakerState:
                     self.lifetime_quotes, self.recent_locked_nets,
                     self.settled_pnl_lifetime, self.settled_cost_lifetime, self.settled_trades,
                     self.settled_max_net_usd, self.settled_pnl_untracked_lifetime, self.safety,
-                    self.settled_pnl_exits_lifetime, self.settled_exits, self.restatements_applied)
+                    self.settled_pnl_exits_lifetime, self.settled_exits, self.restatements_applied,
+                    self.restatement_log)
             self.__init__(day=day)  # type: ignore[misc]
             (self.log, self.restarts_today, self.gates, self.live,
              self.lifetime_fills, self.lifetime_unwinds, self.recent_outcomes,
              self.lifetime_quotes, self.recent_locked_nets,
              self.settled_pnl_lifetime, self.settled_cost_lifetime, self.settled_trades,
              self.settled_max_net_usd, self.settled_pnl_untracked_lifetime, self.safety,
-             self.settled_pnl_exits_lifetime, self.settled_exits, self.restatements_applied) = keep
+             self.settled_pnl_exits_lifetime, self.settled_exits, self.restatements_applied,
+             self.restatement_log) = keep
 
     def _bucket(self, sport: str, phase: str) -> _Bucket:
         return self.buckets.setdefault((str(sport or "?"), str(phase or "pre")), _Bucket())
@@ -318,6 +326,7 @@ class MakerState:
         self.settled_pnl_exits_lifetime = float(obj.get("settled_pnl_exits_lifetime", 0.0) or 0.0)
         self.settled_exits = int(obj.get("settled_exits", 0) or 0)
         self.restatements_applied = [str(k) for k in (obj.get("restatements_applied") or []) if k]
+        self.restatement_log = [r for r in (obj.get("restatement_log") or []) if isinstance(r, dict)]
         self.settled_cost_lifetime = float(obj.get("settled_cost_lifetime", 0.0) or 0.0)
         self.settled_trades = int(obj.get("settled_trades", 0) or 0)
         # ACHIEVABLE LADDERS (N27). Restarts run ~10-21x/day, and the ladder is the ONLY evidence that
@@ -361,20 +370,47 @@ class MakerState:
             if not isinstance(e, dict):
                 continue
             key = str(e.get("key") or "")
-            if not key or key in self.restatements_applied:
-                continue                                  # already booked — REFUSE, silently and forever
+            if not key:
+                continue
+
             def _f(name: str) -> float:
                 try:
                     return float(e.get(name) or 0.0)
                 except (TypeError, ValueError):
                     return 0.0
+
+            if key in self.restatements_applied:
+                # ALREADY BOOKED — the money must never move again. But an entry applied by a build that
+                # predates ``restatement_log`` has no dated record, and without one the balance audit
+                # cannot tell our own correction from a leak and will alarm on it forever. So rebuild the
+                # LOG ENTRY ONLY, touching no counter.
+                if not any(str(r.get("key")) == key for r in self.restatement_log):
+                    self.restatement_log.append({
+                        "key": key, "usd": round(_f("exits_usd") + _f("untracked_usd")
+                                                 + _f("hedged_usd"), 4),
+                        "applied_ts": str(e.get("applied_ts") or utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")),
+                        "effective_ts": str(e.get("effective_ts")
+                                            or e.get("applied_ts")
+                                            or utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")),
+                        "note": str(e.get("note") or "")[:200], "reconstructed": True})
+                    self.persist_tuning()
+                continue                                  # REFUSE the money, silently and forever
             exits, untracked, hedged = _f("exits_usd"), _f("untracked_usd"), _f("hedged_usd")
-            self.settled_pnl_lifetime += exits + untracked + hedged
+            total = exits + untracked + hedged
+            self.settled_pnl_lifetime += total
             self.settled_pnl_exits_lifetime += exits
             self.settled_pnl_untracked_lifetime += untracked
             if abs(exits) > 1e-9:
                 self.settled_exits += int(e.get("exits_n") or 0)
             self.restatements_applied.append(key)
+            # DATED, so the balance audit can tell this apart from a leak. ``effective_ts`` is when the
+            # CASH moved (it defaults to now, which makes the entry inert for windows either way);
+            # ``applied_ts`` is when the BOOKS moved, i.e. right now.
+            self.restatement_log.append({
+                "key": key, "usd": round(total, 4),
+                "applied_ts": utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "effective_ts": str(e.get("effective_ts") or utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")),
+                "note": str(e.get("note") or "")[:200]})
             applied.append(key)
             if self.log:
                 self.log.warning(
@@ -400,6 +436,7 @@ class MakerState:
             "settled_pnl_exits_lifetime": round(self.settled_pnl_exits_lifetime, 4),
             "settled_exits": self.settled_exits,
             "restatements_applied": list(self.restatements_applied),
+            "restatement_log": list(self.restatement_log),
             "settled_cost_lifetime": round(self.settled_cost_lifetime, 4),
             "settled_trades": self.settled_trades,
             "achievable": {f"{sp}|{ph}": b.achievable_state()

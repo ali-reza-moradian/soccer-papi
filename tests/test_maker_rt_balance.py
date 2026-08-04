@@ -450,6 +450,59 @@ def test_the_split_is_printed_even_when_nothing_is_wrong():
     assert "where: Kalshi cash" in bal.render_report(bal.build_report(cur, prev=prev))
 
 
+def _restated(usd, applied, effective, key="exits-20260804"):
+    return {"key": key, "usd": usd, "applied_ts": applied, "effective_ts": effective,
+            "note": "three verified unwinds"}
+
+
+def test_a_book_correction_is_not_reported_as_a_discrepancy():
+    """The -$6.99 restatement moves the BOOKS at the moment it is applied, for cash the venues moved on
+    Aug 2. To this audit that is indistinguishable from $6.99 leaving the account — so unless it is
+    declared, our own fix fires the exact false alarm this work exists to remove."""
+    prev = _snap(7000.0, settled=32.3847, ts="2026-08-04T14:45:52Z")
+    cur = _snap(7000.0, settled=25.3947, ts="2026-08-04T16:00:00Z")
+    cur["books"]["restatement_log"] = [_restated(-6.99, "2026-08-04T14:52:00Z", "2026-08-02T22:00:43Z")]
+    rep = bal.build_report(cur, prev=prev, alert_usd=5.0)
+    w = rep["windows"]["window"]
+    assert w["book_delta"] == -6.99, "the books really did move"
+    assert w["restated_usd"] == -6.99
+    assert w["discrepancy"] == 0.0, "...but no cash did, and the audit knows why"
+    assert rep["alert"] is False
+    txt = bal.render_report(rep)
+    assert "one-time correction to older books, not cash that moved now" in txt
+    assert "📘 -$6.99 book correction applied 2026-08-04T14:52 for cash that moved 2026-08-02" in txt
+
+
+def test_a_correction_whose_cash_moved_inside_the_window_is_not_subtracted():
+    """If the venue movement is ALSO in this window then the window already contains it, and removing
+    the correction as well would double-count — turning a clean audit into a phantom gap."""
+    prev = _snap(7000.0, settled=10.0, ts="2026-08-01T00:00:00Z")
+    cur = _snap(6993.01, settled=3.01, ts="2026-08-04T16:00:00Z")
+    cur["books"]["restatement_log"] = [_restated(-6.99, "2026-08-04T14:52:00Z", "2026-08-02T22:00:43Z")]
+    w = bal.build_report(cur, prev=prev)["windows"]["window"]
+    assert w["restated_usd"] == 0.0, "the cash moved inside this window too"
+    assert w["discrepancy"] == 0.0
+
+
+def test_a_correction_applied_before_the_window_does_nothing():
+    """Both endpoints already include it, so there is nothing to correct for."""
+    prev = _snap(7000.0, settled=25.3947, ts="2026-08-05T00:00:00Z")
+    cur = _snap(7001.0, settled=26.3947, ts="2026-08-05T08:00:00Z")
+    cur["books"]["restatement_log"] = [_restated(-6.99, "2026-08-04T14:52:00Z", "2026-08-02T22:00:43Z")]
+    w = bal.build_report(cur, prev=prev)["windows"]["window"]
+    assert w["restated_usd"] == 0.0 and w["discrepancy"] == 0.0
+
+
+def test_a_correction_cannot_mask_a_real_leak_of_a_different_size():
+    """It subtracts exactly what it declares and not a cent more."""
+    prev = _snap(7000.0, settled=32.3847, ts="2026-08-04T14:45:52Z")
+    cur = _snap(6980.0, settled=25.3947, ts="2026-08-04T16:00:00Z")     # $20 really gone
+    cur["books"]["restatement_log"] = [_restated(-6.99, "2026-08-04T14:52:00Z", "2026-08-02T22:00:43Z")]
+    rep = bal.build_report(cur, prev=prev, alert_usd=5.0)
+    assert rep["windows"]["window"]["discrepancy"] == -20.0
+    assert rep["alert"] is True
+
+
 def test_the_exit_toll_travels_with_the_window():
     """Lifetime falls by the exit toll while hedged does not move. The window has to carry the split or
     a lifetime that dropped while every pair profited looks like a bug."""

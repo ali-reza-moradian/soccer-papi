@@ -168,6 +168,11 @@ def test_the_restatement_books_the_three_unwinds_once_and_refuses_to_repeat():
     assert st.settled_pnl_exits_lifetime == -6.99 and st.settled_exits == 3
     assert st.summary("live", {}, NOW)["settled_pnl_hedged_lifetime"] == 24.0059, "hedged UNMOVED"
 
+    # DATED, so the 8-hourly audit can tell this apart from $6.99 leaving the account.
+    entry = st.restatement_log[0]
+    assert entry["key"] == "exits-20260804" and entry["usd"] == -6.99
+    assert entry["applied_ts"].endswith("Z") and entry["effective_ts"].endswith("Z")
+
     assert st.apply_restatements() == [], "same object, second call"
     for _ in range(5):                                   # five restarts
         fresh = MakerState()
@@ -186,6 +191,33 @@ def test_the_key_and_the_counters_are_persisted_by_the_same_write():
     on_disk = load_tuning()
     assert on_disk["settled_pnl_exits_lifetime"] == -1.5
     assert on_disk["restatements_applied"] == ["k1"]
+
+
+def test_an_entry_applied_before_the_log_existed_is_reconstructed_without_moving_money():
+    """The -$6.99 landed on a build that had no ``restatement_log``. Without a dated record the balance
+    audit cannot tell our own correction from cash leaving, and would alarm on it at every check — but
+    rebuilding it must NOT re-apply the money."""
+    _write_restatement([{"key": "exits-20260804", "exits_usd": -6.99, "exits_n": 3,
+                         "effective_ts": "2026-08-02T22:00:43Z",
+                         "applied_ts": "2026-08-04T14:54:50Z", "note": "three verified unwinds"}])
+    st = MakerState()
+    st.settled_pnl_lifetime, st.settled_pnl_untracked_lifetime = 25.3947, 8.3788
+    st.settled_pnl_exits_lifetime, st.settled_exits = -6.99, 3
+    st.restatements_applied = ["exits-20260804"]          # applied; no log entry
+
+    assert st.apply_restatements() == [], "the money is already booked"
+    assert round(st.settled_pnl_lifetime, 4) == 25.3947, "NOT re-applied"
+    assert st.settled_pnl_exits_lifetime == -6.99 and st.settled_exits == 3
+    e = st.restatement_log[0]
+    assert (e["key"], e["usd"], e["reconstructed"]) == ("exits-20260804", -6.99, True)
+    assert e["applied_ts"] == "2026-08-04T14:54:50Z"
+    assert e["effective_ts"] == "2026-08-02T22:00:43Z"
+    assert load_tuning()["restatement_log"][0]["usd"] == -6.99, "persisted"
+
+    st2 = MakerState()
+    st2.load_tuning()
+    assert st2.apply_restatements() == []
+    assert len(st2.restatement_log) == 1, "reconstructed ONCE, not once per restart"
 
 
 def test_a_restatement_can_correct_the_other_buckets_too():

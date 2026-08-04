@@ -293,6 +293,29 @@ def adjustments_in(adjustments: list, since_ts: str, until_ts: str) -> list:
             if a.get("ts") and str(since_ts) < str(a["ts"]) <= str(until_ts)]
 
 
+def restatements_in(log: Any, since_ts: str, until_ts: str) -> list:
+    """One-time corrections whose BOOKS moved inside this window but whose CASH did not.
+
+    An adjustment is cash the books never saw; a restatement is the mirror image — a book correction the
+    cash never saw, because the cash moved earlier and was simply never recorded. To this audit the two
+    are indistinguishable from a leak unless they are declared, and declaring them is the difference
+    between "our own fix" and "$6.99 went missing".
+
+    So an entry counts here only when ``applied_ts`` (the books moving) is inside the window and
+    ``effective_ts`` (the cash moving) is NOT. When both are inside, the window already contains the
+    real venue movement and subtracting the correction would double-count it; when neither is, both
+    endpoints already include it and there is nothing to do."""
+    out = []
+    for r in log or []:
+        if not isinstance(r, dict):
+            continue
+        applied, eff = str(r.get("applied_ts") or ""), str(r.get("effective_ts") or "")
+        if applied and str(since_ts) < applied <= str(until_ts) \
+                and not (eff and str(since_ts) < eff <= str(until_ts)):
+            out.append(r)
+    return out
+
+
 # --------------------------------------------------------------------------- #
 # the snapshot + the comparison (PURE — the reads are the caller's)             #
 # --------------------------------------------------------------------------- #
@@ -348,6 +371,9 @@ def books_from(state: Any, caps: Any = None, open_legs: int = 0) -> dict:
             # whole point — lifetime has to track venue cash), and it is named here so the report can say
             # where a negative lifetime movement came from instead of leaving it to be guessed at.
             "settled_pnl_exits_lifetime": round(exits, 4),
+            # The DATED one-time corrections, so a window can tell "we fixed our own books" apart from
+            # "cash left and nobody noticed" — see restatements_in().
+            "restatement_log": list(getattr(state, "restatement_log", None) or []),
             "settled_trades": int(getattr(state, "settled_trades", 0) or 0) if state is not None else 0,
             "pnl_today": round(g(caps, "pnl_today"), 4),
             "fills_today": int(getattr(caps, "fills_today", 0) or 0) if caps is not None else 0,
@@ -449,11 +475,17 @@ def _window(prev: Optional[dict], cur: dict, adjustments: list, label: str) -> O
     untracked = float(b1.get("settled_pnl_untracked_lifetime") or 0.0) - float(b0.get("settled_pnl_untracked_lifetime") or 0.0)
     exits = float(b1.get("settled_pnl_exits_lifetime") or 0.0) - float(b0.get("settled_pnl_exits_lifetime") or 0.0)
     open_at = [w for w, s in (("start", prev), ("end", cur)) if not is_flat(s)]
+    # BOOK-SIDE corrections: money the venues moved BEFORE this window that the books only recorded
+    # inside it. Removed from the book delta for the same reason a deposit is removed from the venue
+    # delta — otherwise the audit reports our own correction as a discrepancy.
+    rest = restatements_in(b1.get("restatement_log"), prev.get("ts", ""), cur.get("ts", ""))
+    restated = sum(float(r.get("usd") or 0.0) for r in rest)
     return {"label": label, "since": prev.get("ts", ""), "venue_delta": round(venue, 4),
             "adjust_usd": round(adj, 4), "adjustments": entries,
             "book_delta": round(book, 4), "book_hedged": round(hedged, 4),
             "book_untracked": round(untracked, 4), "book_exits": round(exits, 4),
-            "discrepancy": round(venue - adj - book, 4),
+            "restated_usd": round(restated, 4), "restatements": rest,
+            "discrepancy": round(venue - adj - (book - restated), 4),
             "reliable": not open_at, "open_at": open_at, "split": _split(prev, cur)}
 
 
@@ -537,8 +569,10 @@ def _window_line(w: dict, alert_usd: float) -> str:
     else:
         mark = "🟡 within tolerance"
     adj = (f" · manual adjustments {_signed(w['adjust_usd'])}" if w.get("adjustments") else "")
+    res = (f" · of which {_signed(w['restated_usd'])} is a one-time correction to older books, not "
+           f"cash that moved now" if w.get("restatements") else "")
     return (f"   {w['label']}: {_signed(w['venue_delta'])}{adj} · bot's books say "
-            f"{_signed(w['book_delta'])} · {mark} (diff {_usd(diff)})")
+            f"{_signed(w['book_delta'])}{res} · {mark} (diff {_usd(diff)})")
 
 
 def _split_line(w: dict) -> str:
@@ -611,6 +645,17 @@ def render_report(rep: dict) -> str:
                          f"({str(a.get('ts'))[:16]}){flag}")
     if not rep.get("adjustments_known"):
         lines.append("   ✍️ no adjustments recorded")
+    # Every restatement is NAMED too. A book correction absorbed silently is the same failure as a
+    # discrepancy absorbed silently — the operator has to be able to see that we moved our own number.
+    seen_r: list = []
+    for w in (rep.get("windows") or {}).values():
+        for r in w.get("restatements") or []:
+            if r in seen_r:
+                continue
+            seen_r.append(r)
+            lines.append(f"   📘 {_signed(r.get('usd'))} book correction applied "
+                         f"{str(r.get('applied_ts'))[:16]} for cash that moved "
+                         f"{str(r.get('effective_ts'))[:10]} — {r.get('note') or r.get('key')}")
     op = rep.get("open_positions") or []
     if op:
         shown = ", ".join(str(x) for x in op[:3]) + (f" +{len(op) - 3} more" if len(op) > 3 else "")
@@ -1051,6 +1096,7 @@ def run_cli(cfg: Any, log: Any = None) -> int:
              "settled_pnl_hedged_lifetime": hedged_lifetime(life, untracked, exits),
              "settled_pnl_untracked_lifetime": round(untracked, 4),
              "settled_pnl_exits_lifetime": round(exits, 4),
+             "restatement_log": [r for r in (tun.get("restatement_log") or []) if isinstance(r, dict)],
              "settled_trades": int(tun.get("settled_trades", 0) or 0),
              "pnl_today": round(float(caps.get("pnl_today", 0.0) or 0.0), 4),
              "fills_today": int(caps.get("fills_today", 0) or 0),
