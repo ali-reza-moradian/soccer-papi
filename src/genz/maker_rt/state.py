@@ -487,7 +487,7 @@ class MakerState:
             if row.get("locked_net") is not None:           # REALIZED locked net (%) — the target_net check
                 self.recent_locked_nets.append(float(row["locked_net"]))
             self.persist_tuning()                           # fills are rare + precious: persist NOW
-        elif ev in ("hedge_declined", "hedge_unwound", "unwind_FAILED"):
+        elif ev in ("hedge_declined", "hedge_unwound", "unwind_FAILED", "auto_flattened"):
             # the fill required an EXIT (we paid the unwind toll). unwind_cost is on the row here, BEFORE
             # _append_csv drops it (it's not a CSV column — realized_pnl_usd carries -cost to the CSV).
             self.n_unwinds += 1; self.lifetime_unwinds += 1
@@ -503,6 +503,12 @@ class MakerState:
             # WHICH EXITS COUNT, and why the third one does not:
             #   hedge_unwound  — a VERIFIED unwind (``_verified_unwind`` confirmed flat). Always booked;
             #                    a fully-hedged or dust row simply carries cost 0.0 and adds nothing.
+            #   auto_flattened — the bounded sweep that closes a position the first unwind could not,
+            #                    and it is TERMINAL on exactly the same terms: it books only after the
+            #                    position reads flat. Same treatment, for the same reason. It has never
+            #                    fired (0 rows in every CSV ever written), which is precisely why it was
+            #                    worth closing now — its cost would have vanished from lifetime exactly
+            #                    as the three unwinds did, and nobody would have been looking.
             #   hedge_declined — same verified-flat path, taken because the hedge was too dear. Booked
             #                    ONLY when it carries a real paid cost: the zero-cost variants are a
             #                    fill that needed no exit and un-closable dust, neither of which moved
@@ -511,7 +517,7 @@ class MakerState:
             #                    its real outcome arrives later as mark_corrected / trade_settled, which
             #                    already add to lifetime. Booking it here too would double-count the
             #                    same shares — once at a worst-case guess and once at venue truth.
-            if ev == "hedge_unwound" or (ev == "hedge_declined" and abs(cost) > 1e-9):
+            if ev in ("hedge_unwound", "auto_flattened") or (ev == "hedge_declined" and abs(cost) > 1e-9):
                 self.settled_pnl_lifetime -= cost           # cost is POSITIVE $ paid; lifetime falls
                 self.settled_pnl_exits_lifetime -= cost     # ... and the exits bucket keeps it separable
                 self.settled_exits += 1

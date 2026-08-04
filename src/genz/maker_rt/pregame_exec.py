@@ -2450,7 +2450,11 @@ class PregameLiveExecutor:
         if hedge_venue == "polymarket":
             res = self.hedger.hedge_poly({"price": fill_price, "size": matched},
                                          {"token": hl.get("token"), "best_ask": getattr(hv, "best_ask", None),
-                                          "max_price": cap})
+                                          "max_price": cap,
+                                          # The clearing price the gate JUST walked for exactly this
+                                          # size. A Poly market BUY spends its whole USDC amount, so this
+                                          # — not the padded limit — is what must size the spend.
+                                          "walk_price": hedge_px_est})
         else:
             res = self.hedger.hedge({"token_id": lo.token, "side": "BUY", "price": fill_price, "size": matched},
                                     {"ticker": hl.get("ticker"), "side": hl.get("side", "yes"),

@@ -625,27 +625,35 @@ maker_rt:
   live:
     enabled: true
     arm_file: data/ops/ARM_MAKER
-    # CAPS RAISE 2026-07-28 (user directive). The live panel showed slots pinned 8/8 with a 13-minute
-    # wait for a free slot, i.e. SLOT STARVATION was the binding constraint, not edge availability.
-    # Sizes and slots go up together; the two SAFETY limits (max_daily_loss_usd, max_fills_per_day)
-    # are deliberately UNCHANGED, so a bad day still halts at exactly the same realized loss.
-    quote_usd_max: 70               # rest-leg notional cap (20 -> 70)
-    max_daily_stake_usd: 800        # sum of ALL legs committed today (fills+hedges+unwinds); breach -> halt+Telegram (300 -> 800)
-    # PER-PAIR cap: rest + worst-case hedge for ONE bet. MUST scale with quote_usd_max — a $70 rest
-    # leg at a low price implies a hedge far above $100, so leaving this at 100 would have refused
-    # nearly every quote the bigger rest leg is meant to enable (a cheap rest leg's hedge can be 16x
-    # the leg: TBTOR was $1.02 rest + $15.81 hedge). 350 = 70 rest + up to 280 of hedge.
-    max_pair_stake_usd: 350         # (100 -> 350)
+    # CAPS RAISE 2026-08-04 (user directive), the third measured step after 20 -> 70 and 300 -> 800.
+    # AUTHORIZED BY THE GATE, not by a good feeling: `--gates` read soccer EDGE-POSITIVE on 25 clean
+    # hedged fills since the 2026-07-30 restatement — mean +0.859%, p50 +0.700%, worst -0.000%, +$8.20.
+    # mlb (0/13), tennis (0/33) and ufc (0/10) are STILL MEASURING, and none of them gets a raise: this
+    # step is soccer's evidence and the per-sport universe is untouched.
+    # Everything that BOUNDS A BAD DAY is deliberately unchanged (max_daily_loss_usd, max_fills_per_day,
+    # max_open_per_game, max_open_quotes, the -1% hedge floor, the 5% sanity ceiling, the in-play
+    # circuit). Bigger bets do NOT get a bigger loss budget: a bad day still halts at exactly $50.
+    #
+    # CAPS RAISE 2026-07-28: the live panel showed slots pinned 8/8 with a 13-minute wait for a free
+    # slot, i.e. SLOT STARVATION was the binding constraint, not edge availability.
+    quote_usd_max: 105              # rest-leg notional cap (20 -> 70 -> 105)
+    max_daily_stake_usd: 1200       # sum of ALL legs committed today (fills+hedges+unwinds); breach -> halt+Telegram (300 -> 800 -> 1200)
+    # PER-PAIR cap: rest + worst-case hedge for ONE bet. MUST scale with quote_usd_max — a $105 rest
+    # leg at a low price implies a hedge far above $350, so leaving this at 350 would have refused
+    # nearly every quote the bigger rest leg is meant to enable and the raise would be INERT (a cheap
+    # rest leg's hedge can be 16x the leg: TBTOR was $1.02 rest + $15.81 hedge).
+    # 525 = 105 rest + up to 420 of hedge, the same 1:4 shape as 350 = 70 + 280.
+    max_pair_stake_usd: 525         # (100 -> 350 -> 525)
     max_open_quotes: 12             # concurrent resting offers (8 -> 12; the starvation fix). Safe: cancels verify-or-scream + the pre-placement stack guard prevent ghost stacking, and the daily $/fill/loss caps still bound total exposure.
     # PER-GAME CONCENTRATION CAP (N15). max_open_quotes counts ORDERS and does not care that six of them
     # are one match's totals ladder: on 2026-07-29 a single match absorbed 112 placements across six
     # correlated lines, and one goal moves all six together — that is not six bets, it is one bet sized
     # six times. This is a TIGHTENING, not a raise: 12 slots still exist, but no game may hold more than
     # 3 of them, and sizing subtracts what the game already has committed (allowance defaults to
-    # max_open_per_game x max_pair_stake_usd = 3 x $350 = $1,050 of projected pair per game).
-    max_open_per_game: 3
+    # max_open_per_game x max_pair_stake_usd = 3 x $525 = $1,575 of projected pair per game).
+    max_open_per_game: 3            # UNCHANGED by the 2026-08-04 raise — concentration is not a size question
     max_game_stake_usd: 0           # 0 = derive from max_open_per_game x max_pair_stake_usd
-    max_fills_per_day: 20           # UNCHANGED (raised 10 -> 20 earlier on 2026-07-28)
+    max_fills_per_day: 20           # UNCHANGED (raised 10 -> 20 earlier on 2026-07-28); untouched 2026-08-04
     max_daily_loss_usd: 50          # UNCHANGED — the real exposure bound. Bigger bets do NOT get a bigger loss budget.
     hedge_timeout_ms: 3000          # miss/partial after this -> market-unwind the fill + freeze market
     unwind_on_hedge_fail: true
@@ -666,8 +674,12 @@ maker_rt:
     # (the whole notional — what it costs if the flatten sells for nothing) is at or under this, sweep it
     # out at a capped price, prove flat against the venue, book it, and keep trading. Anything larger
     # still halts exactly as before, and a flatten that can't prove flat halts too (fails closed).
-    # 120 covers a full-size pair (quote_usd_max 70 + slippage) without covering a runaway.
-    auto_flatten_max_usd: 120
+    # 180 covers a full-size pair (quote_usd_max 105 + slippage) without covering a runaway. RECOMPUTED
+    # with the 2026-08-04 raise from its own rule, not nudged: it was 120 against a $70 rest leg, so the
+    # ratio 120/70 = 1.714 carried onto $105 gives exactly 180. Left at 120 it would have covered only
+    # 1.14x the rest leg instead of 1.71x, and the bounded-flatten path would have started halting on
+    # ordinary full-size positions — a cap raise silently making the bot MORE fragile.
+    auto_flatten_max_usd: 180
   # LIVE-INPLAY — the SECOND, INDEPENDENT live gate, for IN-PLAY markets only (the pre-game `live` gate
   # above is separate and unchanged). BUILT, LOCKED: an in-play live order requires BOTH enabled AND its
   # OWN arm file (data/ops/ARM_MAKER_INPLAY) AND the startup self-check. Rails are STRICTER than pre-game

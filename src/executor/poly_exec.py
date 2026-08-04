@@ -59,8 +59,88 @@ def is_wallet_mismatch_error(msg: str) -> bool:
     return any(h in m for h in _WALLET_MISMATCH_HINTS)
 
 
+def market_buy_price(price: float) -> float:
+    """The whole-cent, in-range LIMIT for a marketable BUY.
+
+    A BUY limit is a CEILING (execution still happens at the resting ask prices), so it rounds UP —
+    rounding down would make the order non-marketable on a 0.001-tick book. Callers that pass a
+    gate-approved cap already pass a whole cent (``hedge._apply_cap`` floors to the tick), so the
+    ceiling is a no-op there and the cap is never exceeded."""
+    p = math.ceil(max(0.0, float(price)) * 100.0 - 1e-9) / 100.0
+    return min(0.99, max(0.01, p))
+
+
+#: USDC decimals the venue accepts on a MARKET BUY's maker amount. This is the rule that 400'd the CSKA
+#: hedge ("the market buy orders maker amount supports a max accuracy of 2 decimals"); the CLOB client's
+#: own ``get_market_order_amounts`` applies exactly this floor (``round_down(amount, round_config.size)``,
+#: and ``size`` is 2 for every tick size), which is why specifying the AMOUNT is the venue-legal way to
+#: buy a share count and quantizing a share count against a price is not.
+MARKET_BUY_AMOUNT_DP = 2
+
+
+def market_buy_spend(target_shares: float, expected_price: float) -> tuple[float, float]:
+    """(usdc_to_spend, shares_that_buys) for a market BUY of ``target_shares``. PURE.
+
+    THE OVERSHOOT FIX (2026-08-04). A Polymarket market BUY is denominated in USDC: the venue spends the
+    WHOLE maker amount and hands back ``amount / fill_price`` shares, so price improvement returns as
+    EXTRA SHARES, never as a refund. The old sizing sent ``floor(target) x (best_ask + 2 ticks)`` worth of
+    dollars, which meant the 2-tick marketability pad came straight back as unhedged shares — overshoot =
+    ``2 ticks / fill price``, i.e. +5.6% at 36c and **+40% at 5c**. Five of five rest-kalshi hedges
+    overshot; 26AUG04JEJBMU O/U5.5 rode 6.5722 shares naked and lost $2.27 against the pair's +$1.80.
+
+    So the spend is computed from the price we actually expect to CLEAR at (the walked ask ladder), not
+    from the padded limit — the pad stays on the LIMIT, where it belongs, and buys marketability without
+    buying shares. Flooring to the venue's cent keeps ``expected_shares <= target_shares`` by
+    construction: the only shortfall is the sub-cent remainder the venue's own amount precision forces,
+    which is ``0.01 / price`` of a share (0.034 sh at 29c, 0.2 sh at 5c) — an order of magnitude inside
+    the executor's 0.5-share HEDGE_SHARE_TOL, so it books as LOCKED and never fabricates a partial.
+
+    Returns (0.0, 0.0) when there is nothing legal to send."""
+    try:
+        target, px = float(target_shares), float(expected_price)
+    except (TypeError, ValueError):
+        return 0.0, 0.0
+    if target <= 0.0 or not (0.0 < px <= 1.0):
+        return 0.0, 0.0
+    scale = 10 ** MARKET_BUY_AMOUNT_DP
+    usd = math.floor(target * px * scale + 1e-9) / scale
+    if usd <= 0.0:
+        return 0.0, 0.0
+    shares = usd / px
+    # THE INVARIANT, ASSERTED BEFORE SIGNING. Floating point can put ``usd/px`` a hair over the target
+    # even when ``usd`` was floored; step one cent down rather than send an order that is over by 1e-13.
+    while shares > target and usd > 0.0:
+        usd = round(usd - 1.0 / scale, MARKET_BUY_AMOUNT_DP)
+        shares = usd / px if usd > 0.0 else 0.0
+    return (round(usd, MARKET_BUY_AMOUNT_DP), shares) if usd > 0.0 else (0.0, 0.0)
+
+
+def market_buy_shortfall(price: float) -> float:
+    """The most a venue-legal market BUY can fall SHORT of its target, in shares.
+
+    The spend is quantized to the venue's cent, so the missing piece is at most one cent's worth of
+    stock: ``0.01 / price``. That is 0.034 sh at 29c and 0.013 sh at 76c — real, tiny, and NOT a partial
+    hedge. Without a tolerance shaped like this, the live proof of 2026-08-04 (2.666664 sh delivered
+    against a 2.6667 sh target) reads as a miss by 0.000036 of a share and sends every single hedge down
+    the unwind-or-verify path instead of booking LOCKED.
+
+    Below ~2c the cent is worth more than half a share and this exceeds the executor's own
+    HEDGE_SHARE_TOL; the caller clamps, so a genuinely short hedge can never hide behind this."""
+    try:
+        p = float(price)
+    except (TypeError, ValueError):
+        return 0.0
+    return (0.1 ** MARKET_BUY_AMOUNT_DP) / p if p > 0.0 else 0.0
+
+
 def market_buy_amounts(price: float, shares: float) -> tuple[float, float]:
-    """Quantize (limit price, share count) so the CLOB will ACCEPT a market/FAK BUY.
+    """Quantize (limit price, share count) so the CLOB will ACCEPT a share-denominated FAK BUY.
+
+    SUPERSEDED for hedging by :func:`market_buy_spend` — a market BUY is priced in USDC, so quantizing a
+    SHARE count against a price could never stop the venue handing back extra shares (see that function).
+    Kept because the rule it encodes is still the rule, and the CSKA regression tests are written against
+    it: a whole-cent price times a whole-share count is the only (price, size) family whose product is
+    always 2 decimals.
 
     A BUY's ``makerAmount`` is the USDC leg (price x shares) and the venue caps it at **2 decimals**;
     ``takerAmount`` (shares) is capped at 4. The order builder does NOT enforce that: on a 0.001-tick
@@ -74,15 +154,10 @@ def market_buy_amounts(price: float, shares: float) -> tuple[float, float]:
     and the chain falls through to an unwind. That is the 2026-07-28 17:21Z CSKA/Trnava incident.
 
     A WHOLE-CENT price times a WHOLE-SHARE count is exactly 2 decimals for every price and every tick
-    size, so that is what we send. The price is rounded UP to the cent because a BUY limit is a CEILING
-    (execution still happens at resting ask prices) — rounding it down would make the order
-    non-marketable on a 0.001-tick book. Callers that pass a gate-approved cap already pass a whole cent
-    (``hedge._apply_cap`` floors to the tick), so the ceiling is a no-op there and the cap is never
-    exceeded. The share count is floored: never buy more hedge than the fill needs. The sub-share
-    remainder is dust below the venue's minimum tradable size — see PregameLiveExecutor's dust rule."""
-    p = math.ceil(max(0.0, float(price)) * 100.0 - 1e-9) / 100.0
-    p = min(0.99, max(0.01, p))
-    return p, float(math.floor(float(shares) + 1e-9))
+    size, so that is what we send. The share count is floored: never buy more hedge than the fill needs.
+    The sub-share remainder is dust below the venue's minimum tradable size — see PregameLiveExecutor's
+    dust rule."""
+    return market_buy_price(price), float(math.floor(float(shares) + 1e-9))
 
 
 _VALID_TICKS = ("0.1", "0.01", "0.001", "0.0001")
@@ -306,39 +381,78 @@ class PolyExec:
         return self._normalize(raw, price=price, requested_shares=shares, side="SELL")
 
     def place_market_buy(self, token_id: str, shares: float, *, price: Optional[float] = None,
+                         expected_price: Optional[float] = None,
                          order_type: str = "FAK") -> dict[str, Any]:
         """HEDGE (rest_kalshi direction): market-BUY ``shares`` of ``token_id`` with a MARKETABLE limit that
         sweeps UP to ``best_ask + 2 ticks`` (so a thin/moving book still lifts the size) using FAK. Mirrors
         place_market_sell for the taker complement leg. Returns the normalized result.
 
-        Amounts go through :func:`market_buy_amounts` (whole-cent price x whole-share count) because the
-        venue rejects a market BUY whose USDC maker amount carries more than 2 decimals — see that
-        function for the CSKA incident this prevents."""
+        SENT AS AN AMOUNT, NOT A SIZE, because that is what a Polymarket market BUY IS: the venue spends
+        the whole USDC maker amount and returns ``amount / fill_price`` shares. Sending a SHARE count with
+        a padded limit therefore handed the entire 2-tick pad back as unhedged shares (see
+        :func:`market_buy_spend` for the measurements). The spend is computed from ``expected_price`` —
+        the price we expect to CLEAR at, i.e. the caller's walk of the ask ladder — while the padded
+        limit stays on the order as a ceiling, buying marketability without buying shares.
+
+        The client's ``get_market_order_amounts`` floors the amount to 2 decimals, which is precisely the
+        venue rule that 400'd the CSKA hedge, so the amount path enforces it for us rather than us
+        quantizing a (price, size) pair against it."""
         tick_size, neg_risk = self._tick_and_negrisk(token_id)
         try:
             tick = float(tick_size)
         except (TypeError, ValueError):
             tick = 0.01
+        best_ask = None
+        if price is None or expected_price is None:
+            # One book read serves both jobs: the marketable limit AND the fallback clearing price. The
+            # hedge path normally supplies both from the walk it has just done, so this is not on the
+            # hot path — it is the safety net for a caller that has neither.
+            try:
+                asks = (self.get_orderbook(token_id) or {}).get("asks") or []
+                best_ask = float(asks[0][0]) if asks else None
+            except Exception:  # noqa: BLE001 — an unreadable book must not raise into the hedge chain
+                best_ask = None
         if price is None:
-            book = self.get_orderbook(token_id)
-            asks = book.get("asks") or []
-            best_ask = float(asks[0][0]) if asks else None
             price = min(1.0 - tick, round((best_ask + 2 * tick) if best_ask is not None else 1.0 - tick, 6))
         requested = float(shares)
-        price, shares = market_buy_amounts(price, requested)
-        if shares <= 0:                          # sub-share dust: below the smallest amount the venue
+        price = market_buy_price(price)
+        # CLEARING PRICE, in order of authority: the caller's walk of the ladder for THIS size, then the
+        # book's best ask, then the limit itself. The last is the old behaviour and is a floor on how
+        # wrong we can be, not a good estimate — so it is logged when it happens.
+        clearing = expected_price if expected_price is not None else (best_ask if best_ask is not None
+                                                                      else price)
+        try:
+            clearing = float(clearing)
+        except (TypeError, ValueError):
+            clearing = price
+        if not (0.0 < clearing <= 1.0):
+            clearing = price
+        if expected_price is None and best_ask is None and self.log:
+            self.log.warning("[POLY] market BUY of %.4f sh on %s has no walked or quoted clearing price "
+                             "— sizing the spend at the LIMIT %.2f, which can over-buy if it fills "
+                             "better.", requested, str(token_id)[:12], price)
+        usd, expect = market_buy_spend(requested, clearing)
+        if usd <= 0.0 or expect < 1.0:           # sub-share dust: below the smallest amount the venue
             return {"status": "none", "shares": 0.0, "usd": 0.0,   # can price at all -> not an order
                     "avg_price": None, "order_id": None,
-                    "raw": {"skipped": "sub_share_size", "requested_shares": requested}}
-        from py_clob_client_v2.clob_types import OrderArgs, OrderType, PartialCreateOrderOptions
+                    "raw": {"skipped": "sub_share_size", "requested_shares": requested,
+                            "clearing_price": clearing, "usd": usd}}
+        # THE INVARIANT, ASSERTED BEFORE SIGNING: at the price we expect to clear at, this order cannot
+        # buy more than the fill it is hedging. Fail CLOSED — an over-hedge is naked directional risk
+        # booked as if it were a lock, which is exactly what this change exists to end.
+        if expect > requested + 1e-9:
+            raise PolyExecError(f"refusing a hedge that would over-buy: ${usd:.2f} at {clearing:.4f} is "
+                                f"{expect:.4f} sh against a {requested:.4f} sh fill")
+        from py_clob_client_v2.clob_types import MarketOrderArgsV2, OrderType, PartialCreateOrderOptions
         from py_clob_client_v2.order_builder.constants import BUY
 
-        args = OrderArgs(token_id=token_id, price=float(price), size=float(shares), side=BUY)
-        options = PartialCreateOrderOptions(tick_size=tick_size_str(tick_size), neg_risk=bool(neg_risk))
-        signed = self.client.create_order(args, options)
         ot = getattr(OrderType, order_type, order_type)                # FAK by default
+        args = MarketOrderArgsV2(token_id=token_id, amount=float(usd), side=BUY, price=float(price),
+                                 order_type=ot)
+        options = PartialCreateOrderOptions(tick_size=tick_size_str(tick_size), neg_risk=bool(neg_risk))
+        signed = self.client.create_market_order(args, options)
         raw = self.client.post_order(signed, ot)
-        return self._normalize(raw, price=price, requested_shares=shares, side="BUY")
+        return self._normalize(raw, price=price, requested_shares=expect, side="BUY")
 
     # -- position + approval (SELL side; the source of truth for verification/reconciliation) ---------
     def conditional_balance(self, token_id: str) -> float:

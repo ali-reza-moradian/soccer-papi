@@ -84,6 +84,27 @@ def test_unwind_failed_is_never_booked_because_that_position_still_exists():
     assert st.settled_pnl_lifetime == -12.5, "booked ONCE, at venue truth"
 
 
+def test_an_auto_flatten_is_a_verified_exit_and_books_like_one():
+    """``auto_flattened`` is the bounded sweep that closes a position the first unwind could not, and it
+    books only AFTER the position reads flat — terminal on exactly the same terms as hedge_unwound. It
+    has never fired (0 rows in every CSV ever written), which is why it was worth closing: its cost
+    would have vanished from lifetime exactly as the three unwinds did, with nobody looking."""
+    st = MakerState()
+    st.record(_exit("auto_flattened", cost=3.40), NOW)
+    assert st.settled_pnl_lifetime == -3.40
+    assert st.settled_pnl_exits_lifetime == -3.40 and st.settled_exits == 1
+    assert st.unwind_cost_today == 3.40, "and it counts as a paid exit in the daily counters too"
+    assert st.lifetime_unwinds == 1 and list(st.recent_outcomes) == [1]
+
+
+def test_an_auto_flatten_that_RECOVERED_money_books_the_gain():
+    """The row carries ``unwind_cost = -realized``, so a sweep that came back BETTER than the position
+    cost is a negative toll. Lifetime has to be able to move either way or it is not venue truth."""
+    st = MakerState()
+    st.record(_exit("auto_flattened", cost=-1.25), NOW)
+    assert st.settled_pnl_lifetime == 1.25 and st.settled_pnl_exits_lifetime == 1.25
+
+
 def test_booking_the_toll_moves_lifetime_but_not_the_hedged_edge():
     """The reason the toll goes into lifetime at all: lifetime is the number the balance audit compares
     against venue cash, and the cash moved. The reason it ALSO goes into its own bucket: the hedged

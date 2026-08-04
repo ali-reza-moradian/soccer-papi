@@ -18,6 +18,7 @@ from typing import Any, Optional
 
 from ... import bookmath
 from ...executor.fees_sizing import kalshi_fee_usd, poly_fee_usd
+from ...executor.poly_exec import market_buy_shortfall
 from .quotes import hedge_taker_fee
 
 
@@ -203,17 +204,35 @@ class LiveHedger:
         cap = hedge.get("max_price")
         if cap is not None and float(cap) <= 0.0:
             return HedgeResult("missed", freeze_market=True, detail={"reason": "cap_not_payable"})
+        # THE PRICE WE EXPECT TO CLEAR AT — the walk of the ask ladder for exactly this size, which the
+        # caller has just done for the pre-hedge gate. A Poly market BUY spends its whole USDC amount, so
+        # this is what decides how many shares come back; sizing the spend off the padded LIMIT instead
+        # is what handed 2 ticks' worth of pad back as unhedged shares on every single hedge.
+        walk = hedge.get("walk_price")
+        if walk is None:
+            walk = best_ask
+        try:
+            walk = float(walk) if walk is not None else None
+        except (TypeError, ValueError):
+            walk = None
         try:
             # A capped hedge passes its LIMIT explicitly; uncapped (price=None) keeps the client's own
-            # best_ask + 2 ticks marketable default.
-            res = self.poly.place_market_buy(token, size) if cap is None \
-                else self.poly.place_market_buy(token, size, price=_apply_cap(1.0, cap))
+            # best_ask + 2 ticks marketable default. Either way the SPEND comes from ``walk``.
+            res = self.poly.place_market_buy(token, size, expected_price=walk) if cap is None \
+                else self.poly.place_market_buy(token, size, price=_apply_cap(1.0, cap),
+                                                expected_price=walk)
         except Exception as exc:  # noqa: BLE001 - a placement error -> treat as a miss
             res = {"status": "error", "shares": 0, "error": str(exc)}
         filled = float((res or {}).get("shares") or 0.0) if isinstance(res, dict) else 0.0
         avg = res.get("avg_price") if isinstance(res, dict) else None
         self._warn_if_diverged(str(token)[:12], best_ask, avg, float(cap or 1.0), res)
-        if filled >= size - 1e-9:
+        # "DID I GET WHAT I ASKED FOR?" — judged against the venue's own amount precision, not against
+        # zero. A market BUY spends whole cents, so the last sub-cent of the target is unbuyable: the
+        # live proof of 2026-08-04 delivered 2.666664 sh against a 2.6667 sh target, which at a 1e-9
+        # tolerance is a MISS and would send every hedge down the unwind-or-verify path. Clamped to a
+        # half share so a genuinely short hedge can never hide inside it.
+        tol = max(1e-9, min(0.5, market_buy_shortfall(avg if avg else (best_ask or 1.0))))
+        if filled >= size - tol:
             px = float(avg if avg is not None else (best_ask or 0.0))
             fee = poly_fee_usd(filled, px, self.poly_rate)     # ACTUAL Poly taker fee (maker rest = 0)
             pnl = (1.0 - float(fill.get("price") or 0) - px) * filled - fee

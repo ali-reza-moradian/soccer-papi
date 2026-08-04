@@ -103,6 +103,17 @@ class _StrictClob:
         taker = float(int(args.size * 10 ** sdp)) / 10 ** sdp    # round_down(size, 2)
         return {"price": price, "taker": taker, "maker": round(price * taker, 10)}
 
+    def create_market_order(self, args, options):
+        """The AMOUNT path, rounded exactly as py_clob_client_v2's ``get_market_order_amounts`` does:
+        ``raw_maker_amt = round_down(amount, round_config.size)`` (size is 2 for every tick size, which
+        is why this path satisfies the venue's 2-decimal maker-amount rule by construction) and
+        ``raw_taker_amt = raw_maker_amt / round_down(price, price_dp)``."""
+        pdp, sdp = self.ROUND[options.tick_size]
+        price = float(int(args.price * 10 ** pdp)) / 10 ** pdp   # round_down(price, pdp)
+        maker = float(int(args.amount * 10 ** sdp)) / 10 ** sdp  # round_down(amount, 2)
+        return {"price": price, "taker": round(maker / price, 4), "maker": maker,
+                "amount": args.amount}
+
     def post_order(self, signed, order_type):
         if _dp(signed["maker"]) > 2:
             raise PolyExecError(
@@ -120,7 +131,7 @@ def test_fractional_kalshi_fill_no_longer_400s_the_poly_hedge():
     refuses it. The hedge must now post and be accepted."""
     clob = _StrictClob(tick="0.001")
     ex = PolyExec(client=clob)
-    res = ex.place_market_buy("TOKH", FILL_SHARES, price=0.76)
+    res = ex.place_market_buy("TOKH", FILL_SHARES, price=0.76, expected_price=0.755)
     assert clob.posted, "the hedge never reached the venue"
     assert res["status"] != "error"
     assert _dp(clob.posted[0]["maker"]) <= 2
@@ -128,6 +139,22 @@ def test_fractional_kalshi_fill_no_longer_400s_the_poly_hedge():
     # And prove the old shape really would have been rejected, so this test can't pass vacuously.
     with pytest.raises(PolyExecError, match="max accuracy of 2 decimals"):
         clob.post_order({"maker": 87.0124, "taker": 114.49, "price": 0.76}, "FAK")
+
+
+def test_the_amount_path_is_venue_legal_for_every_price_and_fractional_size():
+    """The CSKA rule is about the maker AMOUNT, and the amount path is the one the venue defines for a
+    market buy — so sweep the same shapes the old quantizer was swept over and prove it holds."""
+    clob = _StrictClob(tick="0.001")
+    ex = PolyExec(client=clob)
+    for cents in range(1, 100):
+        for frac in (0.0, 0.01, 0.49, 0.5, 0.99):
+            clob.posted.clear()
+            px = cents / 100.0
+            ex.place_market_buy("TOKH", 114 + frac, price=min(0.99, px + 0.02), expected_price=px)
+            assert clob.posted, f"nothing posted at {px}"
+            sent = clob.posted[0]
+            assert _dp(sent["maker"]) <= 2, f"maker {sent['maker']} at price {px} would 400"
+            assert _dp(sent["taker"]) <= 4
 
 
 def test_market_buy_of_sub_share_dust_never_reaches_the_venue():
