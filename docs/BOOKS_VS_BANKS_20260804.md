@@ -176,6 +176,26 @@ says *"Both ends of this window were flat, so it is not mark noise."*
 It is printed always, not only on a breach — an operator who reads it only in a panic has not learned to
 read it.
 
+**4. A book correction is not a discrepancy.** This one was found by deploying: the −$6.99 restatement
+moves the *books* at the moment it is applied, for cash the venues moved on Aug 2. To this audit that is
+indistinguishable from $6.99 leaving the account — so the fix would have fired the exact false red
+MISMATCH the rest of T3 exists to remove, at the very next check.
+
+An adjustment is cash the books never saw; a restatement is the mirror image, a book correction the cash
+never saw. Each entry is now dated with **both** times, and `restatements_in()` subtracts one from the
+book delta only when its `applied_ts` is inside the window and its `effective_ts` is not:
+
+| applied_ts | effective_ts | action |
+|---|---|---|
+| in window | not in window | subtract — the books moved, no cash did |
+| in window | in window | leave alone — the window already contains the real venue movement |
+| before window | — | nothing to do — both endpoints already include it |
+
+It subtracts exactly what it declares: a real $20 leak alongside the correction still alarms. Every
+correction is NAMED in the report, like every adjustment. The −$6.99 landed on a build with no log, so an
+already-applied key with no dated record is reconstructed from the file — log entry only, no counter
+touched, exactly once.
+
 **Also fixed here:** `python -m src.genz.maker_rt --balance` raised `UnicodeEncodeError` on a Windows
 cp1252 console *after* the venue reads, the persist and the re-anchor had happened — the audit ran,
 changed state, and printed a traceback instead of its answer.
@@ -384,20 +404,35 @@ the fallback for whatever remainder survives.**
 
 ## Verification
 
-- **`pytest`: 1374 passed** (was 1329 + 5 outdated; 45 new). No test writes live runtime state — the
+- **`pytest`: 1380 passed** (was 1329 + 5 outdated; 51 new). No test writes live runtime state — the
   existing guard is intact and `test_every_runtime_file_is_registered` was updated for the new
   `restatements` entry.
 - **`python -m src.genz.maker_rt --gates`** — runs clean; unchanged output (soccer 25 fills EDGE-POSITIVE,
   mlb/tennis/ufc still MEASURING).
-- **`python -m src.genz.maker_rt --balance`** — runs clean (and the cp1252 crash above is fixed).
+- **`python -m src.genz.maker_rt --balance`** — runs clean (the cp1252 crash above is fixed).
 
-### The books line the NEXT 8h balance check should print
+### Deployed and confirmed live
+
+The restatement applied once at `2026-08-04T14:54:50Z` and the counters now read:
 
 ```
-   My books: settled lifetime +$25.39 (+$24.01 from hedged pairs, +$8.38 luck, -$6.99 exit costs) · today's locked estimate +$X.XX (not settled yet — it is still in the positions above)
+settled_pnl_lifetime  25.3947  |  exits -6.99  |  settled_exits 3  |  untracked 8.3788  |  hedged 24.0059
+restatements_applied  ['exits-20260804']
 ```
 
-`+$25.39 / +$24.01 / +$8.38 / -$6.99` are exact, assuming nothing further settles before the slot; the
-locked estimate is whatever the day holds. That check should also print the one-time
-`📌 NEW BASELINE (baseline_v2)` line, since the 2026-07-31 baseline was snapped with the Birmingham pair
-open and the next flat snapshot re-anchors it.
+The baseline re-anchored on the first flat snapshot after that, **`baseline_v2 = 2026-08-04T15:00:32Z`**,
+total $7,241.44 (Kalshi $4,711.28 + Polymarket $2,530.16, both flat), carrying the *corrected* books. The
+old `2026-07-31T15:27:25Z` anchor is kept as `baseline_v1` with its Kalshi $70.00 cost / Polymarket
+$27.91 mark intact, and the latch is set so this happens exactly once.
+
+### The books line the next 8h balance check should print
+
+The `--balance` run above already prints it verbatim:
+
+```
+   My books: settled lifetime +$25.39 (+$24.01 from hedged pairs, +$8.38 luck, -$6.99 exit costs) · today's locked estimate +$1.67 (not settled yet — it is still in the positions above)
+```
+
+`+$25.39 / +$24.01 / +$8.38 / −$6.99` are exact and hold unless something further settles; the locked
+estimate moves with the day. The `📌 NEW BASELINE (baseline_v2)` line has already been printed and will
+not repeat. Both windows currently read `✅ match (diff $0.00)` with the per-venue split beneath them.
