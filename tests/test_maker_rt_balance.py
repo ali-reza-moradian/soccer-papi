@@ -110,9 +110,11 @@ def _rec(tmp_path, *, kalshi=None, poly=None, poly_rows=(), telegram=None, alert
                            lambda p: (rows, truncated)))
 
 
-def _books(settled=0.0, *, untracked=0.0, pnl_today=0.0, trades=0, open_legs=0):
-    return {"settled_pnl_lifetime": settled, "settled_pnl_hedged_lifetime": settled - untracked,
-            "settled_pnl_untracked_lifetime": untracked, "settled_trades": trades,
+def _books(settled=0.0, *, untracked=0.0, exits=0.0, pnl_today=0.0, trades=0, open_legs=0):
+    return {"settled_pnl_lifetime": settled,
+            "settled_pnl_hedged_lifetime": settled - untracked - exits,
+            "settled_pnl_untracked_lifetime": untracked, "settled_pnl_exits_lifetime": exits,
+            "settled_trades": trades,
             "pnl_today": pnl_today, "fills_today": 0, "open_legs": open_legs}
 
 
@@ -210,27 +212,72 @@ def test_the_schedule_is_read_from_disk_so_a_restart_cannot_duplicate(tmp_path):
 # --------------------------------------------------------------------------- #
 # BASELINE — created once, never overwritten, never built on a half-read        #
 # --------------------------------------------------------------------------- #
+def _flat(tmp_path, **kw):
+    """A reconciler whose venues hold NOTHING — the only kind of snapshot allowed to be a baseline."""
+    return _rec(tmp_path, kalshi=_Kalshi(positions=[]), **kw)
+
+
 def test_the_first_run_is_the_baseline_and_says_so(tmp_path):
-    rec = _rec(tmp_path, poly_rows=[_poly_row("X", 27.91)])
+    rec = _flat(tmp_path)
     out = rec.run_once(_books(settled=22.18), NOW, slot="2026-07-31T16:00:00Z")
     snap = out["snapshot"]
-    assert snap["kalshi"]["cash"] == 4519.7251 and snap["kalshi"]["positions"] == 70.0
-    assert snap["poly"]["cash"] == 2618.991 and snap["poly"]["positions"] == 27.91
-    assert snap["total"] == round(4519.7251 + 70.0 + 2618.991 + 27.91, 4)
+    assert snap["kalshi"]["cash"] == 4519.7251 and snap["poly"]["cash"] == 2618.991
+    assert snap["total"] == round(4519.7251 + 2618.991, 4)
     assert out["report"]["is_baseline"] is True
     assert "BASELINE" in out["text"]
     assert _store(rec)["baseline"]["ts"] == snap["ts"]
     rec.close()
 
 
+def test_a_snapshot_holding_an_open_pair_may_not_become_the_baseline(tmp_path):
+    """A snapshot with a pair open values Kalshi at COST (``market_exposure`` — the venue publishes no
+    mark) and Polymarket at MARK (``currentValue``). Its total is therefore part cost and part mark, and
+    no later total can honestly be subtracted from it. The real 2026-07-31 baseline was taken exactly
+    this way, with the Birmingham pair open, and carried $1.86 of pure valuation artefact into every
+    lifetime comparison that followed."""
+    rec = _rec(tmp_path, poly_rows=[_poly_row("X", 27.91)])
+    out = rec.run_once(_books(settled=22.18), NOW, slot="2026-07-31T16:00:00Z")
+    snap = out["snapshot"]
+    assert snap["kalshi"]["positions"] == 70.0 and snap["poly"]["positions"] == 27.91
+    assert snap["ok"] is True
+    assert _store(rec)["baseline"] is None, "an open pair disqualifies it as an anchor"
+    assert len(_store(rec)["snapshots"]) == 1, "still recorded — it is still a measurement"
+    rec.close()
+
+
 def test_the_baseline_is_never_overwritten(tmp_path):
-    rec = _rec(tmp_path)
+    rec = _flat(tmp_path)
     rec.run_once(_books(), NOW, slot="2026-07-31T00:00:00Z")
     first = _store(rec)["baseline"]["ts"]
-    rec._kalshi = _Kalshi(cash="9999.00")
+    rec._kalshi = _Kalshi(cash="9999.00", positions=[])
     rec.run_once(_books(), NOW, slot="2026-07-31T08:00:00Z")
     assert _store(rec)["baseline"]["ts"] == first
     assert _store(rec)["baseline"]["kalshi"]["cash"] == 4519.7251
+    rec.close()
+
+
+def test_a_bad_baseline_is_re_anchored_exactly_once(tmp_path):
+    """The stored baseline was taken with a pair open, so it must be superseded — ONCE — by the first
+    flat snapshot after that rule shipped. The old one is KEPT (``baseline_v1``): this log is the
+    evidence trail, so a bad measurement is superseded, never deleted."""
+    rec = _rec(tmp_path, poly_rows=[_poly_row("X", 27.91)])
+    rec.run_once(_books(), NOW, slot="2026-07-31T00:00:00Z")
+    _store(rec)  # baseline is None so far (not flat) — force one in, the way the old code would have
+    store = _store(rec)
+    store["baseline"] = store["snapshots"][0]
+    bal.atomic_json(rec.path, store)
+
+    rec._kalshi = _Kalshi(positions=[])                         # now FLAT
+    out = rec.run_once(_books(), NOW, slot="2026-07-31T08:00:00Z")
+    s = _store(rec)
+    assert s["baseline"]["ts"] == out["snapshot"]["ts"], "re-anchored onto the flat snapshot"
+    assert s["baseline_v1"]["kalshi"]["positions"] == 70.0, "the old one is kept for history"
+    assert s["baseline_v2"] is True
+    assert "NEW BASELINE" in out["text"] and "mixed a Kalshi COST basis" in out["text"]
+
+    out2 = rec.run_once(_books(), NOW, slot="2026-07-31T16:00:00Z")
+    assert _store(rec)["baseline"]["ts"] == s["baseline"]["ts"], "ONCE — the latch holds"
+    assert "NEW BASELINE" not in out2["text"]
     rec.close()
 
 
@@ -247,7 +294,7 @@ def test_a_venue_that_could_not_be_read_never_becomes_the_baseline(tmp_path):
 
 
 def test_an_incomplete_snapshot_is_not_used_as_the_comparison_anchor(tmp_path):
-    rec = _rec(tmp_path)
+    rec = _flat(tmp_path)
     rec.run_once(_books(settled=10.0), NOW, slot="2026-07-31T00:00:00Z")     # good -> baseline
     rec._poly = _Poly(fail_balance=True)
     rec.run_once(_books(settled=10.0), NOW, slot="2026-07-31T08:00:00Z")     # bad
@@ -261,11 +308,21 @@ def test_an_incomplete_snapshot_is_not_used_as_the_comparison_anchor(tmp_path):
 # --------------------------------------------------------------------------- #
 # THE COMPARISON — venue movement vs what the books claim happened              #
 # --------------------------------------------------------------------------- #
-def _snap(total_cash, *, settled, ts, untracked=0.0):
+def _snap(total_cash, *, settled, ts, untracked=0.0, exits=0.0, open_pairs=0,
+          k_cash=None, k_pos=0.0, p_cash=None, p_pos=0.0):
+    """A comparison-ready snapshot. ``open_pairs`` puts a maker position on BOTH venues, which is what
+    makes a window unreliable; the per-venue cash/positions default to a split of the total so the
+    breach line has something real to name."""
+    k_cash = total_cash / 2.0 if k_cash is None else k_cash
+    p_cash = total_cash - k_cash - k_pos - p_pos if p_cash is None else p_cash
     return {"ok": True, "ts": ts, "total": total_cash,
+            "kalshi": {"ok": True, "cash": k_cash, "positions": k_pos, "n_positions": open_pairs},
+            "poly": {"ok": True, "cash": p_cash, "positions": p_pos, "n_positions": open_pairs,
+                     "n_maker": open_pairs},
             "books": {"settled_pnl_lifetime": settled,
-                      "settled_pnl_hedged_lifetime": settled - untracked,
-                      "settled_pnl_untracked_lifetime": untracked}}
+                      "settled_pnl_hedged_lifetime": settled - untracked - exits,
+                      "settled_pnl_untracked_lifetime": untracked,
+                      "settled_pnl_exits_lifetime": exits}}
 
 
 def test_agreement_is_reported_as_agreement():
@@ -329,6 +386,79 @@ def test_a_window_that_is_not_eight_hours_does_not_claim_to_be():
     cur = _snap(7000.0, settled=0.0, ts="2026-07-31T16:00:00Z")
     txt = bal.render_report(bal.build_report(cur, prev=prev))
     assert "Since the last check (15m 0s):" in txt and "Last 8h" not in txt
+
+
+def test_a_window_with_a_pair_open_at_either_end_may_not_fire_red():
+    """The +/-$19-25 red MISMATCH alerts of 2026-08-01/02 fired on windows whose endpoints held open
+    pairs — Kalshi valued at COST against Polymarket valued at MARK. Nothing was wrong; the two sides
+    simply were not measured on the same basis. An alarm the operator cannot tell from noise is worse
+    than no alarm, so an unreliable window is LABELLED and judgement is deferred, never shouted."""
+    for open_at, who in ((("start",), dict(prev_open=1, cur_open=0)),
+                         (("end",), dict(prev_open=0, cur_open=1)),
+                         (("start", "end"), dict(prev_open=1, cur_open=1))):
+        prev = _snap(7000.00, settled=10.00, ts="2026-07-31T08:00:00Z", open_pairs=who["prev_open"])
+        cur = _snap(6975.00, settled=10.00, ts="2026-07-31T16:00:00Z", open_pairs=who["cur_open"])
+        rep = bal.build_report(cur, prev=prev, alert_usd=5.0)
+        w = rep["windows"]["window"]
+        assert w["discrepancy"] == -25.0, "the number is still measured and still reported"
+        assert w["reliable"] is False and tuple(w["open_at"]) == open_at
+        assert rep["alert"] is False and rep["breaches"] == []
+        txt = bal.render_report(rep)
+        assert "unreliable while pairs are open (marks move)" in txt
+        assert "🔴" not in txt
+        assert "next flat-to-flat" in txt
+
+
+def test_flatness_asks_whether_a_VALUATION_can_move_not_whether_anything_is_held():
+    """2026-08-04T14:45Z: the wallet held $459.07 of a Jeju/Bayern leg that had already WON and settled
+    in the books. The data API marks a resolved position at $1.00 face, so it is worth exactly what it
+    will convert to — no cost-vs-mark mismatch, nothing to distort a subtraction. That snapshot is a
+    legitimate anchor; an OPEN pair is not."""
+    resolved = {"ok": True, "ts": "T",
+                "kalshi": {"ok": True, "n_positions": 0},
+                "poly": {"ok": True, "n_positions": 177, "n_maker": 0, "positions": 459.07}}
+    assert bal.is_flat(resolved) is True
+    resolved["poly"]["n_maker"] = 1                      # ...an OPEN maker leg, and it is not
+    assert bal.is_flat(resolved) is False
+    assert bal.is_flat({"ok": False, "kalshi": {}, "poly": {}}) is False, "a half-read is never flat"
+    assert bal.is_flat(None) is False
+
+
+def test_a_flat_to_flat_window_keeps_the_five_dollar_threshold():
+    """The rule narrows WHEN the alarm may fire, not how hard it fires. Flat-to-flat is unchanged."""
+    prev = _snap(7000.00, settled=10.00, ts="2026-07-31T08:00:00Z", open_pairs=0)
+    cur = _snap(6975.00, settled=10.00, ts="2026-07-31T16:00:00Z", open_pairs=0)
+    rep = bal.build_report(cur, prev=prev, alert_usd=5.0)
+    assert rep["windows"]["window"]["reliable"] is True and rep["alert"] is True
+    assert "not mark noise" in bal.render_report(rep)
+
+
+def test_every_breach_line_names_the_per_venue_split():
+    """'$25 apart' sends a human to two dashboards to find out which venue and whether it was cash or a
+    mark. The numbers are already in the snapshots."""
+    prev = _snap(7000.00, settled=0.0, ts="2026-07-31T08:00:00Z", k_cash=4000.0, p_cash=3000.0)
+    cur = _snap(6975.00, settled=0.0, ts="2026-07-31T16:00:00Z", k_cash=3990.0, p_cash=2985.0)
+    txt = bal.render_report(bal.build_report(cur, prev=prev, alert_usd=5.0))
+    assert "where: Kalshi cash -$10.00/positions +$0.00 · Polymarket cash -$15.00/positions +$0.00" in txt
+
+
+def test_the_split_is_printed_even_when_nothing_is_wrong():
+    """It is one short line and it is the first question anyone asks. Printing it only on a breach means
+    the operator learns to read it only in a panic."""
+    prev = _snap(7000.00, settled=0.0, ts="2026-07-31T08:00:00Z")
+    cur = _snap(7000.00, settled=0.0, ts="2026-07-31T16:00:00Z")
+    assert "where: Kalshi cash" in bal.render_report(bal.build_report(cur, prev=prev))
+
+
+def test_the_exit_toll_travels_with_the_window():
+    """Lifetime falls by the exit toll while hedged does not move. The window has to carry the split or
+    a lifetime that dropped while every pair profited looks like a bug."""
+    prev = _snap(7000.0, settled=10.0, ts="2026-07-31T08:00:00Z", exits=0.0)
+    cur = _snap(6993.01, settled=3.01, ts="2026-07-31T16:00:00Z", exits=-6.99)
+    w = bal.build_report(cur, prev=prev)["windows"]["window"]
+    assert w["book_delta"] == -6.99 and w["book_exits"] == -6.99
+    assert w["book_hedged"] == 0.0, "hedged edge is untouched by an exit"
+    assert w["discrepancy"] == 0.0, "and the exchanges agree, which is the entire point"
 
 
 def test_exactly_at_the_threshold_is_not_a_breach():
@@ -408,9 +538,47 @@ def test_the_report_reads_like_the_other_alerts(tmp_path):
     assert "   TOTAL $7,241.63" in txt          # 4,519.7251 + 70 + 2,618.991 + 32.91
     # Both book numbers, kept apart: settled is venue truth, today's locked is an estimate of money
     # that has not settled and is therefore still counted in the positions above.
-    assert "settled lifetime +$22.18 (+$17.18 from hedged pairs, +$5.00 luck)" in txt
+    assert ("settled lifetime +$22.18 (+$17.18 from hedged pairs, +$5.00 luck, "
+            "+$0.00 exit costs)") in txt
     assert "today's locked estimate +$0.68" in txt
     rec.close()
+
+
+def test_the_books_line_names_the_exit_toll(tmp_path):
+    """The unwind toll is inside ``settled_pnl_lifetime`` (that is what makes lifetime track venue cash),
+    so the line has to say it is there — otherwise a lifetime that went DOWN while every pair profited
+    is unexplainable from the report alone."""
+    rec = _flat(tmp_path)
+    books = _books(settled=25.3947, untracked=8.3788, exits=-6.99)
+    txt = rec.run_once(books, NOW, slot="2026-07-31T16:00:00Z")["text"]
+    assert ("settled lifetime +$25.39 (+$24.01 from hedged pairs, +$8.38 luck, "
+            "-$6.99 exit costs)") in txt
+    rec.close()
+
+
+def test_the_report_still_prints_on_a_console_that_cannot_encode_it(capsys, monkeypatch):
+    """Windows hands a bare ``python -m src.genz.maker_rt --balance`` a cp1252 stdout, and every line of
+    this report opens with an emoji. The raise landed AFTER the venue reads, the persist and the
+    baseline re-anchor — so the audit ran, changed state, and printed a traceback instead of its
+    answer."""
+    class _Cp1252:
+        encoding = "cp1252"
+
+        def __init__(self):
+            self.out = []
+
+        def write(self, s):
+            s.encode("cp1252")            # what the real console does
+            self.out.append(s)
+
+        def flush(self):
+            pass
+
+    fake = _Cp1252()
+    monkeypatch.setattr(bal.sys, "stdout", fake)
+    bal._print("💰 8h BALANCE CHECK\n   TOTAL $7,241.28")
+    text = "".join(fake.out)
+    assert "8h BALANCE CHECK" in text and "TOTAL $7,241.28" in text
 
 
 def test_the_second_measurement_does_not_print_the_same_window_twice(tmp_path):

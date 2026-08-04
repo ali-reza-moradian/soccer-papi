@@ -252,7 +252,8 @@ def format_event(kind: str, *, sport: Any = None, game: Any = None, market_key: 
                  stake_today: Any = None, stake_cap: Any = None, today_pnl: Any = None,
                  lifetime_pnl: Any = None, cost: Any = None, winner: Any = None,
                  payout: Any = None, roi_pct: Any = None, was: Any = None, name: Any = None,
-                 sold: Any = None, floor_pct: Any = None, **_ignore: Any) -> str:
+                 sold: Any = None, floor_pct: Any = None, lifetime_settled: Any = None,
+                 untracked: Any = None, **_ignore: Any) -> str:
     """Build the plain-language alert for ``kind``. Missing facts degrade gracefully. Never emits a
     ticker or UUID — pass the human name via side/teams (or ``name`` when the caller already has it)."""
     tag = _sport_tag(sport)
@@ -291,20 +292,45 @@ def format_event(kind: str, *, sport: Any = None, game: Any = None, market_key: 
 
     if kind == "locked":
         hedge_nm = other_name(name, teams)
-        rest_amt = money((float(rest_price) * float(rest_shares)) if (rest_price is not None and rest_shares is not None) else (float(price) * float(size) if (price is not None and size is not None) else None))
+        rp = rest_price if rest_price is not None else price
+        rs = rest_shares if rest_shares is not None else size
+        naked, naked_px = _unhedged(rs, hedge_shares, rp, hedge_price)
+        # A FILL THAT BOUGHT NO HEDGE OF ITS OWN NEVER USES THIS TEMPLATE. On 2026-08-04 a 1-share
+        # dust fill on Jeju/Bayern U1.5 @3c was announced "profit is GUARANTEED either way · pays
+        # $1.00" with the hedge rendered "$— @ —" — the message showed no hedge and promised a
+        # certainty in the same breath. (It happened to be covered by the pooled Poly position, but
+        # the alert did not know that and had no business claiming it.) Its own short, honest line.
+        if hedge_price is None or hedge_shares in (None, 0) or float(hedge_shares or 0.0) <= 1e-9:
+            stake = (float(rp) * float(rs)) if (rp is not None and rs is not None) else None
+            payoff = money(float(rs)) if rs is not None else "$—"
+            return (f"ℹ️ · {tag} · {match} · tiny fill, no hedge bought for it"
+                    f"\n   Bought {money(stake)} of {name} @ {cents(rp)} "
+                    f"({venue_label(venue)}) — too small to hedge on its own."
+                    f"\n   Two outcomes: it pays {payoff} if {name} comes in, or it is worth nothing "
+                    f"if not. Nothing is guaranteed here; it settles on its own.")
+        rest_amt = money((float(rp) * float(rs)) if (rp is not None and rs is not None) else None)
         hedge_amt = money((float(hedge_price) * float(hedge_shares)) if (hedge_price is not None and hedge_shares is not None) else None)
         risked = _pair_risk(rest_price, rest_shares, hedge_price, hedge_shares, hedge_fee, price, size)
-        pays = money(float(rest_shares) if rest_shares is not None else (float(size) if size is not None else None))
-        l1 = f"{_status(kind)} · {tag} · {match} · profit is GUARANTEED either way"
-        l2 = (f"\n   Bought: {name} {rest_amt} @ {cents(rest_price if rest_price is not None else price)} "
+        hedged_sh = min(float(rs), float(hedge_shares)) if rs is not None else float(hedge_shares)
+        pays = money(hedged_sh)
+        # "GUARANTEED either way" IS ONLY TRUE OF THE MATCHED SHARES. When the two legs are not the
+        # same size the remainder is a naked directional bet that settles on its own, and calling the
+        # whole thing guaranteed is how 26AUG04JEJBMU O/U5.5 was announced as a lock while 6.5722
+        # Polymarket shares rode unhedged and lost $2.27 (-100%) — more than the pair's +$1.80 made.
+        if naked > _NAKED_TOL:
+            at_risk = money(naked * float(naked_px)) if naked_px is not None else "$—"
+            l1 = (f"{_status(kind)} · {tag} · {match} · hedged {_sh(hedged_sh)} · "
+                  f"{_sh(naked)} riding unhedged ({at_risk} at risk, settles on its own)")
+        else:
+            l1 = f"{_status(kind)} · {tag} · {match} · profit is GUARANTEED either way"
+        l2 = (f"\n   Bought: {name} {rest_amt} @ {cents(rp)} "
               f"({venue_label(venue)}) + {hedge_nm} {hedge_amt} @ {cents(hedge_price)} ({venue_label(hedge_venue)})")
         roi = f" ({pct(net_pct)} ROI)" if net_pct is not None else ""
         l3 = f"\n   Total risked {money(risked)} → pays {pays} · 💵 net {signed_money(pnl)} after fees{roi}"
-        l4 = ""
-        if today_pnl is not None or lifetime_pnl is not None:
-            ft = f"{int(fills_today)} fills · " if fills_today is not None else ""
-            l4 = f"\n   📈 Today: {ft}{signed_money(today_pnl)} · Lifetime: {signed_money(lifetime_pnl)}"
-        return l1 + l2 + l3 + l4
+        if naked > _NAKED_TOL:
+            l3 += (f"\n   ⚠️ that net covers the {_sh(hedged_sh)} that are matched. The extra "
+                   f"{_sh(naked)} is a one-way bet I could not pair off — it wins or loses on its own.")
+        return l1 + l2 + l3 + _lifetime_tail(fills_today, today_pnl, lifetime_pnl, lifetime_settled)
 
     if kind == "locked_thin":
         # NEGATIVE, BUT INSIDE THE ALLOWANCE THE POLICY GRANTS. Not an error and not a win: the execution
@@ -361,8 +387,18 @@ def format_event(kind: str, *, sport: Any = None, game: Any = None, market_key: 
 
     if kind == "settled":
         won = f" · {_title(winner)} won" if winner else ""
-        life = f" · Lifetime {signed_money(lifetime_pnl)}" if lifetime_pnl is not None else ""
+        life = f" · Lifetime {signed_money(lifetime_pnl)} settled" if lifetime_pnl is not None else ""
         roi = f" ({pct(roi_pct)})" if roi_pct is not None else ""
+        # A NAKED REMAINDER IS NOT A SECOND TRADE. One game settling can emit two of these — the matched
+        # pair and the shares that never got paired off — and unlabelled they read as two independent
+        # bets, one of which mysteriously lost 100%. On 26AUG04JEJBMU O/U5.5 the pair made +$1.80 and the
+        # 6.5722-share remainder lost $2.27; side by side and unnamed, that looks like a bug rather than
+        # the one thing it is: the leftover from a hedge that could not be sized exactly.
+        if untracked:
+            return (f"{_status(kind)} · {tag} · {match}{won} · the UNHEDGED REMAINDER of this trade\n"
+                    f"   These are the {money(cost)} of shares I could not pair off. Collected "
+                    f"{money(payout)} · 💵 {signed_money(pnl)}{roi} — a one-way bet, so this is luck, "
+                    f"not edge. The hedged pair on this game is reported separately.{life}")
         return (f"{_status(kind)} · {tag} · {match}{won}\n"
                 f"   Collected {money(payout)} on {money(cost)} · 💵 {signed_money(pnl)}{roi}{life}")
 
@@ -389,6 +425,63 @@ def format_event(kind: str, *, sport: Any = None, game: Any = None, market_key: 
         return f"{_status(kind)} · {str(detail or humanize_reason(reason))}"
 
     return f"{_status(kind)} · {tag} · {match}"
+
+
+#: Shares below this are rounding, not exposure. Poly fills fractional counts to 6dp and Kalshi to 2dp,
+#: so a matched pair routinely differs by ~1e-4 of a share; treating that as "riding unhedged" would put
+#: a warning on every single lock.
+_NAKED_TOL = 0.01
+
+
+def _sh(n: Any) -> str:
+    """'6.5722 sh' / '21 sh' — share counts, trimmed. Both venues fill fractionally, so the decimals are
+    real and dropping them would hide exactly the remainder this exists to name."""
+    try:
+        f = float(n)
+    except (TypeError, ValueError):
+        return "— sh"
+    return f"{int(f)} sh" if abs(f - round(f)) < 1e-9 else f"{f:.4f}".rstrip("0").rstrip(".") + " sh"
+
+
+def _unhedged(rest_shares: Any, hedge_shares: Any, rest_price: Any,
+              hedge_price: Any) -> tuple[float, Optional[float]]:
+    """(shares riding unhedged, the price they are exposed at) for a booked pair.
+
+    The remainder can sit on EITHER leg and the two mean different things, so the price follows the side
+    that actually holds it: more hedge than rest is an over-bought hedge exposed at ``hedge_price``
+    (26AUG04JEJBMU O/U5.5 bought 142.2222 Polymarket shares against 135.65 on Kalshi); more rest than
+    hedge is an under-hedged fill exposed at ``rest_price``. Returns (0.0, None) when either count is
+    unknown — an unknown remainder must not be reported as a known zero."""
+    try:
+        r, h = float(rest_shares), float(hedge_shares)
+    except (TypeError, ValueError):
+        return 0.0, None
+    d = h - r
+    if abs(d) <= _NAKED_TOL:
+        return 0.0, None
+    return (abs(d), hedge_price) if d > 0 else (abs(d), rest_price)
+
+
+def _lifetime_tail(fills_today: Any, today_pnl: Any, lifetime_pnl: Any,
+                   lifetime_settled: Any = None) -> str:
+    """The 'Today / Lifetime' footer, with LIFETIME SAYING WHICH LIFETIME IT MEANS.
+
+    ``lifetime_pnl`` on a fill alert is settled venue truth PLUS today's fill-time locked ESTIMATE of
+    pairs that have not settled. Those are two different kinds of number and the label said neither: on
+    2026-08-04 the overnight alerts read "Lifetime: +$33.62" while the settled truth after the morning
+    was +$32.38. Where the caller knows the settled figure, both are printed and named; where it does
+    not, the compound number is at least labelled as compound."""
+    if fills_today is None and today_pnl is None and lifetime_pnl is None:
+        return ""
+    ft = f"{int(fills_today)} fills · " if fills_today is not None else ""
+    if lifetime_settled is not None:
+        life = (f" · Lifetime: {signed_money(lifetime_settled)} settled "
+                f"({signed_money(lifetime_pnl)} including today's estimate)")
+    elif lifetime_pnl is not None:
+        life = f" · Lifetime: {signed_money(lifetime_pnl)} (settled + today's estimate)"
+    else:
+        life = ""
+    return f"\n   📈 Today: {ft}{signed_money(today_pnl)}{life}"
 
 
 def _daily_tail(fills_today: Any, stake_today: Any, stake_cap: Any) -> str:

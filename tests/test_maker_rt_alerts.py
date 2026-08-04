@@ -55,7 +55,68 @@ def test_locked_shows_both_legs_risk_payout_and_running_totals():
     assert "profit is GUARANTEED either way" in out
     assert "Bought: Hanfmann $12.32 @ 56¢ (Poly) + Halys $9.02 @ 41¢ (Kalshi)" in out
     assert "Total risked $21.42 → pays $22.00 · 💵 net +$0.31 after fees (+1.45% ROI)" in out
-    assert "📈 Today: 4 fills · +$1.12 · Lifetime: +$1.37" in out
+    assert "📈 Today: 4 fills · +$1.12 · Lifetime: +$1.37 (settled + today's estimate)" in out
+
+
+# --------------------------------------------------------------------------- #
+# THE WORDS MATCH THE POSITION — nothing is "guaranteed" while shares ride naked #
+# --------------------------------------------------------------------------- #
+def _locked(**kw):
+    base = dict(sport="soccer", game="26AUG04JEJBMU", market_key="total_goals|5.5", side="over",
+                teams="Jeju SK FC vs Bayern Munich", venue="kalshi", hedge_venue="polymarket",
+                rest_price=0.65, rest_shares=135.65, hedge_price=0.3457, hedge_shares=142.2222,
+                hedge_fee=0.0, pnl=1.80, net_pct=1.34)
+    base.update(kw)
+    return alerts.format_event("locked", **base)
+
+
+def test_an_unhedged_remainder_forbids_the_word_guaranteed():
+    """26AUG04JEJBMU O/U5.5: 142.2222 Polymarket shares against 135.65 on Kalshi. The pair made +$1.80
+    and the 6.5722-share remainder lost $2.27 (-100%) — so the trade LOST money while the alert had
+    announced it as a lock. "Guaranteed" is only ever true of the MATCHED shares."""
+    out = _locked()
+    assert "GUARANTEED" not in out
+    assert "hedged 135.65 sh · 6.5722 sh riding unhedged ($2.27 at risk, settles on its own)" in out
+    assert "one-way bet I could not pair off" in out
+    assert "→ pays $135.65" in out, "the payout names the matched shares, not the whole fill"
+
+
+def test_the_remainder_is_priced_on_whichever_leg_actually_holds_it():
+    """More hedge than rest is an over-bought hedge exposed at the HEDGE price; more rest than hedge is
+    an under-hedged fill exposed at the REST price. Reading the wrong one understates the risk."""
+    assert "$2.27 at risk" in _locked()                                    # 6.5722 x 0.3457 (hedge)
+    out = _locked(rest_shares=142.2222, hedge_shares=135.65, rest_price=0.65)
+    assert "$4.27 at risk" in out                                          # 6.5722 x 0.65 (rest)
+
+
+def test_a_matched_pair_is_still_allowed_to_say_guaranteed():
+    """The rule must not fire on the fractional dust both venues fill to — otherwise every single lock
+    carries a warning and the warning stops meaning anything."""
+    out = _locked(rest_shares=135.65, hedge_shares=135.6512)
+    assert "profit is GUARANTEED either way" in out and "riding unhedged" not in out
+
+
+def test_a_dust_fill_with_no_hedge_never_uses_the_locked_template():
+    """The 1-share Jeju/Bayern U1.5 fill at 3c was announced "profit is GUARANTEED either way · pays
+    $1.00" with the hedge rendered "$— @ —": a message that showed no hedge and promised a certainty in
+    the same breath."""
+    out = _locked(market_key="total_goals|1.5", rest_price=0.03, rest_shares=1,
+                  hedge_price=None, hedge_shares=0, pnl=0.008, net_pct=None)
+    assert "GUARANTEED" not in out and "LOCKED" not in out
+    assert "tiny fill, no hedge bought for it" in out
+    assert "too small to hedge on its own" in out
+    assert "it pays $1.00 if" in out and "worth nothing if not" in out
+    assert "settles on its own" in out
+
+
+def test_lifetime_says_which_lifetime_it_means():
+    """Overnight on 2026-08-04 the alerts read "Lifetime: +$33.62"; the settled truth after the morning
+    was +$32.38. The difference is today's fill-time ESTIMATE of pairs that had not settled — a
+    different kind of number wearing the same word."""
+    out = _locked(fills_today=4, today_pnl=1.24, lifetime_pnl=33.62, lifetime_settled=32.38)
+    assert "Lifetime: +$32.38 settled (+$33.62 including today's estimate)" in out
+    bare = _locked(fills_today=4, today_pnl=1.24, lifetime_pnl=33.62)
+    assert "Lifetime: +$33.62 (settled + today's estimate)" in bare
 
 
 def test_settled_names_the_winner_and_lifetime():
@@ -63,7 +124,20 @@ def test_settled_names_the_winner_and_lifetime():
                               teams="Hanfmann vs Halys", winner="Halys", payout=22.00, cost=21.42,
                               pnl=0.31, roi_pct=1.45, lifetime_pnl=1.37)
     assert out.startswith("🏁 SETTLED · 🎾 Tennis · Hanfmann vs Halys · Halys won")
-    assert "Collected $22.00 on $21.42 · 💵 +$0.31 (+1.45%) · Lifetime +$1.37" in out
+    assert "Collected $22.00 on $21.42 · 💵 +$0.31 (+1.45%) · Lifetime +$1.37 settled" in out
+
+
+def test_a_naked_remainder_settling_says_what_it_is():
+    """One game emits TWO settled alerts — the matched pair and the shares that were never paired off.
+    Unlabelled, a +$1.80 beside a -$2.27 (-100%) reads as two independent bets, one of which
+    inexplicably lost everything."""
+    out = alerts.format_event("settled", sport="soccer", game="26AUG04JEJBMU",
+                              market_key="total_goals|5.5", side="over",
+                              teams="Jeju SK FC vs Bayern Munich", winner="Under 5.5", payout=0.0,
+                              cost=2.27, pnl=-2.2737, roi_pct=-100.0, untracked=True)
+    assert "the UNHEDGED REMAINDER of this trade" in out
+    assert "could not pair off" in out and "luck, not edge" in out
+    assert "hedged pair on this game is reported separately" in out
 
 
 def test_unwound_explains_the_safety_net():

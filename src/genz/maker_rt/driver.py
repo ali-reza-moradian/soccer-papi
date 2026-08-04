@@ -40,6 +40,10 @@ class Candidate:
     kickoff_ts: float
     poly_leg_cap: Optional[float] = None   # per-sport poly-leg cap (None = uncapped sport)
     teams: str = ""           # 'AWAY vs HOME' — for human alert names (resolves MLB home/away sides)
+    # MEASURED per-share maker-fee coefficient on OUR resting leg. Non-zero only for rest-kalshi on a
+    # series the venue actually charges (KXMLBGAME / KXATPMATCH / KXWTAMATCH as of 2026-08-04);
+    # Polymarket charges no maker fee at all, so rest-poly is always 0.0.
+    rest_maker_rate: float = 0.0
 
     @property
     def node3(self) -> tuple:
@@ -134,10 +138,14 @@ class QuoteDriver:
                     hedge_lookup={"venue": "kalshi", "ticker": hedge_node.kalshi_ticker,
                                   "side": hedge_node.kalshi_side},
                     kickoff_ts=qm.kickoff_ts, poly_leg_cap=cap, teams=getattr(qm, 'teams', '')))
-            # rest on KALSHI, hedge on POLY (skip if this series charges a maker fee)
+            # rest on KALSHI, hedge on POLY. Two separate things happen to a fee-charging series here:
+            # ``kalshi_maker_fee_series`` REFUSES it outright (the emergency lever, empty today), and
+            # ``kalshi_maker_fee_rates`` PRICES it — the measured coefficient rides on the candidate so
+            # the quote engine subtracts a real cost instead of pretending resting is free.
             series = str(rest_node.kalshi_ticker or "").split("-", 1)[0]
-            maker_fee = series in getattr(self.cfg, "kalshi_maker_fee_series", ())
-            if rest_node.kalshi_ticker and hedge_node.poly_token_id and not maker_fee:
+            refuse_series = series in getattr(self.cfg, "kalshi_maker_fee_series", ())
+            maker_rate = float((getattr(self.cfg, "kalshi_maker_fee_rates", None) or {}).get(series, 0.0))
+            if rest_node.kalshi_ticker and hedge_node.poly_token_id and not refuse_series:
                 out.append(Candidate(
                     key=(qm.sport, qm.game, qm.market_key, rest_side, "rest-kalshi"),
                     sport=qm.sport, game=qm.game, market_key=qm.market_key, rest_side=rest_side,
@@ -145,7 +153,8 @@ class QuoteDriver:
                     rest_venue="kalshi", hedge_venue="polymarket", tick=0.01, hedge_tick=0.01,
                     poly_rate=float(hedge_node.poly_fee_rate or self.cfg.poly_fee_rate),
                     hedge_lookup={"venue": "polymarket", "token": hedge_node.poly_token_id},
-                    kickoff_ts=qm.kickoff_ts, poly_leg_cap=cap, teams=getattr(qm, 'teams', '')))
+                    kickoff_ts=qm.kickoff_ts, poly_leg_cap=cap, teams=getattr(qm, 'teams', ''),
+                    rest_maker_rate=maker_rate))
         return out
 
     # -- lookups + phase ---------------------------------------------------
@@ -265,7 +274,8 @@ class QuoteDriver:
             hedge_tick = store.poly_tick(c.hedge_lookup.get("token"), 0.01) if c.hedge_venue == "polymarket" else 0.01
             dec = compute_quote(rest, hedge, hedge_venue=c.hedge_venue, tick=tick,
                                 target_net=self.cfg.target_net, quote_usd=self.cfg.quote_usd,
-                                poly_rate=c.poly_rate, hedge_tick=hedge_tick)
+                                poly_rate=c.poly_rate, hedge_tick=hedge_tick,
+                                rest_maker_rate=c.rest_maker_rate)
             prev = self.prev.get(c.key)
             self.prev[c.key] = dec
             # SANITY CEILING: a computed edge above the plausible bound is almost certainly a PRICING/

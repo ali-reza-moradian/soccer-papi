@@ -44,6 +44,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import threading
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
@@ -51,7 +52,7 @@ from typing import Any, Optional
 from . import alerts
 from . import config as mrt_config
 from .offloop import Worker
-from .state import atomic_json, preserve_unreadable
+from .state import atomic_json, hedged_lifetime, preserve_unreadable
 
 #: The fixed UTC snapshot slots. Fixed on purpose: "every 8 hours from process start" would drift with
 #: every restart (the maker restarts 10-21x on a working day), and two snapshots taken 40 minutes apart
@@ -238,15 +239,25 @@ def _read_json(path: str, log: Any = None, *, what: str = "state") -> Any:
 
 
 def load_store(path: Optional[str] = None, log: Any = None) -> dict:
-    """The snapshot store: {schema, baseline, last_slot, snapshots[]}. Never raises."""
+    """The snapshot store: {schema, baseline, baseline_v1, baseline_v2, last_slot, snapshots[]}.
+
+    ``baseline_v1`` is a SUPERSEDED baseline kept for history and ``baseline_v2`` is the latch saying the
+    one-time re-anchor has happened. Both must survive the round trip: this function rebuilds the dict
+    field by field, so a key it forgets is a key the next write DELETES — and a dropped latch is a
+    baseline that re-anchors every eight hours forever. Never raises."""
     p = path or mrt_config.runtime_path("balance_snapshots")
     obj = _read_json(p, log, what="the balance snapshots")
     if not isinstance(obj, dict):
         obj = {}
     snaps = obj.get("snapshots")
-    return {"schema": 1, "baseline": obj.get("baseline") if isinstance(obj.get("baseline"), dict) else None,
-            "last_slot": str(obj.get("last_slot") or ""),
-            "snapshots": [s for s in (snaps or []) if isinstance(s, dict)]}
+    out = {"schema": 1, "baseline": obj.get("baseline") if isinstance(obj.get("baseline"), dict) else None,
+           "last_slot": str(obj.get("last_slot") or ""),
+           "snapshots": [s for s in (snaps or []) if isinstance(s, dict)]}
+    if isinstance(obj.get("baseline_v1"), dict):
+        out["baseline_v1"] = obj["baseline_v1"]
+    if obj.get("baseline_v2"):
+        out["baseline_v2"] = True
+    return out
 
 
 def load_adjustments(path: Optional[str] = None, log: Any = None) -> list:
@@ -329,9 +340,14 @@ def books_from(state: Any, caps: Any = None, open_legs: int = 0) -> dict:
     g = lambda o, n, d=0.0: float(getattr(o, n, d) or 0.0) if o is not None else float(d)  # noqa: E731
     life = g(state, "settled_pnl_lifetime")
     untracked = g(state, "settled_pnl_untracked_lifetime")
+    exits = g(state, "settled_pnl_exits_lifetime")
     return {"settled_pnl_lifetime": round(life, 4),
-            "settled_pnl_hedged_lifetime": round(life - untracked, 4),
+            "settled_pnl_hedged_lifetime": hedged_lifetime(life, untracked, exits),
             "settled_pnl_untracked_lifetime": round(untracked, 4),
+            # THE EXIT TOLL, carried explicitly. It is already inside ``settled_pnl_lifetime`` (that is the
+            # whole point — lifetime has to track venue cash), and it is named here so the report can say
+            # where a negative lifetime movement came from instead of leaving it to be guessed at.
+            "settled_pnl_exits_lifetime": round(exits, 4),
             "settled_trades": int(getattr(state, "settled_trades", 0) or 0) if state is not None else 0,
             "pnl_today": round(g(caps, "pnl_today"), 4),
             "fills_today": int(getattr(caps, "fills_today", 0) or 0) if caps is not None else 0,
@@ -376,8 +392,52 @@ def _window_label(prev_ts: Any, cur_ts: Any) -> str:
     return f"Since the last check ({alerts.dur(secs)})"
 
 
+def is_flat(snap: Optional[dict]) -> bool:
+    """True when this snapshot was taken with NO maker position outstanding at either venue.
+
+    A snapshot with an open pair values the two legs on DIFFERENT bases — Kalshi positions are a COST
+    basis (``market_exposure``, the venue publishes no mark) while Polymarket's are a live MARK
+    (``currentValue``) — so its ``total`` is part cost and part mark. That is not a number a later
+    total can be honestly subtracted from. The 2026-07-31 baseline was snapped with the Birmingham
+    pair open and carried $1.86 of exactly this error into every lifetime comparison after it.
+    ``n_maker`` (not ``n_positions``) is the Poly test: that funder wallet holds hundreds of positions
+    this bot never opened.
+
+    A RESOLVED-BUT-UNREDEEMED leg is deliberately still "flat". On 2026-08-04T14:45Z the wallet held
+    $459.07 of Jeju/Bayern Over 1.5 that had already won and settled in the books; the data API marks a
+    resolved position at $1.00 face, so it is worth exactly what it will convert to and there is no
+    basis mismatch left to distort. What this predicate is for is a position whose VALUATION will move,
+    not any position at all."""
+    if not (snap and snap.get("ok")):
+        return False
+    k, p = snap.get("kalshi") or {}, snap.get("poly") or {}
+    return int(k.get("n_positions") or 0) == 0 and int(p.get("n_maker") or 0) == 0
+
+
+def _split(prev: dict, cur: dict) -> dict:
+    """Per-venue Δcash and Δpositions across a window — so a breach line can say WHERE the gap lives."""
+    out: dict = {}
+    for venue in ("kalshi", "poly"):
+        a, b = prev.get(venue) or {}, cur.get(venue) or {}
+        def d(field: str) -> Optional[float]:
+            x, y = a.get(field), b.get(field)
+            if x is None or y is None:
+                return None
+            try:
+                return round(float(y) - float(x), 4)
+            except (TypeError, ValueError):
+                return None
+        out[venue] = {"cash": d("cash"), "positions": d("positions")}
+    return out
+
+
 def _window(prev: Optional[dict], cur: dict, adjustments: list, label: str) -> Optional[dict]:
-    """One comparison window: venue delta, adjustments, book delta, and what is left over."""
+    """One comparison window: venue delta, adjustments, book delta, and what is left over.
+
+    ``reliable`` is False when EITHER endpoint held an open maker pair. Such a window mixes a cost
+    basis against a mark and its discrepancy is not evidence of anything — see :func:`is_flat`. The
+    window is still computed and still reported (it is a measurement, and hiding it would be its own
+    dishonesty); it simply may not raise the alarm."""
     if not (prev and prev.get("ok") and cur.get("ok")):
         return None
     venue = float(cur["total"]) - float(prev["total"])
@@ -387,16 +447,19 @@ def _window(prev: Optional[dict], cur: dict, adjustments: list, label: str) -> O
     book = float(b1.get("settled_pnl_lifetime") or 0.0) - float(b0.get("settled_pnl_lifetime") or 0.0)
     hedged = float(b1.get("settled_pnl_hedged_lifetime") or 0.0) - float(b0.get("settled_pnl_hedged_lifetime") or 0.0)
     untracked = float(b1.get("settled_pnl_untracked_lifetime") or 0.0) - float(b0.get("settled_pnl_untracked_lifetime") or 0.0)
+    exits = float(b1.get("settled_pnl_exits_lifetime") or 0.0) - float(b0.get("settled_pnl_exits_lifetime") or 0.0)
+    open_at = [w for w, s in (("start", prev), ("end", cur)) if not is_flat(s)]
     return {"label": label, "since": prev.get("ts", ""), "venue_delta": round(venue, 4),
             "adjust_usd": round(adj, 4), "adjustments": entries,
             "book_delta": round(book, 4), "book_hedged": round(hedged, 4),
-            "book_untracked": round(untracked, 4),
-            "discrepancy": round(venue - adj - book, 4)}
+            "book_untracked": round(untracked, 4), "book_exits": round(exits, 4),
+            "discrepancy": round(venue - adj - book, 4),
+            "reliable": not open_at, "open_at": open_at, "split": _split(prev, cur)}
 
 
 def build_report(cur: dict, *, prev: Optional[dict] = None, baseline: Optional[dict] = None,
                  adjustments: Optional[list] = None, alert_usd: float = DEFAULT_ALERT_USD,
-                 open_positions: Optional[list] = None) -> dict:
+                 open_positions: Optional[list] = None, rebaselined: str = "") -> dict:
     """The whole comparison: this snapshot vs the previous one, vs the baseline, vs the books."""
     adjustments = list(adjustments or [])
     windows = {}
@@ -412,11 +475,21 @@ def build_report(cur: dict, *, prev: Optional[dict] = None, baseline: Optional[d
         wl = _window(baseline, cur, adjustments, f"Since baseline ({_day(baseline.get('ts'))})")
         if wl:
             windows["lifetime"] = wl
-    breaches = [w for w in windows.values() if abs(float(w["discrepancy"])) > float(alert_usd) + 1e-9]
+    # A window may only RAISE THE ALARM if both its endpoints were flat. An open pair puts a Kalshi cost
+    # basis on one side of the subtraction and a Polymarket mark on the other, so its "discrepancy" is
+    # part measurement and part valuation convention — and on 2026-08-01/02 that produced two
+    # +/-$19-25 red MISMATCH alerts with nothing actually wrong. Noise the operator cannot distinguish
+    # from a real drift is worse than no alarm: it teaches them to ignore the one that matters. The
+    # unreliable window is still shown, still labelled, and judgement is deferred to the next flat one.
+    breaches = [w for w in windows.values()
+                if w.get("reliable") and abs(float(w["discrepancy"])) > float(alert_usd) + 1e-9]
+    deferred = [w for w in windows.values()
+                if not w.get("reliable") and abs(float(w["discrepancy"])) > float(alert_usd) + 1e-9]
     return {"snapshot": cur, "windows": windows, "alert_usd": float(alert_usd),
-            "breaches": breaches, "alert": bool(breaches),
+            "breaches": breaches, "alert": bool(breaches), "deferred": deferred,
             "is_baseline": bool(cur.get("ok") and not windows),
             "adjustments_known": bool(adjustments),
+            "rebaselined": str(rebaselined or ""),
             "open_positions": list(open_positions or [])}
 
 
@@ -452,7 +525,12 @@ def _window_line(w: dict, alert_usd: float) -> str:
     """One window. The verdict word is derived from the SAME threshold that decides the alert, so the
     line and the alarm can never tell different stories about the same number."""
     diff = abs(float(w["discrepancy"]))
-    if diff > float(alert_usd) + 1e-9:
+    if not w.get("reliable"):
+        # NOT a verdict — a refusal to give one. Say why, and say what will answer it.
+        where = " and ".join(str(x) for x in (w.get("open_at") or []))
+        mark = (f"⚪ unreliable while pairs are open (marks move) — pairs open at the {where} of this "
+                f"window; judgement deferred to the next flat-to-flat one")
+    elif diff > float(alert_usd) + 1e-9:
         mark = "🔴 MISMATCH"
     elif diff <= max(0.50, float(alert_usd) * 0.1):
         mark = "✅ match"
@@ -461,6 +539,21 @@ def _window_line(w: dict, alert_usd: float) -> str:
     adj = (f" · manual adjustments {_signed(w['adjust_usd'])}" if w.get("adjustments") else "")
     return (f"   {w['label']}: {_signed(w['venue_delta'])}{adj} · bot's books say "
             f"{_signed(w['book_delta'])} · {mark} (diff {_usd(diff)})")
+
+
+def _split_line(w: dict) -> str:
+    """WHERE the gap lives: each venue's Δcash and Δpositions over the window.
+
+    A bare "$12 apart" sends a human to two dashboards to find out which venue and whether it was cash
+    or a mark. The numbers are already in the snapshots; printing them is free and answers the first
+    question that gets asked."""
+    sp = w.get("split") or {}
+    def one(name: str, key: str) -> str:
+        d = sp.get(key) or {}
+        c, p = d.get("cash"), d.get("positions")
+        return (f"{name} cash {_signed(c) if c is not None else '$—'}/positions "
+                f"{_signed(p) if p is not None else '$—'}")
+    return f"      where: {one('Kalshi', 'kalshi')} · {one('Polymarket', 'poly')}"
 
 
 def _books_line(books: dict) -> str:
@@ -472,9 +565,10 @@ def _books_line(books: dict) -> str:
     life = float(books.get("settled_pnl_lifetime") or 0.0)
     hedged = float(books.get("settled_pnl_hedged_lifetime") or 0.0)
     untracked = float(books.get("settled_pnl_untracked_lifetime") or 0.0)
+    exits = float(books.get("settled_pnl_exits_lifetime") or 0.0)
     return (f"   My books: settled lifetime {_signed(life)} ({_signed(hedged)} from hedged pairs, "
-            f"{_signed(untracked)} luck) · today's locked estimate {_signed(books.get('pnl_today'))} "
-            f"(not settled yet — it is still in the positions above)")
+            f"{_signed(untracked)} luck, {_signed(exits)} exit costs) · today's locked estimate "
+            f"{_signed(books.get('pnl_today'))} (not settled yet — it is still in the positions above)")
 
 
 def render_report(rep: dict) -> str:
@@ -495,6 +589,12 @@ def render_report(rep: dict) -> str:
         w = (rep.get("windows") or {}).get(key)
         if w:
             lines.append(_window_line(w, rep.get("alert_usd", DEFAULT_ALERT_USD)))
+            lines.append(_split_line(w))
+    if rep.get("rebaselined"):
+        lines.append(f"   📌 NEW BASELINE (baseline_v2). The old baseline ({_day(rep['rebaselined'])}) was "
+                     f"snapped with a pair still open, so its total mixed a Kalshi COST basis with a "
+                     f"Polymarket MARK and every lifetime comparison inherited that error. It is kept in "
+                     f"the store for history; lifetime is measured from this flat snapshot onward.")
     if s.get("books"):
         lines.append(_books_line(s["books"]))
     # Every adjustment is NAMED. One absorbed silently is indistinguishable from a bug we hid.
@@ -525,7 +625,16 @@ def render_report(rep: dict) -> str:
             f"{_signed(w['venue_delta'])} but my books say "
             f"{_signed(w['book_delta'])}, a gap of "
             f"{_usd(abs(float(w['discrepancy'])))}. That is more than the "
-            f"{_usd(rep.get('alert_usd'))} I treat as normal drift. Investigate.")
+            f"{_usd(rep.get('alert_usd'))} I treat as normal drift. Both ends of this window were flat, "
+            f"so it is not mark noise. Investigate.")
+        lines.append(_split_line(w))
+    for w in rep.get("deferred") or []:
+        lines.append(
+            f"⚪ over '{w['label'].lower()}' the exchanges and my books are "
+            f"{_usd(abs(float(w['discrepancy'])))} apart, but a pair was open at the "
+            f"{' and '.join(str(x) for x in (w.get('open_at') or []))} of it, so the two sides are not "
+            f"measured on the same basis and I will NOT call that a mismatch. The next flat-to-flat "
+            f"check answers it.")
     if s.get("poly", {}).get("truncated"):
         lines.append("   ⚠️ the Polymarket position list was truncated — the total is a FLOOR, not a "
                      "complete figure.")
@@ -700,12 +809,20 @@ class BalanceReconciler:
         return rows, True
 
     # -- persistence ---------------------------------------------------------
-    def _persist(self, snap: dict, *, consume_slot: bool) -> dict:
-        """Append the snapshot; set the baseline if there is not one yet. NEVER overwrites a baseline.
+    def _persist(self, snap: dict, *, consume_slot: bool) -> tuple:
+        """Append the snapshot; set (or ONCE re-anchor) the baseline. Returns ``(store, rebased_from)``.
 
         A snapshot that could not read a venue is still appended (it is the record that we tried and
         failed) but may not become the baseline — a baseline built on a half-read account would poison
         every lifetime comparison after it.
+
+        ONLY A FLAT SNAPSHOT MAY BE THE BASELINE. A snapshot holding an open maker pair values Kalshi at
+        COST and Polymarket at MARK, so its total is not a figure a later total can be subtracted from —
+        the 2026-07-31 baseline was taken with the Birmingham pair open and injected $1.86 of pure
+        valuation artefact into every lifetime comparison that followed. When the stored baseline is one
+        of those, the FIRST flat, ok snapshot after this ships replaces it (``baseline_v2``) and the old
+        one is kept under ``baseline_v1`` — the audit trail is append-only, so a bad measurement is
+        superseded, never deleted. This happens AT MOST ONCE: ``baseline_v2`` existing is the latch.
 
         Read-modify-write under a LOCK: a job abandoned at its deadline is not killed, so it can still
         be running when its replacement finishes, and two interleaved appends would drop one of them.
@@ -713,14 +830,29 @@ class BalanceReconciler:
         action taken minutes at a time, not a concurrent writer.)"""
         with self._persist_lock:
             store = load_store(self.path, self.log)
-            if store.get("baseline") is None and snap.get("ok"):
-                snap = {**snap, "baseline": True}      # flagged BEFORE it is stored in both places, so
-                store["baseline"] = snap               # the two copies cannot disagree about what it is
+            rebased_from = ""
+            base = store.get("baseline")
+            if snap.get("ok") and is_flat(snap):
+                if base is None:
+                    snap = {**snap, "baseline": True}  # flagged BEFORE it is stored in both places, so
+                    store["baseline"] = snap           # the two copies cannot disagree about what it is
+                elif not store.get("baseline_v2") and not is_flat(base):
+                    rebased_from = str(base.get("ts") or "")
+                    store["baseline_v1"] = base        # kept for history — never deleted
+                    snap = {**snap, "baseline": True, "baseline_v2": True}
+                    store["baseline"] = snap
+                    store["baseline_v2"] = True
+                    if self.log:
+                        self.log.warning(
+                            "[MAKER_RT][BALANCE] RE-ANCHORED the baseline: the old one (%s) was taken "
+                            "with a maker pair open, so it mixed a Kalshi cost basis with a Polymarket "
+                            "mark. Lifetime is now measured from %s, which is flat. The old baseline is "
+                            "kept as baseline_v1.", rebased_from, snap.get("ts"))
             store["snapshots"].append(snap)
             if consume_slot and snap.get("slot"):
                 store["last_slot"] = snap["slot"]
             atomic_json(self.path or mrt_config.runtime_path("balance_snapshots"), store)
-            return store
+            return store, rebased_from
 
     # -- one full run --------------------------------------------------------
     def run_once(self, books: dict, now: datetime, *, slot: str = "", manual: bool = False) -> dict:
@@ -732,13 +864,15 @@ class BalanceReconciler:
             if s.get("ok"):
                 prev = s
                 break
-        baseline = store.get("baseline")
         # A FAILED run does not consume its slot. Marking the slot done on a venue we could not read
         # would trade one bad HTTP response for an eight-hour hole in the audit trail.
-        store = self._persist(snap, consume_slot=bool(snap.get("ok")) and not manual)
+        store, rebased_from = self._persist(snap, consume_slot=bool(snap.get("ok")) and not manual)
+        # The baseline is read AFTER the persist so a run that re-anchors compares against the baseline
+        # it just set, not the one it just superseded.
+        baseline = store.get("baseline")
         rep = build_report(snap, prev=prev, baseline=baseline if baseline else None,
                            adjustments=load_adjustments(log=self.log), alert_usd=self.alert_usd,
-                           open_positions=self._open_pair_names(snap))
+                           open_positions=self._open_pair_names(snap), rebaselined=rebased_from)
         return {"snapshot": snap, "report": rep, "text": render_report(rep)}
 
     def _open_pair_names(self, snap: dict) -> list:
@@ -883,6 +1017,22 @@ class BalanceReconciler:
 # --------------------------------------------------------------------------- #
 # `python -m src.genz.maker_rt --balance`                                        #
 # --------------------------------------------------------------------------- #
+def _print(text: str) -> None:
+    """Print the report on a console that may not be able to encode it.
+
+    Windows hands a bare ``python -m ...`` a cp1252 stdout, and every line of this report starts with an
+    emoji. ``print`` then raises UnicodeEncodeError *after* the venue reads, the persist and the
+    re-anchor have already happened — so the audit ran, changed state, and reported a traceback instead
+    of its answer. Re-encode to whatever the console does support and keep the words."""
+    try:
+        print(text)
+        return
+    except UnicodeEncodeError:
+        pass
+    enc = getattr(sys.stdout, "encoding", None) or "ascii"
+    print(text.encode(enc, errors="replace").decode(enc, errors="replace"))
+
+
 def run_cli(cfg: Any, log: Any = None) -> int:
     """Run the audit ON DEMAND and print the same report the 8-hourly one sends.
 
@@ -893,19 +1043,21 @@ def run_cli(cfg: Any, log: Any = None) -> int:
     tun = load_tuning(log)
     life = float(tun.get("settled_pnl_lifetime", 0.0) or 0.0)
     untracked = float(tun.get("settled_pnl_untracked_lifetime", 0.0) or 0.0)
+    exits = float(tun.get("settled_pnl_exits_lifetime", 0.0) or 0.0)
     caps = _read_json(mrt_config.runtime_path("daily_caps"), log, what="the daily caps") or {}
     exp = _read_json(mrt_config.runtime_path("expected_positions"), log,
                      what="the expected-position registry") or {}
     books = {"settled_pnl_lifetime": round(life, 4),
-             "settled_pnl_hedged_lifetime": round(life - untracked, 4),
+             "settled_pnl_hedged_lifetime": hedged_lifetime(life, untracked, exits),
              "settled_pnl_untracked_lifetime": round(untracked, 4),
+             "settled_pnl_exits_lifetime": round(exits, 4),
              "settled_trades": int(tun.get("settled_trades", 0) or 0),
              "pnl_today": round(float(caps.get("pnl_today", 0.0) or 0.0), 4),
              "fills_today": int(caps.get("fills_today", 0) or 0),
              "open_legs": len(exp) if isinstance(exp, dict) else 0}
     rec = BalanceReconciler(cfg, telegram=None, log=log)
     out = rec.run_once(books, datetime.now(timezone.utc), slot="", manual=True)
-    print(out["text"])
+    _print(out["text"])
     snap = out["snapshot"]
     if not snap.get("ok"):
         print("\n(one or both venues could not be read — see the errors above; nothing was compared.)")

@@ -36,16 +36,43 @@ def hedge_taker_fee(venue: str, price: float, poly_rate: float = 0.05) -> float:
     return 0.0
 
 
+#: MEASURED Kalshi MAKER-fee coefficient — 0.0175, exactly a QUARTER of the 0.07 taker rate, over the
+#: same ``p·(1−p)`` base. Not a published number and not an assumption: it is the unique coefficient that
+#: reproduces all 8 fee-charging maker fills in our own 2026-07-22..08-04 fill history to the cent, via
+#: ``ceil(0.0175·C·p·(1−p), 4dp)``. Evidence + the per-fill table are in docs/BOOKS_VS_BANKS_20260804.md.
+#: WHICH SERIES pay it is a separate fact and lives in ``cfg.kalshi_maker_fee_rates`` — across the same
+#: history, 38/38 maker fills on soccer and UFC series were charged EXACTLY $0.00 (including one of 353
+#: shares and one of 179), while every maker fill on KXMLBGAME / KXATPMATCH / KXWTAMATCH was charged.
+KALSHI_MAKER_FEE_RATE = 0.0175
+
+
+def rest_maker_fee(price: float, rate: float = 0.0) -> float:
+    """Per-share MAKER fee for OUR resting order at ``price``. ``rate`` 0.0 (the default, and the case
+    for every soccer/UFC series measured) makes this exactly zero, so nothing changes where nothing is
+    charged. Same ``p·(1−p)`` shape as the taker fee — a fee is largest at 50c and vanishes at the
+    extremes, which is why a flat per-contract guess would misprice both tails."""
+    if not rate:
+        return 0.0
+    p = min(max(float(price), 0.0), 1.0)
+    return float(rate) * p * (1.0 - p)
+
+
 def round_down_tick(x: float, tick: float) -> float:
     tick = tick or DEFAULT_TICK
     return round(math.floor(x / tick + 1e-9) * tick, 6)
 
 
 def compute_floor(hedge_best_ask: float, hedge_venue: str, target_net: float,
-                  poly_rate: float = 0.05) -> float:
+                  poly_rate: float = 0.05, rest_maker_rate: float = 0.0) -> float:
     """The raw economic floor price: the highest rest price that still nets >= target_net after the
-    hedge's taker fee."""
-    return 1.0 - hedge_best_ask - hedge_taker_fee(hedge_venue, hedge_best_ask, poly_rate) - target_net
+    hedge's taker fee AND our own resting leg's maker fee.
+
+    The maker fee depends on the price we are solving FOR, so this takes one Newton step: price the fee
+    at the fee-free floor, then subtract it. The correction to the correction is bounded by
+    ``rate·|Δp|`` ≈ 8e-5 of a cent at the measured 0.0175, which is four orders of magnitude below the
+    tick — a fixed-point loop here would buy nothing but a way to not converge."""
+    base = 1.0 - hedge_best_ask - hedge_taker_fee(hedge_venue, hedge_best_ask, poly_rate) - target_net
+    return base - rest_maker_fee(base, rest_maker_rate)
 
 
 @dataclass
@@ -63,14 +90,20 @@ class QuoteDecision:
 
 def compute_quote(rest: SideView, hedge: SideView, *, hedge_venue: str, tick: float,
                   target_net: float, quote_usd: float, poly_rate: float = 0.05,
-                  hedge_tick: float = DEFAULT_TICK, min_shares: int = POLY_MIN_SHARES) -> QuoteDecision:
+                  hedge_tick: float = DEFAULT_TICK, min_shares: int = POLY_MIN_SHARES,
+                  rest_maker_rate: float = 0.0) -> QuoteDecision:
     """One direction's quote decision from the current rest/hedge side-views. Never crosses (always a
-    maker); refuses when the hedge book is too thin to cover the quote at the ask + 1 tick."""
+    maker); refuses when the hedge book is too thin to cover the quote at the ask + 1 tick.
+
+    ``rest_maker_rate`` is the venue's fee coefficient on OUR OWN resting fill — 0.0 (and therefore
+    inert) for Polymarket and for every Kalshi series measured not to charge one. Where it IS charged,
+    it is a real per-share cost of the very trade being priced, and leaving it out overstates every edge
+    on that series by up to 0.44c/share at 50c — a third of the 1.3% target."""
     tick = tick or DEFAULT_TICK
     hedge_ask = hedge.best_ask
     if hedge_ask is None or not (0.0 < hedge_ask < 1.0):
         return QuoteDecision(False, "no_hedge_ask")
-    floor = compute_floor(hedge_ask, hedge_venue, target_net, poly_rate)
+    floor = compute_floor(hedge_ask, hedge_venue, target_net, poly_rate, rest_maker_rate)
     if floor < tick:
         return QuoteDecision(False, "floor_below_tick", floor=floor, hedge_best_ask=hedge_ask)
     rest_bid, rest_ask = rest.best_bid, rest.best_ask
@@ -90,7 +123,10 @@ def compute_quote(rest: SideView, hedge: SideView, *, hedge_venue: str, tick: fl
         return QuoteDecision(False, "hedge_too_thin", quote_price=qp, size_shares=size,
                              floor=floor, hedge_best_ask=hedge_ask)
     at_best = rest_bid is None or qp >= rest_bid - 1e-9
-    net = 1.0 - qp - hedge_ask - hedge_taker_fee(hedge_venue, hedge_ask, poly_rate)
+    # EXACT here (unlike the floor): ``qp`` is the price we will actually rest at, so the maker fee on it
+    # is known rather than solved for.
+    net = (1.0 - qp - hedge_ask - hedge_taker_fee(hedge_venue, hedge_ask, poly_rate)
+           - rest_maker_fee(qp, rest_maker_rate))
     if not at_best:
         return QuoteDecision(False, "behind_best", quote_price=qp, size_shares=size, floor=floor,
                              at_best=False, would_be_behind=True, hedge_best_ask=hedge_ask, net_at_quote=net)

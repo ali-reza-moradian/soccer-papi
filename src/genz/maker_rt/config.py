@@ -63,6 +63,11 @@ RUNTIME_FILES: dict[str, tuple[str, str]] = {
     # it: deposits, withdrawals and hand-placed trades the bot's books never saw.
     "balance_snapshots": ("ops", "balance_snapshots.json"),
     "balance_adjustments": ("ops", "balance_adjustments.json"),
+    # ONE-TIME, KEYED CORRECTIONS to the lifetime counters (state.apply_restatements). Each entry
+    # carries a ``key``; the key is written into the tuning file once it is applied, and an already-keyed
+    # entry is REFUSED forever after. This is how a correction that must happen exactly once survives the
+    # 10-21 restarts a working day sees.
+    "restatements": ("ops", "maker_rt_RESTATEMENTS.json"),
 }
 
 
@@ -352,8 +357,19 @@ class MakerRtConfig:
     # (0 = old behavior, instant per-event). FILL/HEDGE/UNWIND/PAUSE/HALT/feed-down/errors stay INSTANT.
     telegram_digest_min: float = 15.0
     drift_marks_s: tuple = (1, 5, 30)      # adverse-selection hedge-drift marks after a shadow fill
-    # Kalshi series that charge a MAKER fee — never rest on the Kalshi side of these (verified list).
+    # HARD REFUSAL list: never rest on the Kalshi side of these series at all. EMPTY ON PURPOSE, and the
+    # reason changed on 2026-08-04. It used to be empty because nobody had checked; it is empty now
+    # because we measured, and a series that charges a maker fee no longer needs to be banned — the fee
+    # is PRICED IN via ``kalshi_maker_fee_rates`` below, so such a series simply has to clear the target
+    # net after paying it. Keep this as the emergency lever for a series we want out regardless of price.
     kalshi_maker_fee_series: tuple = ()
+    # MEASURED Kalshi maker-fee coefficient PER SERIES, over the same p·(1−p) base as the taker fee.
+    # Evidence (our own fills, 2026-07-22..08-04, docs/BOOKS_VS_BANKS_20260804.md): every maker fill on
+    # KXMLBGAME / KXATPMATCH / KXWTAMATCH was charged exactly ceil(0.0175·C·p·(1−p), 4dp) — 8/8 to the
+    # cent — while 38/38 maker fills on soccer and UFC series were charged $0.00, including one of 353
+    # shares and one of 179. A series absent from this map is priced at zero, which is what it is.
+    kalshi_maker_fee_rates: dict = field(default_factory=lambda: {
+        "KXMLBGAME": 0.0175, "KXATPMATCH": 0.0175, "KXWTAMATCH": 0.0175})
     # PER-SPORT POLY-LEG CAP: skip a direction whenever the Polymarket leg's price (rest price when
     # resting Poly; hedge best ask when hedging Poly) exceeds the sport's cap. On a pre-event walkover
     # (tennis) or a cancel/draw/NC (ufc) the Poly leg settles 50c while the Kalshi leg refunds ~last
@@ -456,6 +472,9 @@ def load_maker_rt_config(config_path: Optional[str] = None,
         cfg.drift_marks_s = tuple(int(x) for x in blk["drift_marks_s"])
     if blk.get("kalshi_maker_fee_series"):
         cfg.kalshi_maker_fee_series = tuple(str(x) for x in blk["kalshi_maker_fee_series"])
+    if isinstance(blk.get("kalshi_maker_fee_rates"), dict):
+        cfg.kalshi_maker_fee_rates = {str(k): float(v)
+                                      for k, v in blk["kalshi_maker_fee_rates"].items()}
     # IN-PLAY rails sub-block.
     ip_blk = blk.get("inplay")
     ip_blk = dict(ip_blk) if isinstance(ip_blk, dict) else {}

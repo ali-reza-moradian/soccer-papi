@@ -269,6 +269,10 @@ async def _run(cfg: Any, log: Any) -> int:
     # pair's stake is a unit/pairing bug and is refused before it can touch lifetime pnl).
     state.settled_max_net_usd = float(getattr(cfg.live, "max_pair_stake_usd", 100.0))
     state.load_tuning()          # cross-restart fill-rate + realized-locked-net windows (target_net tuning)
+    # ONE-TIME KEYED CORRECTIONS to the lifetime counters, applied straight after the load so every
+    # reader downstream sees the corrected numbers. Each key lands exactly once, ever — see
+    # MakerState.apply_restatements; on a restart with nothing new this is a single stat() and returns [].
+    state.apply_restatements()
     state.gates = {"pre": bool(gate.armed), "inplay": bool(inplay_gate.armed)}
     telegram = _telegram_sender(log, queued=True)   # FIFO + sender thread: never block the loop on chat
     # UNIFIED LIVE executor (rest-poly, BOTH phases) — built when EITHER gate is armed AND the order

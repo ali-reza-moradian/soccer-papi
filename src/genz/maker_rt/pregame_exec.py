@@ -3916,15 +3916,25 @@ class PregameLiveExecutor:
                                    payout=row.get("settled_revenue_usd"), cost=row.get("settled_cost_usd"),
                                    pnl=row.get("realized_pnl_usd"),
                                    roi_pct=(float(row.get("roi") or 0.0) * 100.0),
-                                   lifetime_pnl=round(life, 4))
+                                   lifetime_pnl=round(life, 4),
+                                   # A naked leftover settling is NOT a second trade on this game — say so
+                                   # in the alert, or a +$1.80 pair beside a -$2.27 remainder reads as a bug.
+                                   untracked=bool(row.get("untracked")))
 
     def _live_ctx(self) -> dict:
         """Daily-usage + lifetime context for the rich PLACED/LOCKED alerts (open slots, fills, $ used,
-        today pnl, and lifetime = settled realized + today's locked estimate)."""
+        today pnl, and lifetime).
+
+        BOTH lifetime numbers are handed over, because they are not the same kind of fact and the alert
+        used to print only the compound one under the bare word "Lifetime". ``lifetime_settled`` is venue
+        truth — money that actually settled. ``lifetime_pnl`` adds today's fill-time locked ESTIMATE of
+        pairs that have not settled yet, which is why the overnight alerts of 2026-08-04 read +$33.62
+        while the settled truth after the morning was +$32.38. The alert names which is which."""
         life = float(getattr(self.state, "settled_pnl_lifetime", 0.0) or 0.0) if self.state is not None else 0.0
         return {"open_now": len(self.open_orders), "max_open": self.caps.max_open_quotes,
                 "fills_today": self.caps.fills_today, "stake_today": round(self.caps.stake_today, 2),
                 "stake_cap": self.caps.max_daily_stake_usd, "today_pnl": round(self.caps.pnl_today, 4),
+                "lifetime_settled": round(life, 4),
                 "lifetime_pnl": round(life + self.caps.pnl_today, 4)}
 
     def _persist_settled_ledger(self) -> None:

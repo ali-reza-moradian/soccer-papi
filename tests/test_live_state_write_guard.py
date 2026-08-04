@@ -145,6 +145,8 @@ def test_every_runtime_file_is_registered():
         "lock",            # the singleton lock (one maker per host) — see maker_rt/singleton.py
         # the 8-hourly venue-truth audit: its append-only snapshot log + the human's adjustments file
         "balance_snapshots", "balance_adjustments",
+        # one-time KEYED corrections to the lifetime counters (state.apply_restatements)
+        "restatements",
     }
 
 

@@ -52,6 +52,23 @@ CSV_COLUMNS = [
 ]
 
 
+def hedged_lifetime(life: Any, untracked: Any, exits: Any) -> float:
+    """THE hedged-pnl formula, in ONE place:  hedged = lifetime - untracked - exits.
+
+    ``settled_pnl_lifetime`` is every dollar the venues actually realized for us. Two of its parts are
+    not maker edge and must be removed before anyone reads it as "how well is the hedged strategy
+    doing": ``untracked`` (naked luck — the UFC ghost-stack +$42) and ``exits`` (the unwind toll, a
+    negative number, so subtracting it makes hedged LARGER than lifetime). Both call sites of this
+    subtraction used to be spelled out by hand in five files; a formula with five copies is a formula
+    with five chances to disagree, and this one decides what the balance audit compares to venue cash."""
+    def f(v: Any) -> float:
+        try:
+            return float(v or 0.0)
+        except (TypeError, ValueError):
+            return 0.0
+    return round(f(life) - f(untracked) - f(exits), 4)
+
+
 def _median(xs: list) -> Optional[float]:
     vs = sorted(v for v in xs if v is not None)
     if not vs:
@@ -229,12 +246,26 @@ class MakerState:
     # UNTRACKED (naked) settled pnl — e.g. the 2026-07-25 UFC ghost-stack luck (+$42). Tracked SEPARATELY
     # so the HEDGED-only realized number (settled_pnl_lifetime − this) is not flattered by a naked windfall.
     settled_pnl_untracked_lifetime: float = 0.0
+    # EXIT COSTS (the unwind toll), lifetime. THE BOOKS-vs-BANKS GAP: a fill we could not hedge is
+    # unwound at a real cost in real venue cash, but the market it happened in then settles with us
+    # FLAT — so no trade_settled row is ever written for it and, before this counter, the toll lived
+    # only in ``unwind_cost_today``, which rolls to zero at UTC midnight. Between the 2026-07-31
+    # baseline and 2026-08-04 that silently hid $6.99: the books claimed +$8.53 while the exchanges
+    # moved +$3.30. The toll is REAL REALIZED MONEY, so it enters ``settled_pnl_lifetime`` (which is
+    # what the balance audit compares against venue cash) AND is kept here so the HEDGED number can
+    # still be read pure:  hedged = lifetime - untracked - exits.
+    settled_pnl_exits_lifetime: float = 0.0            # signed (always <= 0 in practice): $ paid to EXIT
+    settled_exits: int = 0                             # count of VERIFIED exits booked into lifetime
     settled_cost_lifetime: float = 0.0                 # sum of cost basis across settled trades ($; ROI denom)
     settled_trades: int = 0                            # count of settled trades (hedged + untracked)
     # SANITY CEILING on |net| for a settled row (defense-in-depth: the reconciler guards at the source,
     # this guards the AGGREGATOR so a backfill / CSV replay / future call site can't inject a corrupt
     # number either). Set at startup from cfg.live.max_pair_stake_usd; the ROI ceiling is fixed at 50%.
     settled_max_net_usd: float = 100.0
+    # Keys of the one-time restatements already applied to the counters above. Persisted WITH them, so
+    # "has this correction been applied?" is answered by the same file the correction changed — there is
+    # no window in which one landed and the other did not.
+    restatements_applied: list = field(default_factory=list)
     _tuning_saved_ts: float = 0.0                      # last persist (see maybe_persist_tuning)
     measurement_gates: dict = field(default_factory=dict)   # gates.report(), refreshed off the hot path
     # SAFETY SYSTEMS: last-landed age per background pass (fill-poll / reconcile / settle / gates /
@@ -255,13 +286,15 @@ class MakerState:
                     self.lifetime_fills, self.lifetime_unwinds, self.recent_outcomes,
                     self.lifetime_quotes, self.recent_locked_nets,
                     self.settled_pnl_lifetime, self.settled_cost_lifetime, self.settled_trades,
-                    self.settled_max_net_usd, self.settled_pnl_untracked_lifetime, self.safety)
+                    self.settled_max_net_usd, self.settled_pnl_untracked_lifetime, self.safety,
+                    self.settled_pnl_exits_lifetime, self.settled_exits, self.restatements_applied)
             self.__init__(day=day)  # type: ignore[misc]
             (self.log, self.restarts_today, self.gates, self.live,
              self.lifetime_fills, self.lifetime_unwinds, self.recent_outcomes,
              self.lifetime_quotes, self.recent_locked_nets,
              self.settled_pnl_lifetime, self.settled_cost_lifetime, self.settled_trades,
-             self.settled_max_net_usd, self.settled_pnl_untracked_lifetime, self.safety) = keep
+             self.settled_max_net_usd, self.settled_pnl_untracked_lifetime, self.safety,
+             self.settled_pnl_exits_lifetime, self.settled_exits, self.restatements_applied) = keep
 
     def _bucket(self, sport: str, phase: str) -> _Bucket:
         return self.buckets.setdefault((str(sport or "?"), str(phase or "pre")), _Bucket())
@@ -282,6 +315,9 @@ class MakerState:
                                         maxlen=_TUNING_WINDOW)
         self.settled_pnl_lifetime = float(obj.get("settled_pnl_lifetime", 0.0) or 0.0)
         self.settled_pnl_untracked_lifetime = float(obj.get("settled_pnl_untracked_lifetime", 0.0) or 0.0)
+        self.settled_pnl_exits_lifetime = float(obj.get("settled_pnl_exits_lifetime", 0.0) or 0.0)
+        self.settled_exits = int(obj.get("settled_exits", 0) or 0)
+        self.restatements_applied = [str(k) for k in (obj.get("restatements_applied") or []) if k]
         self.settled_cost_lifetime = float(obj.get("settled_cost_lifetime", 0.0) or 0.0)
         self.settled_trades = int(obj.get("settled_trades", 0) or 0)
         # ACHIEVABLE LADDERS (N27). Restarts run ~10-21x/day, and the ladder is the ONLY evidence that
@@ -296,6 +332,61 @@ class MakerState:
             except Exception:  # noqa: BLE001 — a corrupt ladder entry must never block startup
                 continue
 
+    def apply_restatements(self, path: Optional[str] = None) -> list:
+        """Apply any one-time KEYED corrections to the lifetime counters. Returns the keys applied now.
+
+        Call ONCE at startup, immediately after :meth:`load_tuning`. A restatement corrects history that
+        the live path can no longer produce — money the venues moved that the books never booked — and it
+        must land EXACTLY ONCE across the 10-21 restarts a working day sees. So the key is written into
+        the SAME file the counters live in, by the SAME atomic write: there is no ordering in which the
+        correction is applied but its key is not, and an already-listed key is refused forever.
+
+        The file is a list of ``{key, note, exits_usd?, untracked_usd?, hedged_usd?}``. ``exits_usd`` is
+        SIGNED the way the cash moved (a paid exit toll is NEGATIVE) and moves BOTH
+        ``settled_pnl_lifetime`` and the exits bucket, exactly as a live exit does — so the restated
+        number is indistinguishable from one the running bot would have produced."""
+        p = path or mrt_config.runtime_path("restatements")
+        if not os.path.exists(p):
+            return []
+        try:
+            with open(p, "r", encoding="utf-8-sig") as fh:
+                entries = json.load(fh)
+        except (ValueError, OSError, TypeError):
+            preserve_unreadable(p, self.log, what="the lifetime restatements")
+            return []
+        if isinstance(entries, dict):
+            entries = entries.get("restatements") or []
+        applied: list = []
+        for e in entries if isinstance(entries, list) else []:
+            if not isinstance(e, dict):
+                continue
+            key = str(e.get("key") or "")
+            if not key or key in self.restatements_applied:
+                continue                                  # already booked — REFUSE, silently and forever
+            def _f(name: str) -> float:
+                try:
+                    return float(e.get(name) or 0.0)
+                except (TypeError, ValueError):
+                    return 0.0
+            exits, untracked, hedged = _f("exits_usd"), _f("untracked_usd"), _f("hedged_usd")
+            self.settled_pnl_lifetime += exits + untracked + hedged
+            self.settled_pnl_exits_lifetime += exits
+            self.settled_pnl_untracked_lifetime += untracked
+            if abs(exits) > 1e-9:
+                self.settled_exits += int(e.get("exits_n") or 0)
+            self.restatements_applied.append(key)
+            applied.append(key)
+            if self.log:
+                self.log.warning(
+                    "[MAKER_RT][RESTATEMENT] applied %s: exits %+.4f, untracked %+.4f, hedged %+.4f -> "
+                    "lifetime %+.4f (hedged %+.4f). %s", key, exits, untracked, hedged,
+                    self.settled_pnl_lifetime,
+                    hedged_lifetime(self.settled_pnl_lifetime, self.settled_pnl_untracked_lifetime,
+                                    self.settled_pnl_exits_lifetime), e.get("note") or "")
+        if applied:
+            self.persist_tuning()          # key + counters land TOGETHER, in one atomic write
+        return applied
+
     def persist_tuning(self) -> None:
         """Write the cross-restart counters (atomic, best-effort — never blocks trading)."""
         _atomic_json(_tuning_path(), {
@@ -306,6 +397,9 @@ class MakerState:
             "recent_locked_nets": list(self.recent_locked_nets),
             "settled_pnl_lifetime": round(self.settled_pnl_lifetime, 4),
             "settled_pnl_untracked_lifetime": round(self.settled_pnl_untracked_lifetime, 4),
+            "settled_pnl_exits_lifetime": round(self.settled_pnl_exits_lifetime, 4),
+            "settled_exits": self.settled_exits,
+            "restatements_applied": list(self.restatements_applied),
             "settled_cost_lifetime": round(self.settled_cost_lifetime, 4),
             "settled_trades": self.settled_trades,
             "achievable": {f"{sp}|{ph}": b.achievable_state()
@@ -360,8 +454,30 @@ class MakerState:
             # the fill required an EXIT (we paid the unwind toll). unwind_cost is on the row here, BEFORE
             # _append_csv drops it (it's not a CSV column — realized_pnl_usd carries -cost to the CSV).
             self.n_unwinds += 1; self.lifetime_unwinds += 1
-            self.unwind_cost_today += float(row.get("unwind_cost") or 0.0)
+            cost = float(row.get("unwind_cost") or 0.0)
+            self.unwind_cost_today += cost
             self.recent_outcomes.append(1)
+            # THE EXIT TOLL ENTERS LIFETIME. This money left the account for good: we bought shares we
+            # could not hedge and sold them back cheaper, and the market then settled with us FLAT, so
+            # no trade_settled row will ever be written to account for it. Until now the only record was
+            # ``unwind_cost_today``, which resets at UTC midnight — which is precisely how the books came
+            # to claim +$8.53 while the exchanges had moved +$3.30.
+            #
+            # WHICH EXITS COUNT, and why the third one does not:
+            #   hedge_unwound  — a VERIFIED unwind (``_verified_unwind`` confirmed flat). Always booked;
+            #                    a fully-hedged or dust row simply carries cost 0.0 and adds nothing.
+            #   hedge_declined — same verified-flat path, taken because the hedge was too dear. Booked
+            #                    ONLY when it carries a real paid cost: the zero-cost variants are a
+            #                    fill that needed no exit and un-closable dust, neither of which moved
+            #                    cash, and booking them would put a 0.00 exit in the count.
+            #   unwind_FAILED  — NOT booked. That position STILL EXISTS. It is marked provisionally and
+            #                    its real outcome arrives later as mark_corrected / trade_settled, which
+            #                    already add to lifetime. Booking it here too would double-count the
+            #                    same shares — once at a worst-case guess and once at venue truth.
+            if ev == "hedge_unwound" or (ev == "hedge_declined" and abs(cost) > 1e-9):
+                self.settled_pnl_lifetime -= cost           # cost is POSITIVE $ paid; lifetime falls
+                self.settled_pnl_exits_lifetime -= cost     # ... and the exits bucket keeps it separable
+                self.settled_exits += 1
             self.persist_tuning()                           # ditto — a paid exit toll must survive a deploy
         elif ev == "fill_drift":
             for src, dst_flat, dst_b in ((row.get("drift_1"), self.drift1, b.drift1),
@@ -532,11 +648,14 @@ class MakerState:
             # SETTLED (VENUE-TRUTH) realized pnl — the authoritative lifetime number (both legs netted),
             # distinct from pnl_today (the fill-time locked estimate).
             "settled_pnl_lifetime": round(self.settled_pnl_lifetime, 4),
-            # HEDGED-ONLY realized pnl (excludes untracked naked windfalls like the UFC +$42), reported
-            # alongside the untracked bucket so the maker's true hedged edge is never flattered by luck.
-            "settled_pnl_hedged_lifetime": round(self.settled_pnl_lifetime
-                                                 - self.settled_pnl_untracked_lifetime, 4),
+            # HEDGED-ONLY realized pnl: lifetime MINUS untracked naked windfalls (the UFC +$42) MINUS the
+            # exit toll, so the maker's true hedged edge is flattered by neither luck nor a hidden loss.
+            "settled_pnl_hedged_lifetime": hedged_lifetime(self.settled_pnl_lifetime,
+                                                           self.settled_pnl_untracked_lifetime,
+                                                           self.settled_pnl_exits_lifetime),
             "settled_pnl_untracked_lifetime": round(self.settled_pnl_untracked_lifetime, 4),
+            "settled_pnl_exits_lifetime": round(self.settled_pnl_exits_lifetime, 4),
+            "settled_exits": self.settled_exits,
             "settled_trades": self.settled_trades,
             "settled_roi": (round(self.settled_pnl_lifetime / self.settled_cost_lifetime, 4)
                             if self.settled_cost_lifetime else 0.0),
@@ -582,9 +701,11 @@ class MakerState:
               "fills_since_restart": self.n_fills,
               "pnl_since_restart": round(self.pnl_today, 4),
               "settled_pnl_lifetime": round(self.settled_pnl_lifetime, 4),
-              "settled_pnl_hedged_lifetime": round(self.settled_pnl_lifetime
-                                                   - self.settled_pnl_untracked_lifetime, 4),
+              "settled_pnl_hedged_lifetime": hedged_lifetime(self.settled_pnl_lifetime,
+                                                             self.settled_pnl_untracked_lifetime,
+                                                             self.settled_pnl_exits_lifetime),
               "settled_pnl_untracked_lifetime": round(self.settled_pnl_untracked_lifetime, 4),
+              "settled_pnl_exits_lifetime": round(self.settled_pnl_exits_lifetime, 4),
               "settled_trades": self.settled_trades,
               "restarts_today": self.restarts_today, "gates": dict(self.gates),
               "safety": dict(self.safety), "live": dict(self.live)}
