@@ -432,6 +432,11 @@ async def _run(cfg: Any, log: Any) -> int:
                         or pregame_exec.needs_fill_poll()):
                     last_fill_poll = now_ts
                     pregame_exec.submit_fill_poll(now_ts)
+                # REST-LEG DELIVERY CONFIRMATION. A hedged pair is not booked until the venue says the
+                # rest leg actually arrived (the SHAEGR phantom-fill class). Same split as everything
+                # else here: the read goes to the worker, the decision is made on the loop when it
+                # drains. A no-op — one dict scan — whenever nothing is pending, which is nearly always.
+                pregame_exec.submit_rest_confirmations(now, now_ts)
                 if now_ts - last_reconcile >= RECONCILE_EVERY_S:     # POSITION RECONCILIATION (orphan guard)
                     last_reconcile = now_ts
                     # Same split as the fill poll: the per-instrument venue READS go to the worker, and

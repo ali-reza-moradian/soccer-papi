@@ -18,7 +18,7 @@ from datetime import datetime, timezone
 from src.genz.maker_rt.pregame_exec import PregameLiveExecutor
 
 from .test_maker_rt_pregame import (_Guard, _Hedger, _KalshiExec, _KalshiOC, _Log, _Poly, _State,
-                                    _Store, _cand, _dec, _exec_kalshi)
+                                    _Store, _cand, _dec, _exec_kalshi, deliver_poly)
 
 NOW = datetime(2026, 7, 24, 6, 59, 38, tzinfo=timezone.utc)
 #: books on which a 0.46 rest-poly fill hedges cleanly on Kalshi at 0.53 (pair $0.99/share,
@@ -42,6 +42,7 @@ def _locked_rest_poly_pair(tmp_path, *, rest_token="TOKR", hedge_ticker="KX-1"):
     c.hedge_lookup = {"venue": "kalshi", "ticker": hedge_ticker, "side": "yes"}
     ex.place_or_reprice(c, _dec(0.46, hedge_ask=0.50), None, _HEDGEABLE, NOW, 1.0, "pre")
     oid = ex.order_client.rests[-1]["oid"]
+    deliver_poly(poly, 5)                       # VENUE TRUTH: the rest leg really was delivered
     ex.on_order_update({"order_id": oid, "size_matched": 5, "price": 0.46}, _HEDGEABLE, NOW, 2.0)
     return ex, koc, kx, poly, state
 

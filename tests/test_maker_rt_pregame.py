@@ -66,6 +66,20 @@ class _Poly:
         return {"canceled": []}
 
 
+def deliver_poly(poly, shares):
+    """THE POLY WALLET RECEIVES A REST FILL — call this whenever a test simulates one that is meant to be
+    real. A fake whose CTF balance never moves is not a neutral stub, it is the SHAEGR phantom: an order
+    reporting ``size_matched`` while no shares are delivered. Since 2026-08-05 the executor will not book
+    a pair until the venue confirms the rest leg, so a test that wants a booked pair has to say that the
+    shares arrived."""
+    poly.position = float(shares)
+
+
+def deliver_kalshi(kex, ticker, count):
+    """As :func:`deliver_poly`, for a rest-KALSHI leg: the portfolio now holds the contracts."""
+    kex.positions[ticker] = float(count)
+
+
 class _Hedger:
     def __init__(self, result, poly=None):
         self.result = result
@@ -344,12 +358,14 @@ def test_reprice_not_confirmed_does_not_double_place(tmp_path):
 # --------------------------------------------------------------------------- #
 def test_fill_routes_to_hedge_locked(tmp_path):
     oc = _OrderClient()
+    poly = _Poly()
     hedger = _Hedger(SimpleNamespace(status="locked", hedged_shares=5, hedge_avg_price=0.50,
                                      locked_pnl=0.11, unwind_cost=None))
-    ex, _ = _exec(tmp_path, order_client=oc, hedger=hedger)
+    ex, _ = _exec(tmp_path, order_client=oc, hedger=hedger, poly=poly)
     ex.caps.quote_usd_max = 2.5                         # pin size to 5 (floor(2.5/0.46)) — this tests ROUTING
     store = _Store(poly_best_ask=0.60, kalshi_ask=0.50)
     ex.place_or_reprice(_cand(), _dec(price=0.46), None, store, now=None, now_ts=1.0)
+    deliver_poly(poly, 5)                               # the venue actually delivered the rest leg
     oid = oc.rests[0]["oid"]
     ex.on_order_update({"order_id": oid, "size_matched": 5, "price": 0.46}, store, None, 2.0)
     assert len(hedger.calls) == 1 and hedger.calls[0]["fill"]["size"] == 5
@@ -1141,6 +1157,7 @@ def test_kalshi_fill_poly_hedge_underreports_but_position_confirms_hedged_no_unw
     store = _Store(poly_best_ask=0.93, kalshi_ask=0.50)   # rest on Kalshi @6c, hedge on Poly ~93c
     c = _cand_kalshi(ticker="KX-TB", htoken="TOKTOR")
     ex.place_or_reprice(c, _dec(0.06, hedge_ask=0.93), None, store, _DT, 100.0, "inplay")
+    deliver_kalshi(kex, "KX-TB", 17)                  # VENUE TRUTH: the rest contracts were delivered
     oid = koc.rests[0]["oid"]
     ex.on_kalshi_fill({"kind": "kalshi_fill", "order_id": oid, "count": 17}, store, _DT, 101.0)
     rows = [r["event"] for r in ex.state.rows]

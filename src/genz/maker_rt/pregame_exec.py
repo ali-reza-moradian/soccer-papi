@@ -26,6 +26,7 @@ Every live action -> events CSV (mode 'live') + Telegram.
 """
 from __future__ import annotations
 
+import dataclasses
 import math
 import os
 from dataclasses import dataclass
@@ -278,6 +279,20 @@ class PregameLiveExecutor:
         # The floor the hedge order's PRICE CAP is solved at — the bound a hedge cannot execute past.
         self.hedge_execution_floor = float(getattr(cfg, "hedge_execution_floor",
                                                    HEDGE_EXECUTION_FLOOR))
+        # REST-LEG DELIVERY CONFIRMATION (the SHAEGR phantom-fill class). A fill SIGNAL buys the hedge
+        # instantly, but the PAIR is not booked until the venue confirms the rest leg was delivered.
+        # ``_pending_pairs`` holds each hedged-but-unconfirmed fill: id -> record. Deliberately
+        # IN-MEMORY only. A pending pair lives ~1-90 seconds and its two failure modes on a restart are
+        # both already covered by machinery that outlives the process — the hedge leg is registered as an
+        # EXPECTED position (persisted) the moment it is bought, and the 5-minute reconcile plus the 48h
+        # quoted-scope sweep look at the venue itself. Persisting a 90-second decision would add a file
+        # the live process rewrites on every fill for no safety we do not already have.
+        self._pending_pairs: dict = {}
+        self._pending_seq = 0
+        self.rest_confirm_deadline_s = float(getattr(getattr(cfg, "live", None),
+                                                     "rest_confirm_deadline_s", 90.0) or 0.0)
+        self.rest_confirm_poll_s = max(0.25, float(getattr(getattr(cfg, "live", None),
+                                                           "rest_confirm_poll_s", 2.0) or 2.0))
         # WS-INDEPENDENT FILL AUTHORITY: REST is the primary detector, the socket is an accelerator.
         self.fill_poll_s = float(getattr(getattr(cfg, "live", None), "fill_poll_s", 10.0))
         self.reconcile_every_s = 300.0       # the loop's own cadence, mirrored for the stall watchdog
@@ -1434,6 +1449,9 @@ class PregameLiveExecutor:
         if isinstance(wkey, tuple) and wkey and wkey[0] == "reconcile":
             self._apply_reconcile_batch(res, exc, store, now, now_ts)
             return
+        if isinstance(wkey, tuple) and len(wkey) == 2 and wkey[0] == "rest_confirm":
+            self._apply_rest_confirm(wkey[1], res, exc, now, now_ts)
+            return
         if isinstance(wkey, tuple) and wkey and wkey[0] == "gates":
             if exc is None and isinstance(res, dict):
                 self._gates_applied_ts = float(now_ts or 0.0) or self._gates_applied_ts
@@ -2546,8 +2564,8 @@ class PregameLiveExecutor:
             # quoted-ask estimate (``locked``). ~1 fee (Kalshi ceil-to-cent 0.07·C·P·(1-P)) is comparable
             # to the whole edge at these sizes, so the estimate is not good enough to book.
             locked_actual = self._actual_locked_net(fill_price, hedge_avg, hedge_fee, hedged, locked)
-            return self._record_hedge_locked(lo, matched, fill_price, hedged, hedge_avg, hedge_oid,
-                                             locked_actual, hedge_venue, now, pnl=pnl, hedge_fee=hedge_fee)
+            return self._defer_pair(lo, matched, fill_price, hedged, hedge_avg, hedge_oid,
+                                    locked_actual, hedge_venue, now, now_ts, pnl=pnl, hedge_fee=hedge_fee)
         # NOT reported-locked. Before unwinding ANYTHING, prove the naked exposure against VENUE TRUTH: a
         # venue's own fill count can UNDER-report (a Poly BUY response reports USDC, not shares -> a FULL
         # hedge masquerades as a partial). Read the COMPLEMENT position we actually hold; the truly naked
@@ -2573,10 +2591,10 @@ class PregameLiveExecutor:
                 # amount — so a benign over-hedge can never read as a naked orphan on the next reconcile
                 # (the 2026-07-27 19:09 halt: 82.59 held vs 79 registered). That is the INCREMENT too:
                 # registering the cumulative on every fill double-counts the registry itself.
-                return self._record_hedge_locked(lo, matched, fill_price, true_hedged, hedge_avg,
-                                                 hedge_oid, locked_actual, hedge_venue, now, pnl=pnl,
-                                                 hedge_fee=hedge_fee, verified=True,
-                                                 actual_hedge_shares=max(new_complement, true_hedged))
+                return self._defer_pair(lo, matched, fill_price, true_hedged, hedge_avg,
+                                        hedge_oid, locked_actual, hedge_venue, now, now_ts, pnl=pnl,
+                                        hedge_fee=hedge_fee, verified=True,
+                                        actual_hedge_shares=max(new_complement, true_hedged))
             hedged = max(hedged, new_complement)               # never unwind shares we actually hold hedged
         # MISS / PARTIAL / ERROR -> the fill SPLITS IN TWO, and until 2026-08-05 only one half was
         # acknowledged. A partial hedge is REAL SHARES WE OWN on the complement venue: the filled part is a
@@ -2590,7 +2608,7 @@ class PregameLiveExecutor:
         sub = None
         if hedged > HEDGE_SHARE_TOL:
             sub = self._record_partial_pair(lo, hedged, fill_price, hedge_avg, hedge_fee, hedge_oid,
-                                            hedge_venue, locked, matched, now)
+                                            hedge_venue, locked, matched, now, now_ts)
         elif hedged > 0:                                       # sub-tolerance dust: stake only, no pair
             self.caps.commit_stake(hedged * float(hedge_avg or 0.0))
             lo.hedged_seen += hedged                           # attribute it before the remainder is judged
@@ -2601,7 +2619,7 @@ class PregameLiveExecutor:
 
     def _record_partial_pair(self, lo: _LiveOrder, hedged: float, fill_price: float, hedge_avg: Any,
                              hedge_fee: Any, hedge_oid: Any, hedge_venue: str, locked: Optional[float],
-                             matched: float, now: Any) -> dict:
+                             matched: float, now: Any, now_ts: float = 0.0) -> dict:
         """Book the FILLED part of a short hedge as the smaller pair it is: both legs registered as
         EXPECTED, the cost basis noted for settlement, the locked net computed from the ACTUAL hedge fill.
 
@@ -2618,9 +2636,9 @@ class PregameLiveExecutor:
                              ("%.4f" % float(hedge_avg)) if hedge_avg is not None else "n/a", float(hedged),
                              ("%.2f%%" % (locked_actual * 100.0)) if locked_actual is not None else "n/a",
                              max(0.0, float(matched) - float(hedged)))
-        return self._record_hedge_locked(lo, hedged, fill_price, hedged, hedge_avg, hedge_oid,
-                                         locked_actual, hedge_venue, now, pnl=pnl, hedge_fee=hedge_fee,
-                                         actual_hedge_shares=hedged)
+        return self._defer_pair(lo, hedged, fill_price, hedged, hedge_avg, hedge_oid,
+                                locked_actual, hedge_venue, now, now_ts, pnl=pnl, hedge_fee=hedge_fee,
+                                actual_hedge_shares=hedged)
 
     @staticmethod
     def _merge_partial(sub: dict, unwound: dict, matched: float) -> dict:
@@ -2636,6 +2654,256 @@ class PregameLiveExecutor:
                 "realized_net": (round(pnl / n, 6) if n > 1e-9 else None), "pnl": round(pnl, 4),
                 "hedge_order_id": sub.get("hedge_order_id") or unwound.get("hedge_order_id"),
                 "chain": f"{sub.get('chain')} + {unwound.get('chain')}"}
+
+    # -- REST-LEG DELIVERY CONFIRMATION (the SHAEGR phantom-fill class) --------
+    #
+    # A venue fill SIGNAL is a MATCH, not a delivery. Polymarket's trade lifecycle is
+    # MATCHED -> MINED -> CONFIRMED, and a MATCHED trade can still FAIL: ``size_matched`` goes up the
+    # instant the book matches, and NOTHING walks it back in the order payload if the on-chain leg never
+    # lands. On 2026-08-04 order 0x7b537497… reported ``size_matched`` 116 on a rest leg that delivered
+    # nothing — conditional_balance stayed 109 and still reads 109.0 a day later, and the data API has
+    # exactly ONE trade on that token (BUY 109, tx 0xa0ddef25…). The bot hedged the ghost with 116 real
+    # Kalshi contracts ($29.32) and announced "profit is GUARANTEED either way".
+    #
+    # THE SPLIT THIS IMPLEMENTS: hedging is a RACE and stays one — the hedge fires off the signal with no
+    # venue read in front of it. BOOKING is not a race, and it now waits for venue truth. Between the two
+    # the pair is PROVISIONAL: the money is committed, the fill slot is spent, both legs count as held,
+    # and nothing is booked, alerted or paid out as edge.
+    def _defer_pair(self, lo: _LiveOrder, matched: float, fill_price: float, hedged: float,
+                    hedge_avg: Any, hedge_oid: Any, locked: Optional[float], hedge_venue: str,
+                    now: Any, now_ts: float, *, pnl: float, hedge_fee: Any = None,
+                    verified: bool = False, actual_hedge_shares: Any = None) -> dict:
+        """The hedge is BOUGHT. Book the pair only once the venue confirms the REST leg was delivered.
+
+        Tries ONCE inline first — that read happens strictly AFTER the hedge order has already been sent
+        and filled, so it costs the hedge nothing (this is the same place, and the same reasoning, as the
+        existing ``_complement_shares`` re-verify of the hedge leg). A rest leg that is already there
+        books immediately and behaves exactly as it did before this change, which is the common case.
+        Anything else becomes a pending pair that the off-loop confirmation retries to the deadline."""
+        hedge_held = float(actual_hedge_shares if actual_hedge_shares is not None else hedged)
+        book = lambda: self._record_hedge_locked(  # noqa: E731 — one call shape, used from two places
+            lo, matched, fill_price, hedged, hedge_avg, hedge_oid, locked, hedge_venue, now,
+            pnl=pnl, hedge_fee=hedge_fee, verified=verified, actual_hedge_shares=actual_hedge_shares)
+        if self.rest_confirm_deadline_s <= 0.0:
+            # EXPLICIT OPERATOR OVERRIDE (live.rest_confirm_deadline_s = 0). Re-opens the SHAEGR class:
+            # a pair is booked on the venue's say-so with nothing checking that the shares arrived.
+            return book()
+        hl = lo.hedge_lookup or {}
+        hedge_inst = hl.get("token") if hedge_venue == "polymarket" else hl.get("ticker")
+        baseline = self._expected_shares(lo.rest_venue, lo.token)
+        target = baseline + float(matched)
+        delivered = self._rest_delivered(lo.rest_venue, lo.token, target, baseline)
+        if delivered is not None and delivered >= float(matched) - HEDGE_SHARE_TOL:
+            return book()                                  # already there -> book now, as before
+        self._pending_seq += 1
+        pid = f"{lo.game}|{lo.market_key}|{self._pending_seq}"
+        self._pending_pairs[pid] = {
+            "id": pid, "lo": lo, "now": now,
+            "rest_venue": str(lo.rest_venue), "rest_inst": str(lo.token),
+            "rest_shares": float(matched), "fill_price": float(fill_price),
+            "hedge_venue": str(hedge_venue), "hedge_inst": str(hedge_inst or ""),
+            "hedged": float(hedged), "hedge_held": hedge_held, "hedge_avg": hedge_avg,
+            "hedge_fee": hedge_fee, "hedge_oid": hedge_oid, "locked": locked, "pnl": float(pnl),
+            "verified": bool(verified), "actual_hedge_shares": actual_hedge_shares,
+            "baseline": baseline, "game": lo.game, "market_key": lo.market_key,
+            "created_ts": float(now_ts or 0.0),
+            "deadline_ts": float(now_ts or 0.0) + self.rest_confirm_deadline_s,
+            "next_poll_ts": float(now_ts or 0.0) + self.rest_confirm_poll_s,
+            "reads": 1, "last_read": delivered,
+        }
+        # THE MONEY IS ALREADY SPENT, so the CAPS SEE IT NOW — fail closed. The hedge notional is real
+        # regardless of how this resolves, and the fill has consumed one of the day's scarce fill slots.
+        # Only the PNL waits: it is applied at confirmation via ``adjust_pnl`` (restate-without-counting),
+        # so a pair cannot be counted as two fills.
+        self.caps.commit_stake(float(hedged) * float(hedge_avg or 0.0) + float(hedge_fee or 0.0))
+        self.caps.on_fill(0.0)
+        lo.hedged_seen += hedge_held      # attribute this fill's hedge now (N4) — the shares exist
+        if self.log:
+            self.log.warning("[MAKER_RT][LIVE] PAIR PROVISIONAL %s: hedged %.2f sh on %s, but the venue "
+                             "has not yet delivered the %.2f-share rest leg (read %s vs expected %.2f). "
+                             "Hedge is DONE; the pair is NOT booked and no lock is announced until the "
+                             "rest leg confirms (deadline %.0fs).", self._name_for(lo), hedge_held,
+                             hedge_venue, float(matched),
+                             ("%.2f" % delivered) if delivered is not None else "unreadable", target,
+                             self.rest_confirm_deadline_s)
+        self._record_lo(lo, "pair_pending", now, price=fill_price, size=matched, locked_net=locked,
+                        hedge_avg=hedge_avg, hedge_order_id=hedge_oid)
+        return {"outcome": "hedge_pending_confirm", "locked_net": locked, "realized_net": None,
+                "pnl": 0.0, "hedge_order_id": hedge_oid, "pending_id": pid,
+                "chain": self._chain(lo, matched, fill_price, "pair_pending", locked, 0.0, hedge_oid)}
+
+    def _rest_delivered(self, venue: str, instrument: Any, target: float,
+                        baseline: float) -> Optional[float]:
+        """Shares of THIS fill the venue has actually delivered on the rest leg, or None if unreadable.
+
+        ``None`` is not zero and must never be treated as one: an unreadable venue is exactly when we do
+        NOT know, and the caller keeps waiting rather than declaring a phantom (this is the one-sided
+        error — a false phantom verdict unwinds a good hedge and strands a real rest leg)."""
+        try:
+            if str(venue) == "kalshi":
+                pos = self._kalshi_position(instrument)
+            else:
+                poly = getattr(self.hedger, "poly", None) or self.poly
+                if poly is None:
+                    return None
+                if hasattr(poly, "settle_conditional_balance"):
+                    # timeout_s=0 -> ONE forced on-chain re-sync + ONE read, no sleep. This runs on the
+                    # SHARED off-loop worker, where a blocking poll would starve the fill-poll backstop.
+                    pos = poly.settle_conditional_balance(
+                        instrument, lambda b: b is not None and b >= float(target) - HEDGE_SHARE_TOL,
+                        timeout_s=0.0)
+                else:
+                    pos = poly.conditional_balance(instrument)
+        except Exception:  # noqa: BLE001 — unreadable is UNKNOWN, never "nothing arrived"
+            return None
+        if pos is None:
+            return None
+        return max(0.0, float(pos) - float(baseline))
+
+    #: Grace past the deadline before a pending pair is decided WITHOUT a fresh read. Only reachable when
+    #: no confirmation result lands at all (a starved/abandoned worker, or every read refused as an
+    #: in-flight duplicate) — otherwise ``_apply_rest_confirm`` decides the moment a read comes back.
+    PENDING_DECIDE_GRACE_S = 30.0
+
+    def submit_rest_confirmations(self, now: Any, now_ts: float) -> int:
+        """Queue one venue read per pending pair that is due. Returns how many were submitted.
+
+        Called every tick from the loop; it is a dict scan and a ``submit`` — no venue I/O here. The
+        worker de-duplicates on the key, so a slow read can never stack."""
+        n = 0
+        for pid, rec in list(self._pending_pairs.items()):
+            # BACKSTOP: a pending pair must never be able to wait forever. If nothing has answered by
+            # the deadline plus a grace, decide on the last read we did get — leaving real money hedged
+            # against an unconfirmed leg with nobody looking is the failure this whole path exists for.
+            if now_ts > float(rec["deadline_ts"]) + self.PENDING_DECIDE_GRACE_S:
+                got = float(rec["last_read"] or 0.0) if rec["last_read"] is not None else 0.0
+                if self.log:
+                    self.log.error("[MAKER_RT][LIVE] pending pair %s got NO confirmation read before its "
+                                   "deadline + %.0fs grace — deciding on the last read (%s).", pid,
+                                   self.PENDING_DECIDE_GRACE_S, rec["last_read"])
+                self._resolve_pending(pid, min(got, float(rec["rest_shares"])), now, now_ts,
+                                      verdict=("partial" if got > HEDGE_SHARE_TOL else "phantom"))
+                continue
+            if now_ts < float(rec["next_poll_ts"]):
+                continue
+            rec["next_poll_ts"] = now_ts + self.rest_confirm_poll_s
+            venue, inst = rec["rest_venue"], rec["rest_inst"]
+            target, baseline = rec["baseline"] + rec["rest_shares"], rec["baseline"]
+            if self._worker.submit(("rest_confirm", pid),
+                                   lambda v=venue, i=inst, t=target, b=baseline:
+                                   self._rest_delivered(v, i, t, b)):
+                n += 1
+        return n
+
+    def _apply_rest_confirm(self, pid: Any, res: Any, exc: Any, now: Any, now_ts: float) -> None:
+        """ON THE LOOP: one confirmation read landed for pending pair ``pid``. Decide, or keep waiting."""
+        rec = self._pending_pairs.get(pid)
+        if rec is None:
+            return                                        # already resolved (idempotent by construction)
+        rec["reads"] += 1
+        delivered = res if (exc is None and isinstance(res, (int, float))) else None
+        if delivered is not None:
+            rec["last_read"] = float(delivered)
+        size = float(rec["rest_shares"])
+        if delivered is not None and delivered >= size - HEDGE_SHARE_TOL:
+            self._resolve_pending(pid, size, now, now_ts, verdict="confirmed")
+            return
+        if now_ts < float(rec["deadline_ts"]):
+            return                                        # still inside the deadline -> keep waiting
+        got = float(rec["last_read"] or 0.0) if rec["last_read"] is not None else 0.0
+        self._resolve_pending(pid, min(got, size), now, now_ts,
+                              verdict=("partial" if got > HEDGE_SHARE_TOL else "phantom"))
+
+    def _resolve_pending(self, pid: Any, delivered: float, now: Any, now_ts: float, *,
+                         verdict: str) -> None:
+        """Terminal decision for a pending pair. POPS the record FIRST — everything after it reads
+        ``_expected_shares``, and a pair being unwound must not be counted among the shares we hold on
+        purpose (that keep-floor is what stops an unwind eating a hedge it should keep)."""
+        rec = self._pending_pairs.pop(pid, None)
+        if rec is None:
+            return
+        lo, size = rec["lo"], float(rec["rest_shares"])
+        delivered = max(0.0, min(float(delivered), size))
+        if verdict == "confirmed":
+            if self.log:
+                self.log.info("[MAKER_RT][LIVE] REST LEG CONFIRMED %s: venue delivered %.2f sh after "
+                              "%.1fs / %d read(s) — booking the pair.", self._name_for(lo), delivered,
+                              max(0.0, now_ts - float(rec["created_ts"])), int(rec["reads"]))
+            self._book_pending(rec, delivered, rec["hedged"], rec["hedge_held"], now)
+            return
+        excess = max(0.0, float(rec["hedge_held"]) - delivered)
+        if verdict == "partial":
+            # The venue delivered SOME of it. That is a smaller, genuine pair — book it on exactly the
+            # KLAMCI terms — and the hedge bought against the undelivered part is now unpaired, so it is
+            # unwound like any other naked leg.
+            if self.log:
+                self.log.error("[MAKER_RT][LIVE] REST LEG PARTIAL %s: venue delivered %.2f of %.2f sh by "
+                               "the %.0fs deadline — booking a %.2f-share pair and unwinding %.2f sh of "
+                               "now-unpaired hedge.", self._name_for(lo), delivered, size,
+                               self.rest_confirm_deadline_s, delivered, excess)
+            self._book_pending(rec, delivered, min(rec["hedged"], delivered), delivered, now)
+        elif self.log:
+            self.log.critical("[MAKER_RT][LIVE][CRITICAL] PHANTOM FILL %s: the venue reported a %.2f-share "
+                              "rest fill that NEVER DELIVERED (last read %.2f after %.0fs / %d reads). We "
+                              "are holding %.2f sh of UNPAIRED hedge on %s bought for it — unwinding it "
+                              "now. No pair booked, nothing guaranteed.", self._name_for(lo), size,
+                              float(rec["last_read"] or 0.0), max(0.0, now_ts - float(rec["created_ts"])),
+                              int(rec["reads"]), float(rec["hedge_held"]), rec["hedge_venue"])
+        if excess > HEDGE_SHARE_TOL:
+            self._unwind_unpaired_hedge(rec, excess, delivered, now, now_ts)
+
+    def _book_pending(self, rec: dict, matched: float, hedged: float, hedge_held: float,
+                      now: Any) -> dict:
+        """Book a confirmed (whole or partial) pending pair through the ONE booking path.
+
+        ``deferred=True`` because the hedge stake and the fill slot were taken at hedge time: this call
+        must move the pnl WITHOUT counting a second fill, and must register only the REST leg (the hedge
+        leg has been accounted as held since the moment it was bought)."""
+        return self._record_hedge_locked(
+            rec["lo"], matched, rec["fill_price"], hedged, rec["hedge_avg"], rec["hedge_oid"],
+            rec["locked"], rec["hedge_venue"], now, pnl=self._pending_pnl(rec, hedged),
+            hedge_fee=rec["hedge_fee"], verified=rec["verified"],
+            actual_hedge_shares=hedge_held, deferred=True)
+
+    @staticmethod
+    def _pending_pnl(rec: dict, hedged: float) -> float:
+        """The pair's pnl, RE-SCALED to the shares that were actually delivered. Booking the original
+        full-size pnl on a part-delivered pair would pay us for edge on shares we never received."""
+        full = float(rec["hedged"] or 0.0)
+        pnl = float(rec["pnl"] or 0.0)
+        if full <= 1e-9 or abs(float(hedged) - full) <= HEDGE_SHARE_TOL:
+            return pnl
+        return round(pnl * (float(hedged) / full), 4)
+
+    def _unwind_unpaired_hedge(self, rec: dict, excess: float, delivered: float, now: Any,
+                               now_ts: float) -> None:
+        """Sell the hedge shares the rest leg never paired off, VERIFIED, and book the cost as an EXIT.
+
+        The unwind runs against the HEDGE instrument, so it is driven through a view of the order whose
+        rest side IS that leg — which is what lets it reuse ``_verified_unwind`` unchanged, keep-floor and
+        all. That keep-floor is doing real work here: on SHAEGR the same Kalshi ticker also held the 109
+        contracts of the EARLIER, genuine pair, and the floor is what sells the 116 without touching them."""
+        lo = rec["lo"]
+        # ``hedged_seen`` was advanced by the WHOLE hedge when it was bought. Selling the unpaired part
+        # takes those shares back off the account, so the attribution has to come back down with them —
+        # left high, the next fill's complement read would compute its own hedge too small and unwind
+        # shares we are in fact holding (N4, in the other direction).
+        lo.hedged_seen = max(0.0, float(lo.hedged_seen) - float(excess))
+        view = dataclasses.replace(
+            lo, token=str(rec["hedge_inst"]), rest_venue=str(rec["hedge_venue"]),
+            order_id=str(rec["hedge_oid"] or ""), kalshi_side=str((lo.hedge_lookup or {}).get("side")
+                                                                  or "yes"),
+            price=float(rec["hedge_avg"] or 0.0))
+        res = self._unwind_and_record(view, excess, float(rec["hedge_avg"] or 0.0), rec["locked"],
+                                      "phantom_unwound", now, hedge_oid=rec["hedge_oid"],
+                                      count_fill=False)
+        cost = -float(res.get("pnl") or 0.0)
+        self._emit_event("phantom", lo, instant=True, size=rec["rest_shares"], price=rec["fill_price"],
+                         hedge_shares=excess, hedge_price=rec["hedge_avg"],
+                         hedge_venue=rec["hedge_venue"], cost=cost, sold=delivered,
+                         detail=("partial" if delivered > HEDGE_SHARE_TOL else "none"))
+        if lo.phase == "inplay":
+            self._inplay_halt_if_bad(self._per_share(-cost, rec["rest_shares"]), now)
 
     @staticmethod
     def _prehedge_decline_reason(locked_net_est: Optional[float], fill_price: float,
@@ -2813,11 +3081,18 @@ class PregameLiveExecutor:
     def _record_hedge_locked(self, lo: _LiveOrder, matched: float, fill_price: float, hedged: float,
                              hedge_avg: Any, hedge_oid: Any, locked: Optional[float], hedge_venue: str,
                              now: Any, *, pnl: float, hedge_fee: Any = None, verified: bool = False,
-                             actual_hedge_shares: Any = None) -> dict:
+                             actual_hedge_shares: Any = None, deferred: bool = False) -> dict:
         """Book a LOCKED hedge (reported OR position-verified): commit the hedge stake, count the fill,
         ledger the hedge_locked chain row + instant alert. ``locked`` is the FEE-HONEST net (actual hedge
         price + actual fee). ``verified`` marks the path where the venue's fill count under-reported but
-        the COMPLEMENT position proves fully hedged (unwind suppressed)."""
+        the COMPLEMENT position proves fully hedged (unwind suppressed).
+
+        ``deferred`` marks the second half of a pair whose REST leg had to be confirmed at the venue
+        first (see ``_defer_pair``). Everything that already happened when the hedge was BOUGHT is skipped
+        so it cannot happen twice: the hedge stake is committed, the fill is counted, and the hedge leg is
+        registered as held at hedge time. What is left — and what this call exists for — is the part that
+        was never allowed to happen on an unconfirmed pair: the pnl, the ledger row, the LOCKED alert, the
+        cost basis, and the REST leg's own registration."""
         # BOOKING-TIME INVARIANTS, BEFORE a single number reaches the caps. Everything below this line
         # writes state that the RAILS read back (pnl_today feeds the daily-loss halt, recent_locked_nets
         # feeds tuning, the leg costs feed settlement) — so an impossible number has to be refused HERE.
@@ -2848,8 +3123,14 @@ class PregameLiveExecutor:
             return {"outcome": "book_refused", "locked_net": None, "realized_net": None, "pnl": 0.0,
                     "hedge_order_id": hedge_oid, "quarantined": refuse,
                     "chain": self._chain(lo, matched, fill_price, "book_refused", locked, 0.0, hedge_oid)}
-        self.caps.commit_stake(float(hedged) * float(hedge_avg or 0.0) + float(hedge_fee or 0.0))
-        self.caps.on_fill(pnl)
+        if deferred:
+            # The stake and the fill slot were taken when the hedge was BOUGHT. Only the pnl is left, and
+            # it moves through ``adjust_pnl`` — the established "restate without counting a fill"
+            # doctrine — so one venue execution can never consume two of the day's scarce fill slots.
+            self.caps.adjust_pnl(pnl)
+        else:
+            self.caps.commit_stake(float(hedged) * float(hedge_avg or 0.0) + float(hedge_fee or 0.0))
+            self.caps.on_fill(pnl)
         # POST-HEDGE HONESTY GUARD, in THREE states against the CONFIGURED floor (not against
         # break-even, which is what it used to assume — see ``pair_outcome``):
         #   profit       -> LOCKED, "profit is GUARANTEED"
@@ -2888,10 +3169,15 @@ class PregameLiveExecutor:
         # Register the ACTUAL venue-held hedge shares (never the derived/clamped amount) so an over-fill is
         # accounted, not orphaned. Falls back to ``hedged`` when the caller has no separate venue read.
         hedge_held = actual_hedge_shares if actual_hedge_shares is not None else hedged
-        self._note_expected_legs(lo, matched, hedge_held, hedge_venue, now)    # rest+hedge legs we now HOLD
-        # ATTRIBUTE this fill's hedge to the order, so the NEXT fill's complement read is read as an
-        # increment and not as its own hedge (N4).
-        lo.hedged_seen += float(hedge_held or 0.0)
+        # BOTH legs, on both paths. A deferred pair's hedge leg counted as held for the confirmation
+        # window through its PENDING record, and that record is popped before this call — so this is
+        # where it moves into the durable registry, not a second registration of the same shares.
+        self._note_expected_legs(lo, matched, hedge_held, hedge_venue, now)
+        if not deferred:
+            # ATTRIBUTE this fill's hedge to the order, so the NEXT fill's complement read is read as an
+            # increment and not as its own hedge (N4). The deferred path attributed it when the hedge was
+            # bought — the shares were real then, whatever the rest leg turned out to be.
+            lo.hedged_seen += float(hedge_held or 0.0)
         if verified and self.log:
             self.log.warning("[MAKER_RT][LIVE] hedge reported non-locked but the COMPLEMENT position "
                              "confirms FULLY HEDGED (%.2f sh) — booked LOCKED, unwind suppressed (no "
@@ -3049,14 +3335,7 @@ class PregameLiveExecutor:
         locked = res.get("realized_net", res.get("locked_net"))
         if locked is None:
             locked = res.get("locked_net")
-        if locked is not None and locked <= self.inplay_halt_locked_net and not self.inplay_halted:
-            self.inplay_halted = True
-            self._emit_event("halted", instant=True,
-                             detail=(f"in-play day-halt — fill realized {locked*100:.2f}% "
-                                     f"≤ {self.inplay_halt_locked_net*100:.1f}% floor; in-play stopped "
-                                     f"for the day (pre-game continues)"))
-            self.cancel_inplay_open(now, "inplay_day_halt")
-            self.persist_daily_caps()          # the halt must survive the next deploy (N5)
+        self._inplay_halt_if_bad(locked, now)
         if self.inplay_fills_today == 1:
             self.inplay_pause_until = now_ts + self.inplay_first_fill_pause_s
             self.persist_daily_caps()                    # the pause + the counter survive a restart (N5)
@@ -3066,6 +3345,22 @@ class PregameLiveExecutor:
             self._send_telegram(
                 f"ℹ️ First in-play fill of the day — pausing in-play offers for "
                 f"{self.inplay_first_fill_pause_s:.0f}s as a safety check. Pre-game offers keep running.")
+
+    def _inplay_halt_if_bad(self, realized: Optional[float], now: Any) -> None:
+        """Halt in-play for the day when a fill's REALIZED per-share net breaches the circuit's floor.
+
+        Split out of ``_apply_inplay_circuit`` so a fill whose true outcome only arrives LATER can reach
+        the same rail without being counted as a second fill: a pair booked provisionally and then found
+        to be a phantom is judged on what the unwind actually cost, not on the lock it never had."""
+        if realized is None or self.inplay_halted or realized > self.inplay_halt_locked_net:
+            return
+        self.inplay_halted = True
+        self._emit_event("halted", instant=True,
+                         detail=(f"in-play day-halt — fill realized {realized*100:.2f}% "
+                                 f"≤ {self.inplay_halt_locked_net*100:.1f}% floor; in-play stopped "
+                                 f"for the day (pre-game continues)"))
+        self.cancel_inplay_open(now, "inplay_day_halt")
+        self.persist_daily_caps()              # the halt must survive the next deploy (N5)
 
     def _chain(self, lo: _LiveOrder, matched: float, fill_price: float, outcome: str,
                locked: Optional[float], pnl: float, hedge_oid: Any) -> str:
@@ -3871,22 +4166,55 @@ class PregameLiveExecutor:
             pass
 
     def _expected_shares(self, venue: str, instrument: Any) -> float:
-        """Shares we EXPECT to hold on (venue, instrument) — 0.0 if none registered."""
+        """Shares we EXPECT to hold on (venue, instrument) — 0.0 if none registered.
+
+        INCLUDES the legs of pairs that are hedged but not yet CONFIRMED. A pending pair's hedge leg is
+        real shares bought with real money, and its rest leg is (probably) real too — they are simply not
+        booked yet. Leaving them out for the ~1-90s of the confirmation window would re-open two failures
+        this file already paid for: the unwind keep-floor would read 0 and a partial hedge's remainder
+        sell would liquidate the sub-pair it was just paired with (KLAMCI), and the account fill sweep
+        plus the 5-minute reconcile would see a hedge nobody claimed and halt on it (HANHAL). Booking is
+        what waits for the venue; KNOWING WE HOLD IT does not."""
         rec = self._expected.get(self._exp_key(venue, instrument))
-        return float(rec["shares"]) if rec else 0.0
+        return (float(rec["shares"]) if rec else 0.0) + self._pending_shares(venue, instrument)
+
+    def _pending_shares(self, venue: str, instrument: Any) -> float:
+        """Shares on (venue, instrument) held by pairs awaiting rest-leg confirmation (see
+        ``_expected_shares``). Both legs count: the hedge we bought, and the rest fill we are confirming."""
+        v, inst, total = str(venue), str(instrument), 0.0
+        for rec in self._pending_pairs.values():
+            if rec["rest_venue"] == v and rec["rest_inst"] == inst:
+                total += float(rec["rest_shares"] or 0.0)
+            if rec["hedge_venue"] == v and rec["hedge_inst"] == inst:
+                total += float(rec["hedge_held"] or 0.0)
+        return total
 
     def _expected_any(self, instrument: Any) -> Optional[dict]:
         """The expected record for ``instrument`` on EITHER venue (the re-verify guard only has the
-        instrument id, not the venue), or None."""
+        instrument id, not the venue), or None. Synthesises one for a PENDING leg — see
+        ``_expected_shares`` for why an unconfirmed pair still counts as held."""
         s = str(instrument)
         for rec in self._expected.values():
             if rec.get("instrument") == s and float(rec.get("shares") or 0.0) > 0.0:
                 return rec
+        for rec in self._pending_pairs.values():
+            for venue, inst, sh in ((rec["rest_venue"], rec["rest_inst"], rec["rest_shares"]),
+                                    (rec["hedge_venue"], rec["hedge_inst"], rec["hedge_held"])):
+                if str(inst) == s and float(sh or 0.0) > 0.0:
+                    return {"venue": venue, "instrument": s,
+                            "shares": self._pending_shares(venue, s), "game": rec["game"],
+                            "market_key": rec["market_key"], "pending": True}
         return None
 
     def _expected_shares_any(self, instrument: Any) -> float:
         rec = self._expected_any(instrument)
-        return float(rec.get("shares") or 0.0) if rec else 0.0
+        if rec is None:
+            return 0.0
+        # A synthesised PENDING record already carries the pending total; a real registry record must
+        # have it added, exactly as ``_expected_shares`` does.
+        if rec.get("pending"):
+            return float(rec.get("shares") or 0.0)
+        return float(rec.get("shares") or 0.0) + self._pending_shares(rec.get("venue"), instrument)
 
     def _reverify_explained(self, instrument: Any) -> bool:
         """Re-read the venue position for ``instrument`` and return True iff we hold NO MORE than the
@@ -3896,7 +4224,7 @@ class PregameLiveExecutor:
         rec = self._expected_any(instrument)
         if rec is None:
             return False
-        exp = float(rec.get("shares") or 0.0)
+        exp = self._expected_shares_any(instrument)   # registry + any pending legs on this instrument
         venue = rec.get("venue")
         try:
             if venue == "kalshi":

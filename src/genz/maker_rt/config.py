@@ -195,6 +195,25 @@ class LiveConfig:
     # the account fill history) every this many seconds. The private websocket fill channel is only an
     # accelerator — this poll is the detector of record and needs no socket to be connected.
     fill_poll_s: float = 10.0
+    # REST-LEG DELIVERY CONFIRMATION. A venue "fill" signal is a MATCH, not a delivery: Polymarket's
+    # trade lifecycle is MATCHED -> MINED -> CONFIRMED and a MATCHED trade can still FAIL, leaving
+    # ``size_matched`` elevated on an order that never delivered a single share. On 2026-08-04 that cost
+    # $29.32 of real Kalshi hedge against a 116-share Poly fill that never existed, announced as
+    # "profit is GUARANTEED either way" (SHAEGR). So the hedge still fires on the SIGNAL — speed is the
+    # edge — but the PAIR may not be booked until the rest leg is confirmed at the venue.
+    #
+    # The deadline is MEASURED, not guessed (see data/ops/REPORT_shaegr_fix.txt): real CTF deliveries
+    # appear in conditional_balance within 1-2 polls (~0.75-2.25s), the LARIBE rest leg was sellable 3s
+    # after its fill, and the long-standing settle_conditional_balance guard has used a 6s ceiling
+    # without ever false-negating a real delivery. 90s is ~40x the observed convergence and 15x that
+    # ceiling, because the dangerous error here is ONE-SIDED: calling a real-but-slow fill a phantom
+    # would unwind a good hedge and strand a real rest leg, while waiting a little longer costs nothing
+    # but a late Telegram. It still resolves far inside the 5-minute reconcile.
+    rest_confirm_deadline_s: float = 90.0
+    # How often the confirmation re-reads the rest leg. One read per pending pair per cadence, submitted
+    # to the SHARED off-loop worker — so it must stay a single venue read and never a polling loop (a
+    # blocking poll here would starve the fill-poll backstop, the 2026-07-30 starvation shape).
+    rest_confirm_poll_s: float = 2.0
     # SLOT AGE-OUT: a resting order older than this (seconds) is repriced-or-cancelled so no order holds
     # one of the (scarce) max_open_quotes slots forever — a stuck order behind best fills nothing and
     # starves every other candidate. 0 disables the age-out.
@@ -499,9 +518,12 @@ def load_maker_rt_config(config_path: Optional[str] = None,
     for name in ("enabled", "arm_file", "quote_usd_max", "max_open_quotes", "max_fills_per_day",
                  "max_daily_loss_usd", "max_daily_stake_usd", "max_pair_stake_usd", "hedge_timeout_ms",
                  "unwind_on_hedge_fail", "auto_flatten", "auto_flatten_max_usd", "fill_poll_s",
-                 "max_quote_age_s", "kalshi_feed_grace_s", "max_open_per_game", "max_game_stake_usd"):
+                 "max_quote_age_s", "kalshi_feed_grace_s", "max_open_per_game", "max_game_stake_usd",
+                 "rest_confirm_deadline_s", "rest_confirm_poll_s"):
         if live_blk.get(name) is not None:
             setattr(lc, name, live_blk[name])
+    lc.rest_confirm_deadline_s = float(lc.rest_confirm_deadline_s)
+    lc.rest_confirm_poll_s = float(lc.rest_confirm_poll_s)
     lc.max_open_per_game = int(lc.max_open_per_game)
     lc.max_game_stake_usd = float(lc.max_game_stake_usd)
     lc.enabled = bool(lc.enabled)

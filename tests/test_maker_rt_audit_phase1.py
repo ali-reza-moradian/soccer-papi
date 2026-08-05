@@ -43,8 +43,9 @@ from src.genz.maker_rt.caps import LiveCaps
 from src.genz.maker_rt.pregame_exec import (MAX_HEDGE_ERRORS, SETTLE_AGE_ALERT_S, HEDGE_SHARE_TOL,
                                             PregameLiveExecutor)
 
-from .test_maker_rt_pregame import (_Guard, _Hedger, _KalshiExec, _KalshiOC, _Log, _OrderClient, _Poly,
-                                    _State, _Store, _cand, _cand_kalshi, _dec, _exec, _exec_kalshi)
+from .test_maker_rt_pregame import (_Guard, _Hedger, _KalshiExec, _KalshiOC, _Log, _OrderClient,
+                                    _Poly, _State, _Store, _cand, _cand_kalshi, _dec, _exec,
+                                    _exec_kalshi, deliver_kalshi)
 
 _DT = datetime(2026, 7, 29, 17, 21, 41, tzinfo=timezone.utc)
 
@@ -859,6 +860,7 @@ def test_the_realized_net_of_a_clean_hedge_is_still_its_locked_net(tmp_path):
     lo = SimpleNamespace(size=10.0)  # noqa: F841 - documentation of intent; the real order is placed below
     c = _cand_kalshi(ticker="KX-CTRL", htoken="TOK_CTRL")
     ex.place_or_reprice(c, _dec(0.22, hedge_ask=0.76), None, store, _DT, 1.0, "inplay")
+    deliver_kalshi(_kex, "KX-CTRL", 10)          # VENUE TRUTH: the rest contracts really were delivered
     ex.on_kalshi_fill({"order_id": _KalshiOC and ex.kalshi_order_client.rests[0]["oid"],
                        "count": 10, "trade_id": "ctrl"}, store, _DT, 2.0)
 

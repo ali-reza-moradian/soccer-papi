@@ -27,8 +27,9 @@ from src.genz.maker_rt.hedge import locked_net, mark_hedge
 from src.genz.maker_rt.pregame_exec import HEDGE_DECLINE_FLOOR, PregameLiveExecutor
 from src.genz.maker_rt.quotes import hedge_taker_fee
 
-from .test_maker_rt_pregame import (_Hedger, _KalshiExec, _KalshiOC, _Poly, _Store, _cand, _cand_kalshi,
-                                    _dec, _exec, _exec_kalshi)
+from .test_maker_rt_pregame import (_Hedger, _KalshiExec, _KalshiOC, _Poly, _Store, _cand,
+                                    _cand_kalshi, _dec, _exec, _exec_kalshi, deliver_kalshi,
+                                    deliver_poly)
 
 _DT = datetime(2026, 7, 27, 12, 0, 0, tzinfo=timezone.utc)
 
@@ -114,6 +115,7 @@ def test_losing_hedge_alerts_error_not_guaranteed(tmp_path):
     store = _Store(poly_best_ask=0.62, kalshi_ask=0.60)       # optimistic pre-hedge walk (0.62) passes the gate
     c = _cand_kalshi(ticker="KX-G", htoken="TOKV")
     ex.place_or_reprice(c, _dec(0.37, hedge_ask=0.62), None, store, _DT, 100.0, "inplay")
+    deliver_kalshi(kex, "KX-G", 54)                        # VENUE TRUTH: the rest contracts were delivered
     oid = koc.rests[0]["oid"]
     ex.on_kalshi_fill({"order_id": oid, "count": 54}, store, _DT, 101.0)
     # booked as a LOSS
@@ -137,6 +139,7 @@ def test_profitable_hedge_still_alerts_locked(tmp_path):
     ex.digest_min = 0.0
     store = _Store(poly_best_ask=0.60, kalshi_ask=0.50)
     ex.place_or_reprice(_cand(), _dec(0.46, hedge_ask=0.50), None, store, _DT, 1.0, "pre")
+    deliver_poly(oc_poly, 5)                               # VENUE TRUTH: the rest leg was delivered
     ex.on_order_update({"order_id": ex.order_client.rests[0]["oid"], "size_matched": 5, "price": 0.46},
                        store, _DT, 2.0)
     assert any("✅ LOCKED" in m and "GUARANTEED" in m for m in sent)

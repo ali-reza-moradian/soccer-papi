@@ -39,7 +39,7 @@ from src.genz.maker_rt.pregame_exec import HEDGE_DECLINE_FLOOR, HEDGE_EXECUTION_
 from src.genz.maker_rt.quotes import hedge_taker_fee
 
 from .test_maker_rt_pregame import (_Hedger, _KalshiExec, _KalshiOC, _Poly, _Store, _cand_kalshi,
-                                    _dec, _exec, _exec_kalshi)
+                                    _dec, _exec, _exec_kalshi, deliver_kalshi)
 
 _DT = datetime(2026, 7, 28, 1, 21, 12, tzinfo=timezone.utc)
 
@@ -180,6 +180,7 @@ def test_deep_book_still_hedges_normally(tmp_path):
     store = _Store(poly_best_ask=0.04, kalshi_ask=0.95)       # _Store ladders are 500 deep
     c = _cand_kalshi(ticker="KX-DEEP", htoken="TOK_DEEP")
     ex.place_or_reprice(c, _dec(_PHIMIA_FILL_PX, hedge_ask=0.04), None, store, _DT, 100.0, "inplay")
+    deliver_kalshi(kex, "KX-DEEP", _PHIMIA_SIZE)   # VENUE TRUTH: the rest contracts really were delivered
     ex.on_kalshi_fill({"order_id": koc.rests[0]["oid"], "count": _PHIMIA_SIZE}, store, _DT, 101.0)
     assert len(hedger.calls) == 1
     assert "hedge_locked" in [r["event"] for r in ex.state.rows]

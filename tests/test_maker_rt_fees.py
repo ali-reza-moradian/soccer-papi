@@ -11,7 +11,8 @@ from src.executor.fees_sizing import kalshi_fee_usd, poly_fee_usd
 from src.genz.maker_rt.hedge import LiveHedger, kalshi_actual_fee
 from src.genz.maker_rt.pregame_exec import PregameLiveExecutor
 
-from .test_maker_rt_pregame import _Hedger, _OrderClient, _Store, _cand, _dec, _exec
+from .test_maker_rt_pregame import (_Hedger, _OrderClient, _Poly, _Store, _cand, _dec, _exec,
+                                    deliver_poly)
 
 
 # --------------------------------------------------------------------------- #
@@ -76,10 +77,12 @@ def test_fee_flows_into_locked_net_and_cost_basis(tmp_path):
     oc = _OrderClient()
     hedger = _Hedger(SimpleNamespace(status="locked", hedged_shares=5, hedge_avg_price=0.41,
                                      hedge_fee=0.09, locked_pnl=0.06, unwind_cost=None))
-    ex, _ = _exec(tmp_path, order_client=oc, hedger=hedger)
+    poly = _Poly()
+    ex, _ = _exec(tmp_path, order_client=oc, hedger=hedger, poly=poly)
     ex.caps.quote_usd_max = 3.0                             # pin size to 5 (floor(3.0/0.56)=5)
     store = _Store(poly_best_ask=0.60, kalshi_ask=0.41)
     ex.place_or_reprice(_cand(), _dec(price=0.56, hedge_ask=0.41), None, store, now=None, now_ts=1.0)
+    deliver_poly(poly, 5)                                   # VENUE TRUTH: the rest leg was delivered
     oid = oc.rests[0]["oid"]
     ex.on_order_update({"order_id": oid, "size_matched": 5, "price": 0.56}, store, None, 2.0)
     row = [r for r in ex.state.rows if r.get("event") == "hedge_locked"][0]

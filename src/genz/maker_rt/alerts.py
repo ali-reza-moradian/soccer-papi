@@ -34,6 +34,7 @@ STATUS = {
     "locked_loss": ("🔴", "ERROR"),
     "settled":   ("🏁", "SETTLED"),
     "unwound":   ("🟠", "UNWOUND"),
+    "phantom":   ("🔴", "FILL NEVER ARRIVED"),
     "auto_flattened": ("🟠", "AUTO-FLATTENED"),
     "corrected": ("📘", "CORRECTED"),
     "halted":    ("🔴", "STOPPED"),
@@ -289,6 +290,33 @@ def format_event(kind: str, *, sport: Any = None, game: Any = None, market_key: 
         sz = f"({int(size)} sh)" if size is not None else ""
         return (f"{_status(kind)} · {tag} · {match}\n"
                 f"   Someone took {amt} of {name} @ {cents(price)} {sz} · buying the hedge now…")
+
+    if kind == "phantom":
+        # A REST FILL THAT NEVER DELIVERED. The exchange said someone took our offer, we bought the hedge
+        # against it with real money, and the shares never arrived. Nothing here may read as a lock: this
+        # message exists because "profit is GUARANTEED either way" was sent about 116 shares that did not
+        # exist. Say what was claimed, what actually turned up, what it cost to undo, and that we are flat.
+        hedge_nm = other_name(name, teams)
+        part = sold is not None and float(sold) > _NAKED_TOL
+        claimed = f"{_sh(size)} of {name}" if size is not None else name
+        undo = (f"{_sh(hedge_shares)} of {hedge_nm} on {venue_full(hedge_venue)}"
+                if hedge_shares is not None else f"the hedge on {venue_full(hedge_venue)}")
+        l1 = f"{_status(kind)} · {tag} · {match}"
+        l2 = (f"\n   {venue_full(venue)} told me someone took {claimed} @ {cents(price)}, so I bought the "
+              f"hedge straight away — then "
+              f"{'only ' + _sh(sold) + ' of it actually arrived' if part else 'none of it ever arrived'}.")
+        if part:
+            l3 = (f"\n   The {_sh(sold)} that did arrive are properly paired and stay on. The extra "
+                  f"{undo} had nothing left to pair against, so I have sold that part back.")
+            l5 = ("\n   Only the shares that actually arrived are locked in — the rest was a fill the "
+                  "exchange reported and never delivered.")
+        else:
+            l3 = (f"\n   That left me holding {undo} with nothing to pair it against, so I have sold it "
+                  f"back. We are flat on this market.")
+            l5 = ("\n   Nothing was locked in and nothing is guaranteed here — this was a fill the "
+                  "exchange reported and never delivered.")
+        l4 = f"\n   💸 Undoing it cost {money(cost)}." if cost is not None else ""
+        return l1 + l2 + l3 + l4 + l5
 
     if kind == "locked":
         hedge_nm = other_name(name, teams)

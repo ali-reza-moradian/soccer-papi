@@ -510,7 +510,8 @@ class MakerState:
             if row.get("locked_net") is not None:           # REALIZED locked net (%) — the target_net check
                 self.recent_locked_nets.append(float(row["locked_net"]))
             self.persist_tuning()                           # fills are rare + precious: persist NOW
-        elif ev in ("hedge_declined", "hedge_unwound", "unwind_FAILED", "auto_flattened"):
+        elif ev in ("hedge_declined", "hedge_unwound", "unwind_FAILED", "auto_flattened",
+                    "phantom_unwound"):
             # the fill required an EXIT (we paid the unwind toll). unwind_cost is on the row here, BEFORE
             # _append_csv drops it (it's not a CSV column — realized_pnl_usd carries -cost to the CSV).
             self.n_unwinds += 1; self.lifetime_unwinds += 1
@@ -540,7 +541,14 @@ class MakerState:
             #                    its real outcome arrives later as mark_corrected / trade_settled, which
             #                    already add to lifetime. Booking it here too would double-count the
             #                    same shares — once at a worst-case guess and once at venue truth.
-            if ev in ("hedge_unwound", "auto_flattened") or (ev == "hedge_declined" and abs(cost) > 1e-9):
+            #   phantom_unwound — the hedge bought against a rest fill the venue never delivered, sold
+            #                    back on the same verified-flat path. There is no pair and there will be
+            #                    no settlement, so this exit toll is the ENTIRE financial record of that
+            #                    fill: if it does not enter lifetime here it enters nowhere, which is
+            #                    exactly how SHAEGR's $29.32 went unbooked while the books called it a
+            #                    +$0.83 lock.
+            if ev in ("hedge_unwound", "auto_flattened", "phantom_unwound") \
+                    or (ev == "hedge_declined" and abs(cost) > 1e-9):
                 self.settled_pnl_lifetime -= cost           # cost is POSITIVE $ paid; lifetime falls
                 self.settled_pnl_exits_lifetime -= cost     # ... and the exits bucket keeps it separable
                 self.settled_exits += 1
