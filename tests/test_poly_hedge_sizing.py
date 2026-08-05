@@ -245,3 +245,65 @@ def test_a_caller_with_no_walk_falls_back_to_the_book_not_to_the_pad():
     ex.get_orderbook = lambda tok: {"asks": [(0.29, 500.0)]}
     ex.place_market_buy("TOK", 44.74, price=0.31)          # no expected_price -> book's best ask
     assert clob.orders[0].amount == 12.97, "sized off 0.29, not off the 0.31 pad"
+
+
+# --------------------------------------------------------------------------- #
+# PARTIAL FAK fills: the share count comes from VENUE CASH, at every ratio       #
+# --------------------------------------------------------------------------- #
+class _PartialClob(_Clob):
+    """A CLOB that matches only ``ratio`` of the amount — a FAK that ran out of book.
+
+    A partial market BUY reports the amounts it ACTUALLY moved: ``makingAmount`` is the USDC that left
+    (less than the order's), ``takingAmount`` the shares that arrived. Anything that reads the REQUEST
+    instead — or reads a BUY's makingAmount as shares — mis-states a real position, which on 2026-07-23
+    (TBTOR) unwound a phantom remainder and on 2026-08-05 (KLAMCI) decided how much to sell.
+    """
+
+    def __init__(self, ratio, fill_price=None, tick="0.01"):
+        super().__init__(tick=tick)
+        self.ratio, self.fill_price = ratio, fill_price
+
+    def post_order(self, signed, order_type):
+        self.posted.append(signed)
+        px = self.fill_price or signed["price"]
+        usd = round(signed["maker"] * self.ratio, 6)
+        if usd <= 0:
+            return {"status": "canceled", "makingAmount": 0, "takingAmount": 0}
+        return {"status": "matched", "makingAmount": usd, "takingAmount": round(usd / px, 6),
+                "price": px}
+
+
+@pytest.mark.parametrize("ratio", [0.0, 0.3, 0.7, 1.0])
+def test_a_partial_fak_reports_the_shares_the_venue_actually_handed_over(ratio):
+    """The count is TAKINGAMOUNT, whatever fraction filled — never the request, never the dollar leg."""
+    clob = _PartialClob(ratio, fill_price=0.68)
+    res = PolyExec(client=clob).place_market_buy("TOK", 115.0, price=0.70, expected_price=0.68)
+    spent = round(clob.orders[0].amount * ratio, 6)
+    assert res["shares"] == pytest.approx(spent / 0.68 if spent else 0.0)
+    assert res["avg_price"] == pytest.approx(0.68) if ratio else True
+    assert res["status"] == ("filled" if ratio == 1.0 else ("partial" if ratio else "none"))
+    if ratio:
+        assert res["cash_debit"] == pytest.approx(spent), "cost is booked from the CASH the venue moved"
+
+
+@pytest.mark.parametrize("ratio", [0.3, 0.7])
+def test_a_partial_fak_is_never_counted_in_dollars(ratio):
+    """A BUY's makingAmount is USDC. Reading it as shares under-reports a 68c fill by ~32% — enough to
+    make a real hedge look like a miss and send it down the unwind path."""
+    clob = _PartialClob(ratio, fill_price=0.68)
+    res = PolyExec(client=clob).place_market_buy("TOK", 115.0, price=0.70, expected_price=0.68)
+    dollars = round(clob.orders[0].amount * ratio, 6)
+    assert res["shares"] > dollars, "shares at a sub-$1 price always exceed the dollars paid"
+
+
+def test_the_klamci_hedge_response_reads_as_eighty_shares():
+    """VENUE TRUTH, 2026-08-05: a 115-share hedge FAK moved $54.4844 for 80 Under shares. That count is
+    what decides the naked remainder, and it was right on the day — the 80 shares were lost by the
+    REGISTRY, not by the parser. Pinned so the two failures never get conflated again."""
+    raw = {"status": "matched", "makingAmount": "54.4844", "takingAmount": "80", "price": "0.67"}
+    res = PolyExec(client=_Clob())._normalize(raw, price=0.70, requested_shares=115.0, side="BUY")
+    assert res["shares"] == pytest.approx(80.0)
+    assert res["avg_price"] == pytest.approx(54.4844 / 80.0)
+    assert res["avg_price_source"] == "venue_cash", "the executed price is the amounts' RATIO"
+    assert res["cash_debit"] == pytest.approx(54.4844)
+    assert res["status"] == "partial"

@@ -397,9 +397,32 @@ class MakerState:
                 continue                                  # REFUSE the money, silently and forever
             exits, untracked, hedged = _f("exits_usd"), _f("untracked_usd"), _f("hedged_usd")
             total = exits + untracked + hedged
+            # THE SAME GUARD A LIVE SETTLEMENT PASSES. A restatement books real money into the same
+            # lifetime counters a ``trade_settled`` row does, so it answers to the same unit-error rail —
+            # on UNTRACKED terms when it carries an untracked leg, because a naked position's honest
+            # outcome is a full-stake win or loss and the hedged ROI ceiling would refuse it (that ceiling
+            # is what silently dropped Fortaleza's real $353 twice). ``cost_usd`` is the position's own
+            # basis, which is what bounds an untracked net; without it the guard has nothing to measure
+            # against and the entry is refused rather than waved through.
+            from .settle import sane_settled            # local, like the other two call sites (cycle)
+            ok, why = sane_settled(total, _f("cost_usd"), max_net_usd=self.settled_max_net_usd,
+                                   untracked=abs(untracked) > 1e-9)
+            if not ok:
+                crit = (getattr(self.log, "critical", None) or getattr(self.log, "error", None)) if self.log \
+                    else None
+                if crit:
+                    crit("[MAKER_RT][RESTATEMENT][CRITICAL] REFUSED %s (%s): total $%.4f on cost $%.4f — "
+                         "NOT applied, and the key is NOT consumed. %s", key, why, total, _f("cost_usd"),
+                         e.get("note") or "")
+                continue                                  # refuse the money; a human reconciles by hand
             self.settled_pnl_lifetime += total
             self.settled_pnl_exits_lifetime += exits
             self.settled_pnl_untracked_lifetime += untracked
+            # A restatement that stands in for a SETTLEMENT the books never wrote carries its trade count
+            # and cost basis too, so ``settled_trades`` and the ROI denominator do not quietly drift away
+            # from the number of trades that actually settled.
+            self.settled_cost_lifetime += _f("cost_usd")
+            self.settled_trades += int(e.get("trades_n") or 0)
             if abs(exits) > 1e-9:
                 self.settled_exits += int(e.get("exits_n") or 0)
             self.restatements_applied.append(key)

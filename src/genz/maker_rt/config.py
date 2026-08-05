@@ -54,6 +54,11 @@ RUNTIME_FILES: dict[str, tuple[str, str]] = {
     # reopen, but the skip list lived only in memory, so each of the day's 10-21 restarts re-POSTed
     # every one of them once more and re-earned the same 404 (and, before this, the same alert).
     "closed_markets": ("ops", "maker_rt_closed_markets.json"),
+    # Every market we OFFERED on in the last 48h, both legs. This is the scope — and the ONLY scope —
+    # the unregistered-position sweep searches the funder wallet with. Reconciliation watches registered
+    # instruments, so it is blind by construction to a position nothing registered; this file is what
+    # gives that sweep somewhere honest to look without dragging in the wallet's unrelated holdings.
+    "quoted_markets": ("ops", "maker_rt_quoted_markets.json"),
     # SINGLETON LOCK: an OS-held exclusive lock proving this is the only maker on the host. See
     # singleton.py — the kernel releases it on process death, so there is no stale-lock failure mode.
     "lock":          ("ops",  "maker_rt.lock"),

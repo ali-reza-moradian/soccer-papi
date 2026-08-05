@@ -319,6 +319,20 @@ class PregameLiveExecutor:
         self._offloop_ok_logged_ts: dict = {}   # throttles the "pass OK" heartbeat per pass name
         self._last_fills_sweep_ts = 0.0      # unix-seconds low-water mark for the /portfolio/fills sweep
         self._seen_fill_ids: set = set()     # fill_id dedupe across sweeps + the socket
+        # OUR OWN EXITS. An unwind is a taker order we place ourselves, on an order id we never rested, so
+        # its executions come back through the account fill sweep looking exactly like a stranger's fill —
+        # KLAMCI's two unwind sells surfaced as three ``fill_untracked`` rows against our own money. Both
+        # halves are registered: the INSTRUMENT before the order is submitted (there is no id yet, and the
+        # sweep can land the moment the sell fills) and the concrete ORDER ID as soon as the venue returns
+        # it. ``_unwind_inflight`` maps instrument -> epoch so a stale marker cannot mask a real surprise.
+        self._own_order_ids: set = set()
+        self._unwind_inflight: dict = {}
+        # THE 48h QUOTED SCOPE: instrument -> {venue, game, market_key, name, ts}, covering BOTH legs of
+        # every market we offered on. It is the ONLY registry the unregistered-position sweep is allowed
+        # to consult, which is what keeps the owner's ~180 unrelated wallet positions out of it.
+        self._quoted: dict = {}
+        self._quoted_path = mrt_config.runtime_path("quoted_markets")
+        self._unregistered_alerted: dict = {}        # instrument -> epoch of its last red alert
         # PLACE-FAILURE BACKOFF: a venue refusal (esp. "market closed") must not retry ~1x/s forever.
         self._place_fail_until: dict = {}    # candidate key -> ts before which we won't retry placement
         self._place_fail_n: dict = {}        # candidate key -> consecutive refusals (alert once, then log)
@@ -374,6 +388,7 @@ class PregameLiveExecutor:
         self._daily_caps_saved_ts = 0.0
         self._load_daily_caps()
         self._load_traded_tokens()
+        self._load_quoted()
         self._load_settled_ledger()
         self._load_expected_positions()
         self._load_provisional()
@@ -716,6 +731,55 @@ class PregameLiveExecutor:
             self._traded_tokens.add(lo.token)
             self._persist_traded_tokens()
 
+    # -- the 48h QUOTED scope (what the unregistered-position sweep is allowed to look at) -------
+    def _note_quoted(self, lo: _LiveOrder, now_ts: float) -> None:
+        """Remember that we OFFERED on this market — BOTH the leg we rested and the complement we would
+        hedge into — so the reconcile sweep has a scope to look in.
+
+        The registries the reconciler watches (``_traded_tokens`` / ``_expected``) only ever contain
+        instruments a code path DELIBERATELY put there, which makes them useless for finding a position a
+        code path FORGOT to register: reconciliation watching only registered tokens is blind to an
+        unregistered one BY CONSTRUCTION, and that is exactly how 80 shares of K-League Under rode a live
+        match for nine hours. This registry is the independent scope — wide enough to contain any position
+        this bot could have opened, narrow enough that the owner's own unrelated wallet positions (this
+        funder wallet holds ~180) can never be mistaken for ours."""
+        hl = lo.hedge_lookup or {}
+        name = alerts.bet_name(lo.sport, lo.game, lo.market_key, lo.side, getattr(lo, "teams", ""))
+        legs = [(lo.rest_venue, lo.token)]
+        legs.append(("polymarket", hl.get("token")) if hl.get("token") else ("kalshi", hl.get("ticker")))
+        changed = False
+        for venue, inst in legs:
+            if not inst:
+                continue
+            rec = self._quoted.get(str(inst))
+            if rec is None or float(rec.get("ts") or 0.0) < now_ts - 60.0:
+                self._quoted[str(inst)] = {"venue": venue, "game": lo.game, "market_key": lo.market_key,
+                                           "name": name, "ts": float(now_ts)}
+                changed = True
+        if changed:
+            self._prune_quoted(now_ts)
+            self._persist_quoted()
+
+    def _prune_quoted(self, now_ts: float) -> None:
+        """Drop everything older than the sweep window. An instrument we have not offered on for two days
+        can still hold a position, but it is no longer evidence of a bug WE just made — and the scope has
+        to stay tight enough that the wallet's unrelated holdings never enter it."""
+        cutoff = float(now_ts) - self.QUOTED_WINDOW_S
+        for k in [k for k, r in self._quoted.items() if float(r.get("ts") or 0.0) < cutoff]:
+            self._quoted.pop(k, None)
+
+    def _persist_quoted(self) -> None:
+        self._persist_json(self._quoted_path, self._quoted, "the quoted-market scope")
+
+    def _load_quoted(self) -> None:
+        """Reload the quoted scope. Best-effort: losing it makes the sweep narrower for a couple of days
+        (it refills from live quoting within minutes), never wider — it cannot cause a false alarm."""
+        data = self._load_json(self._quoted_path, "the quoted-market scope", fail_closed=False)
+        if isinstance(data, dict):
+            for k, r in data.items():
+                if isinstance(r, dict) and r.get("venue"):
+                    self._quoted[str(k)] = r
+
     # -- placement -----------------------------------------------------------
     def place_or_reprice(self, c: Any, dec: Any, rest: Any, store: Any, now: Any, now_ts: float,
                          phase: str = "pre") -> None:
@@ -850,6 +914,7 @@ class PregameLiveExecutor:
         self._place_fail_n.pop(c.key, None)            # a successful place clears the refusal streak
         self._slot_wait_since.pop(c.key, None)         # got its slot -> no longer waiting
         self._track_rested(lo)                         # reconcile this instrument for flatness (persisted)
+        self._note_quoted(lo, now_ts)                  # BOTH legs enter the 48h sweep scope (see _sweep_unregistered)
         self.caps.on_open(projected)
         kind = "reprice" if existing is not None else "quote"
         self._record(c, kind, now, phase, price=price, size=size, hedge_ask=hedge_ask, order_id=oid)
@@ -2290,8 +2355,15 @@ class PregameLiveExecutor:
         # BEFORE the expected check — reordering it is the fix; the untracked bucket now holds only truly
         # naked fills like the UFC ghost stack.)
         is_expected_leg = explained and expected > HEDGE_SHARE_TOL
+        # OUR OWN EXIT, coming back to us. An unwind sell is placed on an order id we never rested, so it
+        # reaches this sweep with no match — and on KLAMCI our two unwind orders were ledgered as three
+        # ``fill_untracked`` rows, which reads as "money moved on a position we did not know about" when
+        # it was in fact the safety net doing its job. Registered exits are labelled for what they are.
+        own_exit = self._is_own_exit(f.get("order_id"), tk)
+        label = "unwind_confirmed" if own_exit else ("hedge_confirmed" if is_expected_leg
+                                                     else "fill_untracked")
         if self.state is not None:
-            self.state.record({"event": "hedge_confirmed" if is_expected_leg else "fill_untracked",
+            self.state.record({"event": label,
                                "mode": "live", "phase": "?", "game": tk, "market_key": tk,
                                "side": str(f.get("side") or ""), "direction": "rest-kalshi",
                                "rest_venue": "kalshi", "quote_price": px or "", "size": round(cnt, 2),
@@ -2299,10 +2371,12 @@ class PregameLiveExecutor:
         if explained:
             # Flat, or fully EXPLAINED by an expected hedge/rest leg we booked -> ledger, do NOT halt.
             if self.log:
-                how = "FLAT" if abs(pos) <= HEDGE_SHARE_TOL else f"EXPECTED hedge/rest leg (hold {expected:g})"
-                self.log.info("[MAKER_RT][LIVE] untracked fill on %s (order %s, %.0f) — position %s "
+                how = ("OUR OWN EXIT" if own_exit else
+                       "FLAT" if abs(pos) <= HEDGE_SHARE_TOL
+                       else f"EXPECTED hedge/rest leg (hold {expected:g})")
+                self.log.info("[MAKER_RT][LIVE] unmatched fill on %s (order %s, %.0f) — position %s "
                               "(read=%.2f); logged %s, no orphan.", tk, f.get("order_id"), cnt, how, pos,
-                              "hedge_confirmed" if is_expected_leg else "ledgered")
+                              label)
             return
         self._traded_tickers.add(tk)                    # make sure reconciliation keeps watching it
         self._persist_traded_tokens()
@@ -2504,15 +2578,64 @@ class PregameLiveExecutor:
                                                  hedge_fee=hedge_fee, verified=True,
                                                  actual_hedge_shares=max(new_complement, true_hedged))
             hedged = max(hedged, new_complement)               # never unwind shares we actually hold hedged
-        # MISS / PARTIAL / ERROR -> unwind the genuinely UNHEDGED remainder (verified). A partial hedge
-        # locks its part.
+        # MISS / PARTIAL / ERROR -> the fill SPLITS IN TWO, and until 2026-08-05 only one half was
+        # acknowledged. A partial hedge is REAL SHARES WE OWN on the complement venue: the filled part is a
+        # genuine (smaller) hedged pair and ONLY the shortfall is naked. The old code computed the naked
+        # remainder correctly and then walked away from the pair — it committed the stake, advanced
+        # ``hedged_seen`` and unwound the rest, but NOTHING registered either leg. So the hedge shares
+        # existed in no registry at all, which is why the KLAMCI 80-share Under leg was invisible to orphan
+        # detection, to reconciliation and to the maker-position report for nine hours (see
+        # ``_record_partial_pair`` and ``_verified_unwind``'s keep-floor for the two halves of the fix).
         hedged = min(hedged, matched)                          # this fill cannot be hedged beyond itself
-        if hedged > 0:
+        sub = None
+        if hedged > HEDGE_SHARE_TOL:
+            sub = self._record_partial_pair(lo, hedged, fill_price, hedge_avg, hedge_fee, hedge_oid,
+                                            hedge_venue, locked, matched, now)
+        elif hedged > 0:                                       # sub-tolerance dust: stake only, no pair
             self.caps.commit_stake(hedged * float(hedge_avg or 0.0))
             lo.hedged_seen += hedged                           # attribute it before the remainder is judged
         remainder = max(0.0, matched - hedged)
-        return self._unwind_and_record(lo, remainder, fill_price, locked, "hedge_unwound", now,
-                                       hedge_oid=hedge_oid)
+        res = self._unwind_and_record(lo, remainder, fill_price, locked, "hedge_unwound", now,
+                                      hedge_oid=hedge_oid, count_fill=(sub is None))
+        return self._merge_partial(sub, res, matched) if sub is not None else res
+
+    def _record_partial_pair(self, lo: _LiveOrder, hedged: float, fill_price: float, hedge_avg: Any,
+                             hedge_fee: Any, hedge_oid: Any, hedge_venue: str, locked: Optional[float],
+                             matched: float, now: Any) -> dict:
+        """Book the FILLED part of a short hedge as the smaller pair it is: both legs registered as
+        EXPECTED, the cost basis noted for settlement, the locked net computed from the ACTUAL hedge fill.
+
+        This is the documented unwind doctrine, applied to the case that never reached it. Everything the
+        LOCKED path does for a full hedge is exactly what these shares need — they settle, they must not
+        read as an orphan, and their pnl is maker edge, not luck — so this routes through the same
+        ``_record_hedge_locked`` rather than reimplementing a second, quieter booking."""
+        locked_actual = self._actual_locked_net(fill_price, hedge_avg, hedge_fee, hedged, locked)
+        pnl = round(float(locked_actual) * float(hedged), 4) if locked_actual is not None else 0.0
+        if self.log:
+            self.log.warning("[MAKER_RT][LIVE] PARTIAL HEDGE %s: %.2f of %.2f sh hedged on %s @ %s — "
+                             "booking those as a %.2f-share pair (locked_net %s) and unwinding only the "
+                             "%.2f naked.", self._name_for(lo), float(hedged), float(matched), hedge_venue,
+                             ("%.4f" % float(hedge_avg)) if hedge_avg is not None else "n/a", float(hedged),
+                             ("%.2f%%" % (locked_actual * 100.0)) if locked_actual is not None else "n/a",
+                             max(0.0, float(matched) - float(hedged)))
+        return self._record_hedge_locked(lo, hedged, fill_price, hedged, hedge_avg, hedge_oid,
+                                         locked_actual, hedge_venue, now, pnl=pnl, hedge_fee=hedge_fee,
+                                         actual_hedge_shares=hedged)
+
+    @staticmethod
+    def _merge_partial(sub: dict, unwound: dict, matched: float) -> dict:
+        """ONE result for a fill that ended as BOTH a smaller locked pair and a smaller unwind.
+
+        ``realized_net`` is the per-share outcome of the WHOLE fill (pair pnl + unwind cost over the shares
+        that filled), because that is the number the in-play circuit judges a fill on — judging it on
+        either half alone would let a fill that lost money on balance read as a clean lock, or a fill that
+        made money read as a pure exit."""
+        pnl = float(sub.get("pnl") or 0.0) + float(unwound.get("pnl") or 0.0)
+        n = float(matched or 0.0)
+        return {"outcome": "hedge_partial_locked", "locked_net": sub.get("locked_net"),
+                "realized_net": (round(pnl / n, 6) if n > 1e-9 else None), "pnl": round(pnl, 4),
+                "hedge_order_id": sub.get("hedge_order_id") or unwound.get("hedge_order_id"),
+                "chain": f"{sub.get('chain')} + {unwound.get('chain')}"}
 
     @staticmethod
     def _prehedge_decline_reason(locked_net_est: Optional[float], fill_price: float,
@@ -2819,10 +2942,17 @@ class PregameLiveExecutor:
         return last
 
     def _unwind_and_record(self, lo: _LiveOrder, shares: float, fill_price: float, locked: Optional[float],
-                           ok_outcome: str, now: Any, hedge_oid: Any = None) -> dict:
+                           ok_outcome: str, now: Any, hedge_oid: Any = None,
+                           count_fill: bool = True) -> dict:
         """Unwind ``shares`` of the naked fill and VERIFY the position is flat. On success record
         ``ok_outcome`` (hedge_declined | hedge_unwound). On failure record 'unwind_FAILED' + SCREAM + HALT
-        all live quoting -- NO 'unwound' row is ever written without a venue-confirmed flat position."""
+        all live quoting -- NO 'unwound' row is ever written without a venue-confirmed flat position.
+
+        ``count_fill`` is False when the SAME venue fill has already been counted — a partially-hedged fill
+        books its pair AND unwinds its remainder, and ``fills_today`` is a daily CAP, so letting one
+        execution consume two of the day's scarce fill slots would quietly halve the budget. The pnl still
+        moves either way; only the counter is skipped (the ``adjust_pnl`` doctrine)."""
+        book = (lambda usd: self.caps.on_fill(usd, locked=False)) if count_fill else self.caps.adjust_pnl
         if shares <= 1e-9:                                    # nothing naked (fully hedged) -> flat by construction
             self._record_lo(lo, ok_outcome, now, price=fill_price, size=0, locked_net=locked, unwind_cost=0.0)
             return {"outcome": ok_outcome, "locked_net": locked, "realized_net": locked, "pnl": 0.0,
@@ -2838,11 +2968,16 @@ class PregameLiveExecutor:
         u = self._verified_unwind(lo, shares, fill_price)
         if u["ok"]:
             cost = u["cost"] or 0.0
-            self.caps.on_fill(-cost, locked=False)
+            book(-cost)
             if u["sold"] > 0 and u["sell_px"] is not None:
                 self.caps.commit_stake(float(u["sell_px"]) * float(u["sold"]))
-            self._record_lo(lo, ok_outcome, now, price=fill_price, size=shares, locked_net=locked,
-                            unwind_cost=cost)
+            # SIZE IS WHAT WE ACTUALLY SOLD, not what we set out to sell. ``cost`` has always been
+            # computed on the true total (it is priced off ``sold``), so a row carrying the REQUEST
+            # described a $4.00 exit as 35 shares while 115 had left the account — right money, wrong
+            # label, and the label is what a human reads when reconstructing an incident.
+            sold = float(u.get("sold") or 0.0)
+            self._record_lo(lo, ok_outcome, now, price=fill_price,
+                            size=(sold if sold > 0 else shares), locked_net=locked, unwind_cost=cost)
             self._emit_event("unwound", lo, instant=True, size=u["sold"], price=u["sell_px"], cost=cost,
                              reason=("hedge too dear" if ok_outcome == "hedge_declined" else "hedge missed"))
             return {"outcome": ok_outcome, "locked_net": locked,
@@ -2863,7 +2998,7 @@ class PregameLiveExecutor:
         flat = self._auto_flatten_orphan(lo, naked, fill_price, now)
         if flat is not None:
             realized = round(flat - sold_cost, 4)             # flatten pnl MINUS the first sweep's cost
-            self.caps.on_fill(realized, locked=False)
+            book(realized)
             self._record_lo(lo, "auto_flattened", now, price=fill_price, size=naked, locked_net=locked,
                             unwind_cost=-realized)
             self.persist_daily_caps()
@@ -2876,7 +3011,7 @@ class PregameLiveExecutor:
         # position is open; its real outcome is unknown), so it can be rebooked at VENUE TRUTH the moment
         # it closes or settles — see ``settle_provisional_marks``.
         est_loss = round(float(fill_price) * naked + sold_cost, 4)
-        self.caps.on_fill(-est_loss, locked=False)
+        book(-est_loss)
         self._record_lo(lo, "unwind_FAILED", now, price=fill_price, size=shares, locked_net=locked,
                         unwind_cost=est_loss)
         # The PROVISIONAL mark covers only the still-open remainder — that is the part a settlement can
@@ -2941,11 +3076,27 @@ class PregameLiveExecutor:
     def _verified_unwind(self, lo: _LiveOrder, shares: float, fill_price: float) -> dict:
         """VENUE-DISPATCHED verified unwind: market-sell the naked fill AND REST-verify the position is flat.
         Returns {ok, sold, sell_px, cost, remaining, sell_res}. ok is True ONLY when the position read
-        confirms flat. A read failure is treated as NOT flat (fail-closed). Identical doctrine both venues."""
+        confirms flat. A read failure is treated as NOT flat (fail-closed). Identical doctrine both venues.
+
+        "FLAT" MEANS "NOTHING BEYOND WHAT WE HOLD ON PURPOSE", NOT "ZERO". The reconcile-to-flat loop
+        re-sells whatever the venue still reports until the position reads empty, and on 2026-08-05 that
+        was catastrophic: a 115-share KLAMCI fill hedged 80/115, the executor correctly asked to unwind 35
+        — and the loop then read the 80 REMAINING (hedged) contracts as an unsold naked remainder and sold
+        those too. The Kalshi leg was liquidated, the Poly Under leg it was paired with was left naked and
+        directional for nine hours, and the ledger recorded a tidy unwind. The same shape fires on ANY
+        multi-fill order: fill #2's unwind would liquidate fill #1's properly hedged rest leg.
+
+        So the target is the EXPECTED-position registry: sell down to the shares this instrument is
+        supposed to be holding, and treat only the surplus as naked."""
         self._pull_own_book_side(lo)          # our own resting order would BLOCK this sell — see below
+        keep = self._expected_shares(lo.rest_venue, lo.token)
+        if keep > HEDGE_SHARE_TOL and self.log:
+            self.log.info("[MAKER_RT][LIVE] unwinding %.2f sh on %s while HOLDING %.2f hedged sh on purpose "
+                          "— the sell stops there, it does not flatten the pair.",
+                          float(shares), lo.token, keep)
         if lo.rest_venue == "kalshi":
-            return self._verified_unwind_kalshi(lo, shares, fill_price)
-        return self._verified_unwind_poly(lo, shares, fill_price)
+            return self._verified_unwind_kalshi(lo, shares, fill_price, keep=keep)
+        return self._verified_unwind_poly(lo, shares, fill_price, keep=keep)
 
     def _pull_own_book_side(self, lo: _LiveOrder) -> int:
         """Cancel every order of OURS still resting on ``lo``'s instrument BEFORE we try to unwind it.
@@ -3002,11 +3153,17 @@ class PregameLiveExecutor:
         status = str(raw.get("status") or "").lower()
         return filled <= 0 and remaining is not None and remaining <= 0 and status in ("canceled", "cancelled")
 
-    def _verified_unwind_poly(self, lo: _LiveOrder, shares: float, fill_price: float) -> dict:
+    def _verified_unwind_poly(self, lo: _LiveOrder, shares: float, fill_price: float, *,
+                              keep: float = 0.0) -> dict:
         """FAK-sell the naked Poly position, RE-READ the balance, and RECONCILE-TO-FLAT: if a thin book
         only partly filled, RE-SELL the remainder (up to UNWIND_MAX_ATTEMPTS) rather than leave a
-        mismatched leg. ok is True ONLY when the balance read confirms flat (fail-closed on read error)."""
+        mismatched leg. ok is True ONLY when the balance read confirms flat (fail-closed on read error).
+
+        ``keep`` is the balance we hold ON PURPOSE (registered hedged legs) — the sell floor, and what
+        ``remaining`` is reported NET of, so a caller's orphan check sees only genuinely naked shares.
+        See :meth:`_verified_unwind` for what selling past it cost."""
         poly = getattr(self.hedger, "poly", None) or self.poly
+        keep = max(0.0, float(keep or 0.0))
         total_sold, px_num, px_den = 0.0, 0.0, 0.0
         to_sell, prev_remaining, remaining, sell_res = float(shares), None, None, None
         for _ in range(UNWIND_MAX_ATTEMPTS):
@@ -3024,15 +3181,18 @@ class PregameLiveExecutor:
                 px_den += got
             try:                                                 # SOURCE OF TRUTH (not the sell response);
                 # settlement is NOT instant -- poll (forcing a re-sync) so a stale PRE-sell balance can't
-                # falsely read non-flat and scream unwind_FAILED. Stops as soon as it reads <= 0.5.
+                # falsely read non-flat and scream unwind_FAILED. Stops as soon as it reads <= keep + 0.5.
                 if hasattr(poly, "settle_conditional_balance"):
-                    remaining = poly.settle_conditional_balance(lo.token, lambda b: b <= 0.5)
+                    remaining = poly.settle_conditional_balance(lo.token,
+                                                                lambda b: b <= keep + HEDGE_SHARE_TOL)
                 else:                                            # test doubles: plain read
                     remaining = poly.conditional_balance(lo.token)
             except Exception as exc:  # noqa: BLE001 - read failed -> UNKNOWN -> fail closed
                 if self.log:
                     self.log.warning("[MAKER_RT][LIVE] position read failed for %s: %s", lo.token[:12], exc)
                 remaining = None
+            if remaining is not None:
+                remaining = max(0.0, float(remaining) - keep)     # NAKED shares only — the kept legs are ours
             if remaining is None or remaining <= HEDGE_SHARE_TOL:
                 break
             if prev_remaining is not None and remaining >= prev_remaining - HEDGE_SHARE_TOL:
@@ -3074,10 +3234,17 @@ class PregameLiveExecutor:
         return round(kalshi_actual_fee(sell_res if isinstance(sell_res, dict) else None,
                                        int(math.floor(n)), px), 6)
 
-    def _verified_unwind_kalshi(self, lo: _LiveOrder, shares: float, fill_price: float) -> dict:
+    def _verified_unwind_kalshi(self, lo: _LiveOrder, shares: float, fill_price: float, *,
+                                keep: float = 0.0) -> dict:
         """IOC-sell the naked Kalshi position, REST-verify FLAT via the portfolio positions endpoint, and
         RECONCILE-TO-FLAT: re-sell the remainder (up to UNWIND_MAX_ATTEMPTS) rather than leave a
-        mismatched leg on a thin/moving book."""
+        mismatched leg on a thin/moving book.
+
+        ``keep`` is the contract count we hold ON PURPOSE (registered hedged legs) — the sell floor, and
+        what ``remaining`` is reported NET of. THIS IS THE KLAMCI FIX: without it the loop read the 80
+        still-held (hedged) contracts as an unsold remainder and sold them, stranding their Poly
+        counterpart naked. See :meth:`_verified_unwind`."""
+        keep = max(0.0, float(keep or 0.0))
         total_sold, px_num, px_den = 0.0, 0.0, 0.0
         # FLOOR, never round: Kalshi fills fractional counts but takes whole contracts on an order, and
         # rounding 114.6 UP to 115 would SELL A CONTRACT WE DO NOT HOLD (an opening short, not an unwind).
@@ -3088,7 +3255,7 @@ class PregameLiveExecutor:
             if to_sell <= 0:
                 break
             try:
-                sell_res = self.kalshi.place_market_sell(lo.token, lo.kalshi_side, to_sell)
+                sell_res = self._kalshi_unwind_sell(lo, to_sell)
             except Exception as exc:  # noqa: BLE001
                 sell_res = {"status": "error", "error": str(exc)}
             if self._self_trade_killed(sell_res) and self.log:
@@ -3102,11 +3269,13 @@ class PregameLiveExecutor:
                 px_num += float(spx) * got
                 px_den += got
             try:
-                remaining = self._settle_kalshi_flat(lo.token)   # SOURCE OF TRUTH — portfolio positions
+                remaining = self._settle_kalshi_flat(lo.token, keep=keep)  # TRUTH — portfolio positions
             except Exception as exc:  # noqa: BLE001 - read failed -> UNKNOWN -> fail closed
                 if self.log:
                     self.log.warning("[MAKER_RT][LIVE] kalshi position read failed for %s: %s", lo.token, exc)
                 remaining = None
+            if remaining is not None:
+                remaining = max(0.0, abs(float(remaining)) - keep)  # NAKED only — the kept legs are ours
             if remaining is None or abs(remaining) < tol:
                 break
             if prev_remaining is not None and abs(remaining) >= abs(prev_remaining) - HEDGE_SHARE_TOL:
@@ -3122,6 +3291,45 @@ class PregameLiveExecutor:
             if (sell_px is not None and total_sold > 0) else None
         return {"ok": bool(flat), "sold": total_sold, "sell_px": sell_px, "cost": cost, "fee": fee,
                 "remaining": remaining, "sell_res": sell_res}
+
+    #: How long an instrument stays marked as "we are unwinding this" after the sell is submitted. Long
+    #: enough for the account fill sweep (5s cadence) to carry the execution back to us several times
+    #: over; short enough that it can never explain away a fill from the NEXT hour.
+    UNWIND_SELF_TTL_S = 300.0
+
+    def _kalshi_unwind_sell(self, lo: _LiveOrder, count: int) -> Any:
+        """Place ONE unwind IOC sell with the exit REGISTERED AS OURS BEFORE IT IS SUBMITTED.
+
+        Order matters and is the whole point: the instrument marker is written first (there is no order id
+        until the venue answers, and the account fill sweep can route an execution the instant it fills),
+        then the returned id joins ``_own_order_ids``. Without this our own exits arrive at
+        ``_untracked_fill`` as unexplained venue fills — three of them on KLAMCI — which is noise in the
+        one ledger bucket that is supposed to mean 'a position we did not know about'."""
+        import time as _time
+        self._mark_unwind_inflight(lo.token, _time.time())
+        res = self.kalshi.place_market_sell(lo.token, lo.kalshi_side, count)
+        oid = (res or {}).get("order_id") if isinstance(res, dict) else None
+        if oid:
+            self._own_order_ids.add(str(oid))
+            if len(self._own_order_ids) > 2000:              # bound it like the fill-id dedupe set
+                self._own_order_ids = set(list(self._own_order_ids)[-1000:])
+        return res
+
+    def _mark_unwind_inflight(self, instrument: Any, now_ts: float) -> None:
+        """Note that we are exiting ``instrument`` right now, and drop markers older than the TTL."""
+        cutoff = float(now_ts) - self.UNWIND_SELF_TTL_S
+        for k in [k for k, ts in self._unwind_inflight.items() if float(ts) < cutoff]:
+            self._unwind_inflight.pop(k, None)
+        self._unwind_inflight[str(instrument)] = float(now_ts)
+
+    def _is_own_exit(self, order_id: Any, instrument: Any) -> bool:
+        """True when a venue fill belongs to an exit WE placed — by order id, or by an in-flight marker on
+        the instrument (which covers the window between submitting the sell and learning its id)."""
+        import time as _time
+        if order_id and str(order_id) in self._own_order_ids:
+            return True
+        ts = self._unwind_inflight.get(str(instrument))
+        return ts is not None and (_time.time() - float(ts)) <= self.UNWIND_SELF_TTL_S
 
     def _kalshi_position(self, ticker: str) -> Optional[float]:
         """Net |contracts| held on ``ticker`` from the Kalshi portfolio positions endpoint.
@@ -3149,10 +3357,13 @@ class PregameLiveExecutor:
                 return abs(n)
         return 0.0                                    # absent from the positions list == flat
 
-    def _settle_kalshi_flat(self, ticker: str, *, tries: int = 4, poll_s: float = 0.5) -> Optional[float]:
+    def _settle_kalshi_flat(self, ticker: str, *, tries: int = 4, poll_s: float = 0.5,
+                            keep: float = 0.0) -> Optional[float]:
         """Poll the Kalshi position until it reads flat (< 1 contract, the smallest order the venue takes)
         or ``tries`` exhausted — mirrors the Poly settle poll so a brief post-sell lag can't falsely scream
-        unwind_FAILED. Returns the last read."""
+        unwind_FAILED. Returns the last RAW read. ``keep`` shifts the stop condition to "nothing beyond
+        the contracts we hold on purpose", so an unwind alongside a live hedged leg is not polled to a
+        timeout it can never reach."""
         import time as _time
         last: Optional[float] = None
         for i in range(max(1, tries)):
@@ -3160,7 +3371,7 @@ class PregameLiveExecutor:
                 last = self._kalshi_position(ticker)
             except Exception:  # noqa: BLE001
                 last = None
-            if last is not None and abs(last) < MIN_TRADABLE["kalshi"]:
+            if last is not None and abs(last) - max(0.0, float(keep or 0.0)) < MIN_TRADABLE["kalshi"]:
                 return last
             if i < tries - 1:
                 _time.sleep(poll_s)
@@ -3960,6 +4171,15 @@ class PregameLiveExecutor:
         flagging an unexplained holding, latching an ORPHAN halt, auto-flattening — happens on the loop
         thread in ``reconcile_positions``, exactly as before."""
         toks, tks = list(self._traded_tokens), list(self._traded_tickers)
+        # The QUOTED-but-unregistered instruments ride the same batch. They are the whole point of the
+        # sweep and they are read off-loop for the same reason everything else here is: a per-instrument
+        # venue read on the loop thread is what froze it for four seconds every five minutes.
+        seen = set(toks) | set(tks)
+        for inst, rec in self._quoted.items():
+            if str(inst) in seen or self._is_registered(str(rec.get("venue") or ""), inst):
+                continue
+            seen.add(str(inst))
+            (toks if rec.get("venue") == "polymarket" else tks).append(str(inst))
         if not (toks or tks):
             return False
         submitted = self._worker.submit(("reconcile",), lambda: self._reconcile_job(toks, tks))
@@ -4073,6 +4293,14 @@ class PregameLiveExecutor:
         if flat_tks:
             self._traded_tickers.difference_update(flat_tks)
             self._persist_traded_tokens()
+        # THE BLIND SPOT, closed. Everything above this line only ever looks at instruments SOMETHING
+        # REGISTERED, which is precisely why it could not see the KLAMCI leg. The sweep below looks the
+        # other way round: at what the VENUES say we hold, scoped to markets we quoted in the last 48h.
+        try:
+            self._sweep_unregistered(now, balances)
+        except Exception as exc:  # noqa: BLE001 — a sweep failure must never break reconciliation
+            if self.log:
+                self.log.warning("[MAKER_RT][LIVE] unregistered-position sweep failed: %s", exc)
         if not suspects:
             return None
         tok, bal = next(iter(suspects.items()))
@@ -4094,6 +4322,98 @@ class PregameLiveExecutor:
         self._orphan_detected("reconciliation", tok, "?", bal,
                               f"{len(suspects)} orphan instrument(s); auto_flatten={self.auto_flatten}", now)
         return self.orphan
+
+    #: How far back the unregistered-position sweep considers a market "ours to answer for".
+    QUOTED_WINDOW_S = 48 * 3600.0
+    #: Re-scream about the same unregistered instrument at most this often (it is an ALERT, not a halt,
+    #: so it repeats until a human deals with it — but not every five minutes forever).
+    UNREGISTERED_REALERT_S = 3600.0
+    #: Shares below this are rounding, not a position.
+    UNREGISTERED_MIN_SHARES = 0.5
+
+    def _sweep_unregistered(self, now: Any, balances: Optional[dict] = None) -> list:
+        """ALERT (never halt) on any venue position we hold on a market we QUOTED in the last 48h that is
+        in NO registry — not the watch-set, not the expected legs, not the provisional marks.
+
+        THE LESSON OF 2026-08-05, stated as code. Reconciliation is scoped to ``_traded_tokens`` for a good
+        reason (this funder wallet holds ~180 positions that are not ours), but that scope is populated by
+        the very code paths that can forget — so a position nothing registered is invisible to it BY
+        CONSTRUCTION. 80 shares of K-League Allstars/Man City Under sat in the wallet through a live match,
+        worth $54 at cost and $80 at settlement, and not one safety system could see them: not orphan
+        detection, not the 5-minute reconcile, not the maker-position line of the 8-hourly audit. Only the
+        BALANCE check noticed, as an unexplained −$2.47, four hours later and under its alert threshold.
+
+        So this sweep inverts the question. Instead of "are the instruments we know about flat?" it asks
+        "is anything the VENUES say we hold unaccounted for?", bounded to the markets we were offering on —
+        wide enough to catch any position this bot could have opened, narrow enough that the owner's own
+        holdings can never trigger it. It ALERTS rather than halts on purpose: an unregistered position is
+        a bookkeeping failure whose right response is a human looking at it, and halting the maker over a
+        position that may well be perfectly hedged would trade one silent failure for a loud useless one."""
+        import time as _time
+        if not self._quoted:
+            return []
+        now_ts = _time.time()
+        self._prune_quoted(now_ts)
+        found: list = []
+        for inst, rec in sorted(self._quoted.items()):
+            venue = str(rec.get("venue") or "")
+            if self._is_registered(venue, inst):
+                continue
+            held = self._reconcile_read("polymarket" if venue == "polymarket" else "kalshi", inst,
+                                        balances)
+            if held is _UNREAD or held is None:
+                held = self._sweep_read(venue, inst)
+            if held is None or abs(float(held)) <= self.UNREGISTERED_MIN_SHARES:
+                continue
+            found.append({"instrument": inst, "venue": venue, "shares": round(abs(float(held)), 4),
+                          "name": rec.get("name") or rec.get("game") or inst,
+                          "game": rec.get("game") or "", "market_key": rec.get("market_key") or ""})
+        for f in found:
+            self._report_unregistered(f, now, now_ts)
+        return found
+
+    def _is_registered(self, venue: str, instrument: Any) -> bool:
+        """True when SOMETHING already accounts for this instrument — the reconcile watch-set, an expected
+        leg, or a provisional mark. Those are the positions the rest of the system is already watching;
+        the sweep exists for everything else."""
+        inst = str(instrument)
+        if inst in self._traded_tokens or inst in self._traded_tickers:
+            return True
+        if self._expected_shares_any(inst) > 0.0 or inst in self._provisional:
+            return True
+        return any(lo.token == inst for lo in self.open_orders.values())
+
+    def _sweep_read(self, venue: str, instrument: str) -> Optional[float]:
+        """One position read for the sweep. Returns None on ANY failure — an unreadable instrument is not
+        evidence of a stray position, and this path must never invent one."""
+        try:
+            if venue == "polymarket":
+                return None if self.poly is None else float(self.poly.conditional_balance(instrument))
+            return None if self.kalshi is None else self._kalshi_position(instrument)
+        except Exception:  # noqa: BLE001
+            return None
+
+    def _report_unregistered(self, f: dict, now: Any, now_ts: float) -> None:
+        """Scream RED about one unregistered position, throttled per instrument, NAMING THE MARKET."""
+        inst = f["instrument"]
+        last = float(self._unregistered_alerted.get(inst) or 0.0)
+        if now_ts - last < self.UNREGISTERED_REALERT_S:
+            return
+        self._unregistered_alerted[inst] = now_ts
+        if self.log:
+            self.log.error("[MAKER_RT][CRITICAL] UNREGISTERED POSITION: %s holds %.4f sh on %s (%s / %s) "
+                           "and it is in NO registry — not the watch-set, not the expected legs, not the "
+                           "provisional marks. This is a position nothing is accounting for.",
+                           f["venue"], f["shares"], inst, f.get("game"), f.get("market_key"))
+        if self.state is not None:
+            self.state.record({"event": "position_unregistered", "mode": "live", "phase": "?",
+                               "game": f.get("game") or inst, "market_key": f.get("market_key") or "",
+                               "rest_venue": f["venue"], "size": round(float(f["shares"]), 4),
+                               "reason": f"unregistered position on {inst}"}, now)
+        self._send_telegram(
+            f"🔴 UNTRACKED POSITION · {f['name']} — I am holding {f['shares']:g} shares on "
+            f"{'Polymarket' if f['venue'] == 'polymarket' else 'Kalshi'} that my own books do not know "
+            f"about. I have NOT stopped trading; this needs a human to check it.")
 
     # -- helpers -------------------------------------------------------------
     def _neg_for(self, token: str, store: Any) -> Optional[bool]:
@@ -4351,7 +4671,10 @@ class PregameLiveExecutor:
                                   stake_cap=self.caps.max_daily_stake_usd,
                                   today_pnl=round(self.caps.pnl_today, 4), why_no_fills=why,
                                   refuse_suppressed=int(d.get("refuse_suppressed", 0) or 0),
-                                  closed_markets=list(d.get("closed_markets") or []))
+                                  closed_markets=list(d.get("closed_markets") or []),
+                                  # TODAY's fill count, next to TODAY's stake and pnl — the interval's
+                                  # count stays on line 1 where the interval's other numbers are.
+                                  fills_today=int(getattr(self.caps, "fills_today", 0) or 0))
         self._send_telegram(line)
         if self.log:
             self.log.warning(line)

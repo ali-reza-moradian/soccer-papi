@@ -517,16 +517,28 @@ def digest_line(minutes: float, *, placed: int, cancelled: int, fills: int, open
                 binding: Optional[str] = None, stake_today: Optional[float] = None,
                 stake_cap: Optional[float] = None, today_pnl: Optional[float] = None,
                 why_no_fills: Optional[str] = None, refuse_suppressed: int = 0,
-                closed_markets: Optional[list] = None) -> str:
+                closed_markets: Optional[list] = None, fills_today: Optional[int] = None) -> str:
     """The periodic plain-language roll-up. Line 1: activity + best edge. Line 2: current state + daily
     usage. Then, when they happened: feed flakiness, reconnect attempt/success totals, pre-hedge declines,
-    and (on 0 fills) WHY in plain words."""
+    and (on 0 fills) WHY in plain words.
+
+    THE TWO LINES COVER TWO DIFFERENT WINDOWS, and each now says which. Line 1 is THIS interval; line 2 is
+    TODAY. They used to be mixed: the daily stake and the daily pnl sat next to the INTERVAL's fill count,
+    so an eleven-fill day printed "0 fills · +$1.67" — a number that is either impossible or an admission
+    that the counters disagree, and no way to tell which from the message."""
     edge = f" · best edge seen {best_edge_pct:.1f}%" if best_edge_pct is not None else ""
     l1 = f"📊 {int(minutes)}m summary · {placed} offers placed · {fills} taken{edge}"
-    used = (f" · today {money(stake_today)}/{money(stake_cap)} used"
-            if (stake_today is not None and stake_cap is not None) else "")
-    pnl = f" · {signed_money(today_pnl)}" if today_pnl is not None else ""
-    l2 = f"\n   Currently offering {open_now}/{max_open}{used} · {fills} fills{pnl}"
+    # Every figure after "Today:" is a TODAY figure — including the fill count, which is where the
+    # interval's count used to be spliced in.
+    today = []
+    if fills_today is not None:
+        today.append(f"{int(fills_today)} fills")
+    if stake_today is not None and stake_cap is not None:
+        today.append(f"{money(stake_today)}/{money(stake_cap)} used")
+    if today_pnl is not None:
+        today.append(signed_money(today_pnl))
+    day = f"\n   Today: {' · '.join(today)}" if today else ""
+    l2 = f"\n   Currently offering {open_now}/{max_open}{day}"
     flap = (f"\n   ⚠️ Kalshi feed was flaky: {int(kalshi_flaps)} drop{'s' if int(kalshi_flaps) != 1 else ''} "
             f"({kalshi_down_s:.0f}s) — REST poll covered fills") if kalshi_flaps else ""
     pflap = (f"\n   ⚠️ Polymarket fill feed was flaky: {int(poly_flaps)} "

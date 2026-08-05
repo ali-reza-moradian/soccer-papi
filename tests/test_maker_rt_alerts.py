@@ -166,11 +166,26 @@ def test_stopped_and_problem_are_plain_and_actionable():
 # --------------------------------------------------------------------------- #
 def test_digest_is_plain_with_usage_and_why():
     out = alerts.digest_line(15, placed=42, cancelled=9, fills=0, open_now=2, max_open=2, best_edge_pct=1.1,
-                             stake_today=47.0, stake_cap=300.0, today_pnl=1.12,
+                             stake_today=47.0, stake_cap=300.0, today_pnl=1.12, fills_today=11,
                              why_no_fills="nobody crossed our price yet")
     assert out.startswith("📊 15m summary · 42 offers placed · 0 taken · best edge seen 1.1%")
-    assert "Currently offering 2/2 · today $47.00/$300.00 used · 0 fills · +$1.12" in out
+    assert "Currently offering 2/2" in out
+    assert "Today: 11 fills · $47.00/$300.00 used · +$1.12" in out
     assert "Why no fills: nobody crossed our price yet" in out
+
+
+def test_digest_never_prints_an_interval_fill_count_next_to_todays_money():
+    """The 15m fill count and today's $ are DIFFERENT WINDOWS. Printing '0 fills · +$1.67' on an
+    eleven-fill day is either impossible or a counter disagreement, and the message gave no way to tell
+    which. Line 1 is the interval; everything after 'Today:' is the day."""
+    out = alerts.digest_line(15, placed=4, cancelled=0, fills=0, open_now=1, max_open=2,
+                             stake_today=594.21, stake_cap=1200.0, today_pnl=1.67, fills_today=11)
+    interval, day = out.split("Today:")[0], out.split("Today:")[1]
+    assert "0 taken" in interval and "0 fills" not in day     # the day's count is the day's count
+    assert "11 fills" in day and "+$1.67" in day
+    # ...and with no daily count supplied, the day line simply does not claim one.
+    assert "fills" not in alerts.digest_line(15, placed=4, cancelled=0, fills=2, open_now=1, max_open=2,
+                                             stake_today=1.0, stake_cap=2.0).split("Today:")[1]
 
 
 def test_digest_flap_warning_is_plain():

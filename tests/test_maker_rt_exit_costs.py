@@ -281,3 +281,51 @@ def test_the_books_the_balance_audit_reads_carry_the_exit_bucket():
     assert b["settled_pnl_lifetime"] == 25.3947
     assert b["settled_pnl_exits_lifetime"] == -6.99
     assert b["settled_pnl_hedged_lifetime"] == 24.0059
+
+
+# --------------------------------------------------------------------------- #
+# a restatement that stands in for a SETTLEMENT (the 2026-08-05 KLAMCI naked leg) #
+# --------------------------------------------------------------------------- #
+def test_an_untracked_restatement_books_luck_cost_and_the_trade_count():
+    """The KLAMCI naked Under leg: cost $54.4844, redeemed $80.00, +$25.5156 of LUCK. It must land in the
+    UNTRACKED bucket (never hedged pnl), carry its own cost basis into the ROI denominator, and count as
+    a settled trade — because that is what it was. A settlement the live path can no longer produce is
+    still a settlement."""
+    _write_restatement([{"key": "klamci-naked-under-20260805", "untracked_usd": 25.5156,
+                         "cost_usd": 54.4844, "trades_n": 1,
+                         "effective_ts": "2026-08-05T15:02:12Z", "note": "80 Under sh, naked 9h"}])
+    st = MakerState()
+    st.settled_pnl_lifetime, st.settled_pnl_untracked_lifetime = 22.7195, 8.3788
+    st.settled_pnl_exits_lifetime, st.settled_trades = -11.2752, 39
+
+    assert st.apply_restatements() == ["klamci-naked-under-20260805"]
+    assert round(st.settled_pnl_lifetime, 4) == 48.2351
+    assert round(st.settled_pnl_untracked_lifetime, 4) == 33.8944
+    assert st.settled_trades == 40
+    assert round(st.settled_cost_lifetime, 4) == 54.4844, "the ROI denominator moves with the money"
+    summary = st.summary("live", {}, NOW)
+    assert summary["settled_pnl_hedged_lifetime"] == 25.6159, "LUCK never flatters the hedged number"
+    assert summary["settled_pnl_exits_lifetime"] == -11.2752, "the exit toll is already booked; untouched"
+
+
+def test_a_restatement_answers_to_the_same_unit_error_guard_as_a_settlement():
+    """A restatement writes into the same lifetime counters a ``trade_settled`` row does, so it passes the
+    same rail. An untracked net beyond twice its own cost basis is the $500-for-$5 shape — refused, the
+    key NOT consumed, and a human reconciles it."""
+    _write_restatement([{"key": "unit-error", "untracked_usd": 5000.0, "cost_usd": 54.48,
+                         "note": "a hundredfold slip"}])
+    st = MakerState()
+    st.settled_pnl_lifetime = 22.7195
+    assert st.apply_restatements() == [], "refused"
+    assert st.settled_pnl_lifetime == 22.7195 and st.settled_trades == 0
+    assert st.restatements_applied == [], "an unconsumed key can be re-tried once it is right"
+
+
+def test_the_untracked_guard_does_not_refuse_an_honest_full_stake_outcome():
+    """A naked leg's honest outcome IS a full-stake win or loss; the hedged ROI ceiling would refuse it,
+    which is what silently dropped a real $353 settlement in July. Untracked terms let it through."""
+    _write_restatement([{"key": "total-loss", "untracked_usd": -80.66, "cost_usd": 80.66,
+                         "trades_n": 1, "note": "a naked leg that lost everything"}])
+    st = MakerState()
+    assert st.apply_restatements() == ["total-loss"]
+    assert round(st.settled_pnl_untracked_lifetime, 4) == -80.66
