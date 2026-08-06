@@ -111,6 +111,16 @@ class _Bucket:
     achv_ge25: int = 0            # >= 0.0025 (0.25%)
     achv_ge50: int = 0           # >= 0.0050 (0.50%)
     achv_ge100: int = 0          # >= 0.0100 (1.00%)
+    # THE PLACEMENT FUNNEL: stage -> how many node evaluations died there. Pure instrumentation.
+    #
+    # It exists because the 2026-08-06 in-play investigation could not answer "where do the evaluations
+    # go?" from anything this build wrote. Every refusal signal was either quote-CONDITIONAL
+    # (``_expire_if_open`` records nothing for a candidate that never armed, so a path that never quotes
+    # is invisible BY CONSTRUCTION) or unevenly throttled (``below_venue_minimum`` writes a CSV row every
+    # tick, slot refusals one per 300s — so the two cannot be compared at all). A funnel reconstructed
+    # from those numbers needs a footnote per row. These counters are one increment per evaluation at the
+    # branch that consumed it, so the stages sum and the percentages mean something.
+    funnel: dict = field(default_factory=dict)
 
     def add_achievable(self, value: float, rng: random.Random) -> None:
         """Reservoir-sample the achievable-net value + bump the exact threshold counts."""
@@ -141,6 +151,7 @@ class _Bucket:
             "drift_median_1": _median(self.drift1), "drift_median_5": _median(self.drift5),
             "drift_median_30": _median(self.drift30),
             "achievable": self.achievable(),
+            "funnel": dict(sorted(self.funnel.items(), key=lambda kv: -kv[1])),
         }
 
     def achievable(self) -> dict:
@@ -167,7 +178,7 @@ class _Bucket:
         """The ladder's RAW counters + reservoir, for persistence across restarts (N27)."""
         return {"n": self.achv_n, "gated": self.achv_gated, "ge0": self.achv_ge0,
                 "ge25": self.achv_ge25, "ge50": self.achv_ge50, "ge100": self.achv_ge100,
-                "reservoir": list(self.achv_reservoir)}
+                "reservoir": list(self.achv_reservoir), "funnel": dict(self.funnel)}
 
     def load_achievable_state(self, d: dict) -> None:
         """Restore a persisted ladder. Counts and the reservoir travel together, so the percentiles
@@ -182,6 +193,8 @@ class _Bucket:
         self.achv_ge100 = int(d.get("ge100") or 0)
         r = d.get("reservoir")
         self.achv_reservoir = [float(x) for x in r][:_RESERVOIR_CAP] if isinstance(r, list) else []
+        f = d.get("funnel")
+        self.funnel = {str(k): int(v) for k, v in f.items()} if isinstance(f, dict) else {}
 
 
 def _pool(buckets: list) -> dict:
@@ -197,6 +210,8 @@ def _pool(buckets: list) -> dict:
         agg.achv_n += b.achv_n; agg.achv_gated += b.achv_gated; agg.achv_ge0 += b.achv_ge0
         agg.achv_ge25 += b.achv_ge25; agg.achv_ge50 += b.achv_ge50; agg.achv_ge100 += b.achv_ge100
         agg.achv_reservoir += b.achv_reservoir
+        for k, v in b.funnel.items():
+            agg.funnel[k] = agg.funnel.get(k, 0) + v
     if len(agg.achv_reservoir) > _RESERVOIR_CAP:
         agg.achv_reservoir = agg.achv_reservoir[:_RESERVOIR_CAP]
     return agg.stats()
@@ -632,6 +647,17 @@ class MakerState:
             b.achv_gated += 1
             return
         b.add_achievable(float(value), self._rng)
+
+    def record_funnel(self, sport: str, phase: str, stage: str, now: Optional[datetime] = None) -> None:
+        """Count ONE node evaluation dying at ``stage`` (see ``_Bucket.funnel``). Pure instrumentation:
+        it reads nothing, decides nothing and must never raise into the quote loop."""
+        try:
+            if now is not None:
+                self._roll(now.strftime("%Y%m%d"))
+            b = self._bucket(str(sport), str(phase))
+            b.funnel[str(stage)] = b.funnel.get(str(stage), 0) + 1
+        except Exception:  # noqa: BLE001 — a counter must never break the loop it measures
+            pass
 
     def _append_csv(self, row: dict, now: datetime, *, retries: int = 4,
                     backoff_s: float = 0.05) -> bool:

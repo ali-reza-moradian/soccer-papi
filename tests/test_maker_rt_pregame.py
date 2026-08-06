@@ -180,9 +180,13 @@ class _Store:
 class _State:
     def __init__(self):
         self.rows = []
+        self.funnel_calls = []          # (sport, phase, stage) — the placement-funnel counters
 
     def record(self, row, now):
         self.rows.append(row)
+
+    def record_funnel(self, sport, phase, stage, now=None):
+        self.funnel_calls.append((sport, phase, stage))
 
 
 class _Log:

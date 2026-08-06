@@ -8,7 +8,9 @@ elsewhere). Debounced calls come from the async loop.
 
 PHASES (per candidate, from its kickoff): 'pre' (quoted as always, tradeable when live), 'gap'
 (kickoff-120s .. kickoff — NO quotes) and 'inplay' (>= kickoff — quoted under the anti-phantom rails:
-both-books-fresh, shock-freeze, and a persistence timer). Live is HARD-forbidden in-play regardless.
+both-books-fresh, shock-freeze, and a persistence timer). In-play LIVE is ARMED (since 2026-07-30) and
+goes through the same executor as pre-game — the sentence that used to end this line, "Live is
+HARD-forbidden in-play regardless", has been false since that deploy.
 Every evaluation also computes the ACHIEVABLE net (join-the-bid edge) into the per-sport/phase summary.
 """
 from __future__ import annotations
@@ -180,13 +182,37 @@ class QuoteDriver:
     def _ip(self):
         return getattr(self.cfg, "inplay", None)
 
-    def _rails_ok(self, store: Any, c: Candidate, now_ts: float) -> bool:
+    def _fn(self, c: Candidate, phase: str, stage: str) -> None:
+        """Count one node evaluation dying at ``stage`` (the placement funnel).
+
+        INSTRUMENTATION ONLY, and guarded so it stays that way: this sits on the hottest path in the
+        process (every candidate, every tick), and a measurement that can raise into the quote loop is a
+        measurement that can stop the maker. A state object without the counter simply is not counted."""
+        rec = getattr(self.state, "record_funnel", None)
+        if rec is None:
+            return
+        try:
+            rec(c.sport, phase, stage)
+        except Exception:  # noqa: BLE001 — never let a counter break the loop it measures
+            pass
+
+    def _rails_ok(self, store: Any, c: Candidate, now_ts: float, phase: str = "") -> bool:
         """Data-quality rail for the achievable ladder (ALL phases): both books fresh AND the node not
         shock-frozen right now. A rails-failed evaluation is kept OUT of the summary ladder (ghost
-        inflation from stale/frozen phantom edges)."""
+        inflation from stale/frozen phantom edges).
+
+        Records WHICH rail failed, because the ladder's single ``gated`` count cannot say — and "half of
+        in-play evaluations are gated" is a very different finding depending on whether that is a frozen
+        node or a quiet book."""
         if now_ts < self.freeze_until.get(c.node3, 0.0):
+            if phase:
+                self._fn(c, phase, "rails_gated_frozen")
             return False
-        return self._node_fresh(store, c, now_ts)
+        if not self._node_fresh(store, c, now_ts):
+            if phase:
+                self._fn(c, phase, "rails_gated_not_fresh")
+            return False
+        return True
 
     def _note_thin_refusal(self, node3: tuple, now_ts: float) -> None:
         """Record a hedge_too_thin refusal; after >= 3 within a 10-min window, COOLDOWN the node 15 min
@@ -215,9 +241,11 @@ class QuoteDriver:
         viable_dirs: set = set()          # directions that produced a viable placement this cycle
         for c in self._cands:
             phase = self.phase(c.kickoff_ts, now_ts)
+            self._fn(c, phase, "eval")
             rest = self._rest_view(store, c)
             hedge = self._hedge_view(store, c.hedge_lookup)
             if rest is None or hedge is None:
+                self._fn(c, phase, "book_gone")
                 self._expire_if_open(c, now, "book_gone", phase)
                 self.last_event[c.key] = None
                 self.viable_since.pop(c.key, None)
@@ -227,12 +255,13 @@ class QuoteDriver:
             # the edge if we simply JOINED the current best bid. Accumulated per sport/phase; a throttled
             # 1/min/market sample also lands in the CSV.
             achv = achievable_net(rest.best_bid, hedge.best_ask, c.hedge_venue, c.poly_rate)
-            rails_ok = self._rails_ok(store, c, now_ts)
+            rails_ok = self._rails_ok(store, c, now_ts, phase)
             self.state.record_achievable(c.sport, phase, achv, now, rails_ok=rails_ok)
             self._maybe_sample_achievable(c, phase, achv, rails_ok, now, now_ts)
 
             # GAP: no quotes between kickoff-120s and kickoff.
             if phase == "gap":
+                self._fn(c, phase, "gap_window")
                 self._expire_if_open(c, now, "gap", phase)
                 self.last_event[c.key] = None
                 self.viable_since.pop(c.key, None)
@@ -241,6 +270,7 @@ class QuoteDriver:
             # IN-PLAY RAILS (quoting + fill counting): both-books-fresh, shock-freeze, persistence.
             if phase == "inplay" and ip is not None:
                 if now_ts < self.freeze_until.get(c.node3, 0.0):
+                    self._fn(c, phase, "inplay_frozen")
                     self._expire_if_open(c, now, "inplay_frozen", phase)
                     self.last_event[c.key] = None
                     self.viable_since.pop(c.key, None)
@@ -248,6 +278,7 @@ class QuoteDriver:
                 move = max(store.mid_move(c.rest_id, now_ts, ip.shock_window_s),
                            store.mid_move(c.hedge_id, now_ts, ip.shock_window_s))
                 if move >= ip.shock_move - 1e-9:
+                    self._fn(c, phase, "shock_freeze")
                     self._freeze_node(c, now_ts, now_ts + ip.freeze_s, now, move)
                     self.viable_since.pop(c.key, None)
                     continue
@@ -256,6 +287,7 @@ class QuoteDriver:
                     # condition holds CONTINUOUSLY for stale_grace_s (a brief blip must not shred queue
                     # position). Freeze/shock cancels above stay IMMEDIATE (those are real events).
                     since = self.stale_since.setdefault(c.key, now_ts)
+                    self._fn(c, phase, "inplay_stale")
                     if (now_ts - since) >= float(getattr(ip, "stale_grace_s", 5.0)):
                         self._expire_if_open(c, now, "inplay_stale", phase)
                     self.last_event[c.key] = None
@@ -266,6 +298,7 @@ class QuoteDriver:
             # HEDGE-THIN COOLDOWN: skip a node that recently refused hedge_too_thin repeatedly (stop the
             # arm-then-cancel churn on chronically-thin-hedge nodes for the cooldown window).
             if now_ts < self.thin_cooldown_until.get(c.node3, 0.0):
+                self._fn(c, phase, "hedge_thin_cooldown")
                 self._expire_if_open(c, now, "hedge_thin_cooldown", phase)
                 self.last_event[c.key] = None
                 self.viable_since.pop(c.key, None)
@@ -283,6 +316,7 @@ class QuoteDriver:
             # log loudly, never quote/place — same doctrine as the detector's max_plausible_roi_pct guard.
             # Counted for the panel; logged/recorded ONCE per transition (a mispriced node ticks ~4x/s).
             if dec.net_at_quote is not None and dec.net_at_quote * 100.0 > self.max_plausible_edge_pct + 1e-9:
+                self._fn(c, phase, "implausible_edge")
                 self._expire_if_open(c, now, "implausible_edge", phase)
                 if self.last_event.get(c.key) != "implausible_edge":
                     if self.log:
@@ -299,11 +333,13 @@ class QuoteDriver:
                 continue
             # PER-SPORT poly-leg cap: skip a direction whose Polymarket leg prices above the cap.
             if poly_leg_exceeds_cap(c.rest_venue, dec.quote_price, dec.hedge_best_ask, c.poly_leg_cap):
+                self._fn(c, phase, "poly_leg_cap")
                 self._expire_if_open(c, now, "poly_leg_cap", phase)
                 self.last_event[c.key] = None
                 self.viable_since.pop(c.key, None)
                 continue
             if dec.would_be_behind:
+                self._fn(c, phase, "now_behind")
                 # A LIVE resting order momentarily behind best is KEPT (queue preservation) — route through
                 # the executor's reprice HYSTERESIS (mandatory reprice only if economics break); the shadow
                 # path expires as before. A brief best-bid flicker no longer shreds queue position.
@@ -320,6 +356,7 @@ class QuoteDriver:
                     self.last_event[c.key] = "behind"
                 continue
             if not dec.viable:
+                self._fn(c, phase, f"not_viable:{dec.reason or '?'}")
                 if dec.reason == "hedge_too_thin":       # HEDGE-THIN pre-filter: cooldown a chronically-thin node
                     self._note_thin_refusal(c.node3, now_ts)
                 self._expire_if_open(c, now, dec.reason, phase)
@@ -341,8 +378,10 @@ class QuoteDriver:
                 since = self.viable_since.get(c.key)
                 if since is None:
                     self.viable_since[c.key] = now_ts
+                    self._fn(c, phase, "persist_wait")
                     continue                             # first viable tick — start the timer, don't arm yet
                 if (now_ts - since) * 1000.0 < persist_ms - 1e-9:
+                    self._fn(c, phase, "persist_wait")
                     continue                             # still building persistence
             else:
                 self.viable_since.pop(c.key, None)
@@ -351,19 +390,27 @@ class QuoteDriver:
             # for >= freeze_cooloff_s. No-op in shadow (in-play gate not armed -> inplay_armed() False).
             if (phase == "inplay" and self.pregame_exec is not None and self.pregame_exec.inplay_armed()
                     and not self.pregame_exec.cooloff_ok(store, c, self.freeze_until.get(c.node3, 0.0), now_ts)):
+                self._fn(c, phase, "inplay_cooloff")
                 self._expire_if_open(c, now, "inplay_cooloff", phase)
                 continue
 
-            # LIVE (rest-poly only, gate armed for this phase): drive a REAL resting order. The executor
+            # LIVE (BOTH rest directions — `eligible()` gates on maker_rt.directions, not on venue;
+            # the old "rest-poly only" note here was wrong): drive a REAL resting order. The executor
             # owns the REPRICE HYSTERESIS (mandatory on floor/never-crossable break; voluntary only on
             # >= reprice_min_ticks improvement after min_rest_s) so it is called every tick and decides
             # place / reprice / keep-resting itself — no 1-tick churn gate here.
             if self.pregame_exec is not None and self.pregame_exec.eligible(c, phase, now_ts):
                 viable_dirs.add(c.direction)          # this direction HAS a viable candidate this cycle
+                self._fn(c, phase, "to_executor")
                 self.pregame_exec.place_or_reprice(c, dec, rest, store, now, now_ts, phase)
                 self.last_event[c.key] = "quote"
                 continue
 
+            if self.pregame_exec is not None:
+                # The executor exists but refused this candidate for the phase (direction disabled, sport
+                # switched off, fill feed down, caps halted, gate not armed, in-play halted or inside the
+                # first-fill pause). Everything below this line is the SHADOW path.
+                self._fn(c, phase, "not_eligible")
             was_open = c.key in self.fills.quotes
             if was_open and not needs_reprice(prev, dec, tick):
                 continue                                  # unchanged within a tick
@@ -372,6 +419,7 @@ class QuoteDriver:
                            dec.at_best, now_ts, hedge_ctx={"lookup": c.hedge_lookup,
                            "hedge_venue": c.hedge_venue, "poly_rate": c.poly_rate, "phase": phase,
                            "node3": c.node3})
+            self._fn(c, phase, "shadow_arm")
             self.state.record(self._row("reprice" if was_open else "quote", c, now, dec, phase,
                                         tick=tick, queue_ahead=queue_ahead), now)
             self.last_event[c.key] = "quote"

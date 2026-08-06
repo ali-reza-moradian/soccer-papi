@@ -683,8 +683,11 @@ maker_rt:
   # LIVE-INPLAY — the SECOND, INDEPENDENT live gate, for IN-PLAY markets only (the pre-game `live` gate
   # above is separate and unchanged). BUILT, LOCKED: an in-play live order requires BOTH enabled AND its
   # OWN arm file (data/ops/ARM_MAKER_INPLAY) AND the startup self-check. Rails are STRICTER than pre-game
-  # (freeze cool-off + a hedge re-verify at fill). DO NOT flip enabled here — this build stays shadow
-  # in-play. See src/genz/maker_rt/inplay_exec.py.
+  # (freeze cool-off + a hedge re-verify at fill). ARMED AND LIVE since 2026-07-30 (e660c2e) — the line
+  # that used to sit here, "DO NOT flip enabled here, this build stays shadow in-play", was left behind
+  # by that deploy and sat directly above `enabled: true` contradicting it for a week.
+  # See src/genz/maker_rt/pregame_exec.py (ONE executor serves both phases; inplay_exec.py is the older
+  # collector and is NOT the live path).
   live_inplay:
     # SHARED-CAPS GOVERNANCE. Every EXPOSURE limit lives in `live:` above and governs BOTH phases: there
     # is one LiveCaps, one in-flight hedge guard and one daily budget, so pre-game and in-play draw on a
@@ -696,7 +699,11 @@ maker_rt:
     # 5 -> 70 raise silently raised in-play sizing 14x and this file said $5 (audit N16). Re-adding any of
     # them now logs a loud NOT ENFORCED warning naming the shared cap that applies. To make in-play
     # stricter than pre-game, the caps have to become per-phase in code first.
-    enabled: true                   # IN-PLAY LIVE ARMED — fully autonomous, rest-poly, under the rails + SHARED caps
+    # IN-PLAY LIVE ARMED — fully autonomous, under the rails + SHARED caps. BOTH rest directions are
+    # live in-play, not just rest-poly: `eligible()` gates on maker_rt.directions, which is
+    # [rest_poly, rest_kalshi]. In-play has placed real orders on both (575 rest-kalshi / 375 rest-poly
+    # all-time as of 2026-08-06). The old "rest-poly" note here was wrong, not merely stale.
+    enabled: true
     arm_file: data/ops/ARM_MAKER_INPLAY
     hedge_timeout_ms: 1500          # miss/partial after this -> market-unwind the fill + freeze market
     freeze_cooloff_s: 10            # place only after the node has been unfrozen AND both-books-fresh this long

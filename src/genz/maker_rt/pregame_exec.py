@@ -870,6 +870,10 @@ class PregameLiveExecutor:
                          game_stake_headroom=self.game_stake_headroom(c.game),
                          hedge_depth=hedge_depth, book_depth=book_depth, venue_minimum=vmin)
         if plan["refused"]:
+            # THE FUNNEL COUNTER carries the BINDING LIMITER, not just the refusal: "below venue minimum"
+            # names the symptom, and on 2026-08-06 the cause was `daily_stake` in 99.2% of in-play
+            # refusals — the daily budget fully RESERVED by open quotes while only 5% of it was spent.
+            self._fn(c, phase, f"size_refused:{plan.get('limiter') or '?'}")
             self._note_binding_count("below_venue_minimum")
             self._refuse(c, phase, price, "below_venue_minimum", 0.0, now_ts)
             self._record(c, "expire", now, phase, price=price, size=vmin, hedge_ask=hedge_ask,
@@ -891,6 +895,10 @@ class PregameLiveExecutor:
         if ok and existing is None and not self._game_slot_ok(c.game):
             ok, reason = False, "max_open_per_game"
         if not ok:
+            # UNTHROTTLED, unlike the CSV row below: a slot refusal recurs every loop while the caps are
+            # full, and collapsing it into a 300s window is exactly what made it look 3x rarer than the
+            # per-tick below_venue_minimum row it competes with in any funnel built from the CSV.
+            self._fn(c, phase, f"cap_refused:{reason}")
             # The CSV row rides the SAME 300s throttle as the log line — see _refuse's return contract.
             if self._refuse(c, phase, price, reason, projected, now_ts):
                 self._record(c, "expire", now, phase, price=price, size=size, hedge_ask=hedge_ask,
@@ -900,6 +908,7 @@ class PregameLiveExecutor:
         # a market that already carries an untracked order of ours (a ghost a failed cancel left live).
         # A reprice already cancel-confirmed its own order, so it is exempt.
         if existing is None and not self._stack_guard_ok(c, now, now_ts):
+            self._fn(c, phase, "stack_guard")
             self._record(c, "expire", now, phase, price=price, size=size, hedge_ask=hedge_ask,
                          reason="stack_guard_untracked_resting")
             return
@@ -926,6 +935,7 @@ class PregameLiveExecutor:
                         # hold — without it the reservation is held forever and the budget only shrinks.
                         projected_pair=float(projected))
         self.open_orders[c.key] = lo
+        self._fn(c, phase, "PLACED")
         self._place_fail_n.pop(c.key, None)            # a successful place clears the refusal streak
         self._slot_wait_since.pop(c.key, None)         # got its slot -> no longer waiting
         self._track_rested(lo)                         # reconcile this instrument for flatness (persisted)
@@ -1128,6 +1138,13 @@ class PregameLiveExecutor:
         if cap is None:
             return None
         return max(0.0, cap - self.game_reserved(game))
+
+    def _fn(self, c: Any, phase: str, stage: str) -> None:
+        """Count one candidate dying at ``stage`` of the placement funnel. Instrumentation only — it is
+        guarded because ``state`` is optional here and a counter must never break a placement."""
+        if self.state is None:
+            return
+        self.state.record_funnel(getattr(c, "sport", ""), phase, stage)
 
     def _refuse(self, c: Any, phase: str, price: float, reason: str, projected: float,
                 now_ts: float) -> bool:
