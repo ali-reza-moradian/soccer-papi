@@ -71,26 +71,54 @@ def _relevant_files() -> list:
     return out
 
 
+#: Parsed rows per file, keyed by (path, size, mtime). The events log is APPEND-ONLY and DATED, so a
+#: past day's file never changes — re-parsing it is pure waste, and there is a lot of it: on 2026-08-06
+#: the scan covered 1.99 GB across 8 files and took 97.7s standalone. Under GIL contention with the
+#: quote loop that stretched past the report worker's 180s deadline, so the thread was ABANDONED every
+#: 15 minutes and the gates report never landed at all. The key includes size+mtime, so today's file
+#: (the only one that grows) is re-read every time and any file that is rewritten invalidates itself.
+_ROW_CACHE: dict = {}
+
+
+def _rows_in(path: str) -> list:
+    """Qualifying rows from ONE file, cached on (size, mtime)."""
+    try:
+        st = os.stat(path)
+        key = (path, st.st_size, int(st.st_mtime))
+    except OSError:
+        return []
+    hit = _ROW_CACHE.get(path)
+    if hit is not None and hit[0] == key:
+        return hit[1]
+    out: list = []
+    try:
+        with io.open(path, encoding="utf-8-sig", newline="") as fh:
+            for r in csv.DictReader(fh):
+                if r.get("mode") != "live" or r.get("event") != LOCKED_EVENT:
+                    continue
+                if str(r.get("ts") or "") < RESTATEMENT_TS:
+                    continue
+                try:
+                    r["_locked"] = float(r.get("locked_net"))
+                except (TypeError, ValueError):
+                    continue
+                r["_implausible"] = abs(r["_locked"]) > SANITY_ABS_PCT
+                out.append(r)
+    except OSError:
+        return []
+    _ROW_CACHE[path] = (key, out)
+    if len(_ROW_CACHE) > 64:                      # bound it; the corpus is one file per day
+        for k in list(_ROW_CACHE)[:-32]:
+            _ROW_CACHE.pop(k, None)
+    return out
+
+
 def _rows(paths: Optional[list] = None) -> list:
     """Every LIVE ``hedge_locked`` row at or after the F14 fix, newest file last."""
     files = paths if paths is not None else _relevant_files()
     out: list = []
     for f in files:
-        try:
-            with io.open(f, encoding="utf-8-sig", newline="") as fh:
-                for r in csv.DictReader(fh):
-                    if r.get("mode") != "live" or r.get("event") != LOCKED_EVENT:
-                        continue
-                    if str(r.get("ts") or "") < RESTATEMENT_TS:
-                        continue
-                    try:
-                        r["_locked"] = float(r.get("locked_net"))
-                    except (TypeError, ValueError):
-                        continue
-                    r["_implausible"] = abs(r["_locked"]) > SANITY_ABS_PCT
-                    out.append(r)
-        except OSError:
-            continue
+        out.extend(_rows_in(f))
     return out
 
 

@@ -530,15 +530,21 @@ def test_the_slot_refusal_csv_row_rides_the_same_300s_throttle_as_its_log(tmp_pa
 
 def test_a_non_slot_refusal_is_never_throttled(tmp_path):
     """below_venue_minimum is a per-candidate economic fact, not a recurring full-slot condition — it
-    keeps writing its row every time so the binding-constraint record stays complete."""
+    keeps writing its row every time so the binding-constraint record stays complete.
+
+    The reason also NAMES THE LIMITER since 2026-08-06 (`below_venue_minimum:quote_usd_max`): the bare
+    symptom sent a human hunting a sizing bug that did not exist when the real cause was a committed
+    pool. Matched on the prefix so the row stays greppable either way."""
     ex, _ = _exec(tmp_path)
     ex.roll_day(NOW)
     ex.caps.quote_usd_max = 0.01                   # nothing fits the venue minimum
     c = _cand()
     for i in range(5):
         ex.place_or_reprice(c, _PDEC(), None, _STORE, NOW, 500.0 + i, "pre")
-    rows = [r for r in ex.state.rows if r.get("reason") == "below_venue_minimum"]
+    rows = [r for r in ex.state.rows
+            if str(r.get("reason") or "").startswith("below_venue_minimum")]
     assert len(rows) == 5
+    assert rows[0]["reason"] == "below_venue_minimum:quote_usd_max", "the reason names the TRUE cause"
 
 
 def test_suppressed_slot_refusals_surface_in_the_digest_line():

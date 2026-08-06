@@ -247,6 +247,12 @@ def resolve_wallet() -> dict[str, Any]:
     }
 
 
+#: Read timeout (s) for every Polymarket SDK call. Bounds how long a single venue read may hold an
+#: off-loop worker thread. 10s is generous against a measured p50 of ~47ms and well inside the 45s
+#: worker deadline, so a slow-but-alive venue still answers while a dead socket gives up quickly.
+POLY_HTTP_TIMEOUT_S = 10.0
+
+
 @lru_cache(maxsize=1)
 def _cached_client() -> Any:
     """Build + cache the authenticated v2 ClobClient ONCE (derives L2 creds). Lazy SDK import.
@@ -260,6 +266,21 @@ def _cached_client() -> Any:
     except ImportError as exc:  # pragma: no cover - SDK missing
         raise PolyExecError(
             "py-clob-client-v2 not installed — pip install py-clob-client-v2.") from exc
+
+    # EXPLICIT HTTP TIMEOUT, so one hung socket cannot own an off-loop worker thread.
+    # The SDK builds a module-global ``httpx.Client(http2=True)`` with NO timeout argument, which
+    # inherits httpx's 5s default. VERIFIED 2026-08-06 (httpx.Client(http2=True).timeout ->
+    # Timeout(timeout=5.0)), so reads were already bounded — but by a library default we do not own.
+    # Pinning it here makes the bound OURS: a future SDK or httpx change cannot silently turn a venue
+    # blip into a 45-second thread hostage. Connect is kept short (a dead host should fail fast); read
+    # is the one that matters for a slow-but-alive venue.
+    try:
+        import httpx
+        from py_clob_client_v2.http_helpers import helpers as _clob_http
+        _clob_http._http_client = httpx.Client(
+            http2=True, timeout=httpx.Timeout(POLY_HTTP_TIMEOUT_S, connect=5.0))
+    except Exception:  # noqa: BLE001 — never let a hardening step stop the client being built
+        pass
 
     w = resolve_wallet()
     client = ClobClient(

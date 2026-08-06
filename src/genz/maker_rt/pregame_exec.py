@@ -909,18 +909,35 @@ class PregameLiveExecutor:
                          game_stake_headroom=self.game_stake_headroom(c.game),
                          hedge_depth=hedge_depth, book_depth=book_depth, venue_minimum=vmin)
         if plan["refused"]:
-            # THE FUNNEL COUNTER carries the BINDING LIMITER, not just the refusal: "below venue minimum"
-            # names the symptom, and on 2026-08-06 the cause was `daily_stake` in 99.2% of in-play
-            # refusals — the daily budget fully RESERVED by open quotes while only 5% of it was spent.
-            self._fn(c, phase, f"size_refused:{plan.get('limiter') or '?'}")
+            # A REFUSAL MUST NAME ITS REAL CAUSE.
+            #
+            # This used to log "below_venue_minimum (projected pair $0.00, stake_today $181.99)". Both
+            # halves misled: `below_venue_minimum` is the SYMPTOM (the largest fittable size came out
+            # under the venue's floor) and says nothing about WHY, and the $0.00 was a literal zero
+            # passed to ``_refuse`` because no size — and therefore no projected pair — exists yet at
+            # this point. On 2026-08-06 that combination read as broken arithmetic on a market whose
+            # hedge book was 9,713 deep, when the truth was simply that in-play's ring-fenced pool had
+            # $0.82 left of its $500 ($118.64 spent + $380.54 reserved by two open quotes). The money
+            # behaviour was correct; only the explanation was wrong, which is worse than useless — it
+            # sends a human hunting a bug that is not there.
+            #
+            # So the reason now carries the LIMITER, and the log carries the pool arithmetic that
+            # produced it.
+            limiter = str(plan.get("limiter") or "?")
+            self._fn(c, phase, f"size_refused:{limiter}")
             self._note_binding_count("below_venue_minimum")
-            self._refuse(c, phase, price, "below_venue_minimum", 0.0, now_ts)
+            headroom = self.caps.daily_stake_headroom(phase)
+            self._refuse(c, phase, price, f"below_venue_minimum:{limiter}", headroom, now_ts)
             self._record(c, "expire", now, phase, price=price, size=vmin, hedge_ask=hedge_ask,
-                         reason="below_venue_minimum")
+                         reason=f"below_venue_minimum:{limiter}")
             if self.log:
                 self.log.info("[MAKER_RT][LIVE] REFUSE %s [%s] @ %.4f — max fittable %d sh < venue min %d "
-                              "(limiter %s; hedgeDepth=%s bookDepth=%s)", self._name_for_c(c), phase, price,
-                              plan["max_fit"], vmin, plan["limiter"],
+                              "(limiter %s; %s pool $%.2f free of $%.0f [spent $%.2f + reserved $%.2f]; "
+                              "hedgeDepth=%s bookDepth=%s)",
+                              self._name_for_c(c), phase, price, plan["max_fit"], vmin, limiter,
+                              phase, headroom, self.caps.pool_for(phase),
+                              float(self.caps.stake_by_phase.get(self.caps._ph(phase), 0.0)),
+                              float(self.caps.reserved_by_phase.get(self.caps._ph(phase), 0.0)),
                               (int(hedge_depth) if hedge_depth is not None else "n/a"),
                               (int(book_depth) if book_depth is not None else "n/a"))
             return
@@ -1318,8 +1335,11 @@ class PregameLiveExecutor:
         caller gates its CSV ``expire`` row on it: the log was throttled but the row was not, so the same
         refusal still wrote ~117,000 identical rows a day — the measurement equivalent of the spam this
         throttle exists to stop, and 58% of the file's bytes. One row per window says the same thing."""
+        # ``projected`` is the pair this quote WOULD commit for a cap refusal, and the phase pool's
+        # remaining headroom for a sizing refusal — the label follows the reason so neither is a lie.
+        _amt = "headroom" if str(reason).startswith("below_venue_minimum") else "projected pair"
         text = (f"[MAKER_RT][LIVE] REFUSE {c.game} {c.direction} [{phase}] @ {price:.4f}: {reason} "
-                f"(projected pair ${projected:.2f}, stake_today ${self.caps.stake_today:.2f})")
+                f"({_amt} ${projected:.2f}, stake_today ${self.caps.stake_today:.2f})")
         if reason in _SLOT_REFUSE_REASONS:
             # SLOT-WAIT metric: a candidate refused for a slot has been WAITING since the first refusal.
             # Store [first_seen, last_seen]; a candidate that stops being refused is pruned (no longer waiting).
@@ -3835,8 +3855,21 @@ class PregameLiveExecutor:
         returned 0.0 for "ticker absent" AND for "field name unrecognized", so a v2 payload using the
         ``_fp`` count names read as FLAT and reconciliation happily pruned real naked positions off the
         watch-set instead of screaming. Counts go through fp_num (v1 bare + v2 _fp)."""
+        return self._kalshi_position_from(self.kalshi.get_positions(), ticker)
+
+    def _kalshi_position_from(self, resp: Any, ticker: str) -> Optional[float]:
+        """``_kalshi_position``'s decision, applied to a portfolio payload the caller already has.
+
+        Split out so a batch can fetch the portfolio ONCE. It used to be one FULL
+        ``GET /portfolio/positions`` PER TICKER: on 2026-08-06 the reconcile watch-set reached 149
+        tickers, and at a measured p50 of 380ms that is 56.6s of the pass — against a 45s worker
+        deadline. The pass therefore ALWAYS blew its deadline, the worker abandoned the thread, and the
+        FILL POLL queued behind it went down with it. Fetching once turns 56.6s into 0.4s.
+
+        The three-way answer is unchanged and is the whole point (see the 2026-07-23 lesson): a row we
+        cannot parse is None (NOT flat), a ticker absent from a readable portfolio is 0.0 (genuinely
+        flat), and a portfolio we could not read at all is None for every ticker."""
         from ...executor.kalshi_exec import fp_num
-        resp = self.kalshi.get_positions()
         rows = resp.get("market_positions") if isinstance(resp, dict) else (resp or [])
         if not rows and isinstance(resp, dict):
             rows = resp.get("positions") or resp.get("data") or []
@@ -4737,9 +4770,20 @@ class PregameLiveExecutor:
                 out["polymarket"][tok] = self.poly.conditional_balance(tok)
             except Exception:  # noqa: BLE001
                 out["polymarket"][tok] = _UNREAD
+        # ONE portfolio fetch for ALL tickers. This was one full fetch PER ticker, which is what made the
+        # pass take 65s against a 45s deadline and took the fill poll down with it every five minutes.
+        # A failed fetch marks every ticker _UNREAD — "we could not ask" must never arrive as "flat".
+        try:
+            portfolio: Any = self.kalshi.get_positions() if self.kalshi else None
+            portfolio_ok = portfolio is not None
+        except Exception:  # noqa: BLE001
+            portfolio, portfolio_ok = None, False
         for tk in tks:
+            if not portfolio_ok:
+                out["kalshi"][tk] = _UNREAD
+                continue
             try:
-                out["kalshi"][tk] = self._kalshi_position(tk)
+                out["kalshi"][tk] = self._kalshi_position_from(portfolio, tk)
             except Exception:  # noqa: BLE001
                 out["kalshi"][tk] = _UNREAD
         # VENUE FREE CASH, read HERE and nowhere else. At a $1,050 pair both legs have to be funded, and
