@@ -170,15 +170,28 @@ def _armed_startup_alert(cfg: Any, pre_armed: bool, inplay_armed: bool, telegram
     # Print the caps from the LIVE LiveCaps OBJECT (not cfg) so the banner proves what actually loaded +
     # governs — incl. the per-pair cap and the sanity ceiling. Falls back to cfg if no caps passed.
     c = caps or cfg.live
-    msg = ("[MAKER_RT][LIVE] LIVE ARMED (%s; phases: %s). stray-cancel=%d. SHARED caps (ONE budget "
-           "across pre-game AND in-play — there are no per-phase exposure caps): "
-           "quote<=$%.0f, pair<=$%.0f, daily_stake<=$%.0f, open<=%d (reserve/direction %d), "
-           "fills/day<=%d, loss<=$%.0f, sanity_ceiling %.1f%%. "
+    # THE BUDGETS ARE NO LONGER ONE POOL. Since 2026-08-06 in-play draws on a RING-FENCED pool that
+    # pre-game cannot consume, so a banner that still said "ONE budget" would be the N16 mistake in
+    # reverse — a file describing a posture the code does not have. Print BOTH effective pools and the
+    # in-play loss sub-cap, from the live caps object, so the banner proves what actually governs.
+    ip_pool = float(getattr(c, "inplay_pool_usd", 0.0) or 0.0)
+    ip_loss = float(getattr(c, "inplay_max_loss_usd", 0.0) or 0.0)
+    budgets = (("pre-game daily_stake<=$%.0f + RING-FENCED in-play pool $%.0f "
+                "(neither pool can borrow the other's)" % (c.max_daily_stake_usd, ip_pool))
+               if ip_pool > 0 else
+               ("SHARED daily_stake<=$%.0f across both phases (no ring-fence)" % c.max_daily_stake_usd))
+    ip_rail = (" in-play loss sub-cap -$%.0f/day (unwind tolls included; breach stops IN-PLAY only)."
+               % ip_loss) if ip_loss > 0 else ""
+    msg = ("[MAKER_RT][LIVE] LIVE ARMED (%s; phases: %s). stray-cancel=%d. %s. "
+           "SHARED across both phases: open<=%d (reserve/direction %d), fills/day<=%d, loss<=$%.0f. "
+           "Per bet: quote<=$%.0f, pair<=$%.0f, per-game<=%d, sanity_ceiling %.1f%%.%s "
            "in-play circuit: first-fill pause %.0fs, day-halt at locked_net %.1f%%."
-           % (dirs or "none", phases, swept, c.quote_usd_max,
-              getattr(c, "max_pair_stake_usd", cfg.live.max_pair_stake_usd), c.max_daily_stake_usd,
+           % (dirs or "none", phases, swept, budgets,
               c.max_open_quotes, int(getattr(cfg, "reserve_per_direction", 0)),
-              c.max_fills_per_day, c.max_daily_loss_usd, getattr(cfg, "max_plausible_edge_pct", 5.0),
+              c.max_fills_per_day, c.max_daily_loss_usd,
+              c.quote_usd_max, getattr(c, "max_pair_stake_usd", cfg.live.max_pair_stake_usd),
+              int(getattr(cfg.live, "max_open_per_game", 0) or 0),
+              getattr(cfg, "max_plausible_edge_pct", 5.0), ip_rail,
               cfg.live_inplay.first_fill_pause_s, cfg.live_inplay.halt_locked_net * 100))
     log.warning(msg)
     if telegram is None:

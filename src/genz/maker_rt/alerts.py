@@ -545,7 +545,8 @@ def digest_line(minutes: float, *, placed: int, cancelled: int, fills: int, open
                 binding: Optional[str] = None, stake_today: Optional[float] = None,
                 stake_cap: Optional[float] = None, today_pnl: Optional[float] = None,
                 why_no_fills: Optional[str] = None, refuse_suppressed: int = 0,
-                closed_markets: Optional[list] = None, fills_today: Optional[int] = None) -> str:
+                closed_markets: Optional[list] = None, fills_today: Optional[int] = None,
+                inplay: Optional[dict] = None) -> str:
     """The periodic plain-language roll-up. Line 1: activity + best edge. Line 2: current state + daily
     usage. Then, when they happened: feed flakiness, reconnect attempt/success totals, pre-hedge declines,
     and (on 0 fills) WHY in plain words.
@@ -567,6 +568,24 @@ def digest_line(minutes: float, *, placed: int, cancelled: int, fills: int, open
         today.append(signed_money(today_pnl))
     day = f"\n   Today: {' · '.join(today)}" if today else ""
     l2 = f"\n   Currently offering {open_now}/{max_open}{day}"
+    # IN-PLAY, ON ITS OWN LINE. It draws on a RING-FENCED pool and answers to its own daily loss
+    # sub-cap, so folding its numbers into the totals above would hide the only thing anyone actually
+    # wants to know about it: is the experiment working, and how much of its rope is left.
+    ip = ""
+    if inplay:
+        used, pool = inplay.get("stake"), inplay.get("pool")
+        budget = (f"{money(used)}/{money(pool)} of its own pool used"
+                  if used is not None and pool else "")
+        pnl_ip = inplay.get("pnl")
+        cap_ip = inplay.get("loss_cap")
+        risk = ""
+        if pnl_ip is not None and cap_ip:
+            risk = f" · {signed_money(pnl_ip)} vs its {money(cap_ip)} daily loss limit"
+        bits = [b for b in (f"{int(inplay.get('open') or 0)} offers",
+                            f"{int(inplay.get('fills') or 0)} taken", budget) if b]
+        ip = f"\n   In-play (ring-fenced): {' · '.join(bits)}{risk}"
+        if inplay.get("budget_halted"):
+            ip += "\n   🔴 in-play is STOPPED for the day (it hit its own loss limit) — pre-game continues"
     flap = (f"\n   ⚠️ Kalshi feed was flaky: {int(kalshi_flaps)} drop{'s' if int(kalshi_flaps) != 1 else ''} "
             f"({kalshi_down_s:.0f}s) — REST poll covered fills") if kalshi_flaps else ""
     pflap = (f"\n   ⚠️ Polymarket fill feed was flaky: {int(poly_flaps)} "
@@ -600,4 +619,4 @@ def digest_line(minutes: float, *, placed: int, cancelled: int, fills: int, open
     shown = ", ".join(cm[:4]) + (f" +{len(cm) - 4} more" if len(cm) > 4 else "")
     closed = f"\n   🏁 {len(cm)} market(s) finished, dropped for today: {shown}" if cm else ""
     why = f"\n   Why no fills: {why_no_fills}" if (fills == 0 and why_no_fills) else ""
-    return l1 + l2 + flap + pflap + rec + decl + wait + closed + why
+    return l1 + l2 + ip + flap + pflap + rec + decl + wait + closed + why

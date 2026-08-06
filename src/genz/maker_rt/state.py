@@ -48,6 +48,14 @@ CSV_COLUMNS = [
     # correlation between how long a quote rested and how far the HEDGE had moved by the time it was
     # taken, and until now neither column was populated on a live row.
     "hedge_locked_now",
+    # HEDGE-MISS FORENSICS (2026-08-06). In-play's entire -$6.69 lifetime came from hedge MISSES, not
+    # from bad pairs, and in-play allows the hedge 1500ms against pre-game's 3000ms in faster books —
+    # so "did the timeout cause the miss, or did the book genuinely run away?" is the question that
+    # decides whether the timeout is guilty. It was unanswerable: nothing recorded how long the hedge
+    # actually took, what the book looked like when it failed, or which outcome it produced.
+    "hedge_ms",        # wall time from hedge submit to venue answer
+    "hedge_outcome",   # locked | partial | missed | error | declined
+    "hedge_depth",     # shares the pre-hedge walk could actually cover at that moment
     "reason",
 ]
 

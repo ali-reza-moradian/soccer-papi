@@ -209,6 +209,16 @@ class LiveConfig:
     # ceiling, because the dangerous error here is ONE-SIDED: calling a real-but-slow fill a phantom
     # would unwind a good hedge and strand a real rest leg, while waiting a little longer costs nothing
     # but a late Telegram. It still resolves far inside the 5-minute reconcile.
+    # THE IN-PLAY RING-FENCE. Both keys are READ AND ENFORCED in caps.LiveCaps — see audit N16, where
+    # four per-phase keys sat in this file unread while in-play sized off the pre-game cap. If a key
+    # here is not enforced in code it does not belong in the file.
+    #   inplay_pool_usd    — in-play's OWN daily stake pool. Pre-game cannot consume it and it cannot
+    #                        consume pre-game's ``max_daily_stake_usd``. 0.0 = no ring-fence.
+    #   inplay_max_loss_usd— in-play-only REALIZED loss sub-cap (positive $). Unwind tolls included,
+    #                        because the tolls are what actually lost in-play its money. Breach stops
+    #                        IN-PLAY for the UTC day; pre-game is untouched. 0.0 = disabled.
+    inplay_pool_usd: float = 0.0
+    inplay_max_loss_usd: float = 0.0
     rest_confirm_deadline_s: float = 90.0
     # How often the confirmation re-reads the rest leg. One read per pending pair per cadence, submitted
     # to the SHARED off-loop worker — so it must stay a single venue read and never a polling loop (a
@@ -519,9 +529,12 @@ def load_maker_rt_config(config_path: Optional[str] = None,
                  "max_daily_loss_usd", "max_daily_stake_usd", "max_pair_stake_usd", "hedge_timeout_ms",
                  "unwind_on_hedge_fail", "auto_flatten", "auto_flatten_max_usd", "fill_poll_s",
                  "max_quote_age_s", "kalshi_feed_grace_s", "max_open_per_game", "max_game_stake_usd",
-                 "rest_confirm_deadline_s", "rest_confirm_poll_s"):
+                 "rest_confirm_deadline_s", "rest_confirm_poll_s",
+                 "inplay_pool_usd", "inplay_max_loss_usd"):
         if live_blk.get(name) is not None:
             setattr(lc, name, live_blk[name])
+    lc.inplay_pool_usd = float(lc.inplay_pool_usd)
+    lc.inplay_max_loss_usd = float(lc.inplay_max_loss_usd)
     lc.rest_confirm_deadline_s = float(lc.rest_confirm_deadline_s)
     lc.rest_confirm_poll_s = float(lc.rest_confirm_poll_s)
     lc.max_open_per_game = int(lc.max_open_per_game)

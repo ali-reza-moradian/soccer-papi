@@ -113,13 +113,41 @@ class LiveCaps:
         # hedge) for ONE bet, so a single low-priced quote can't commit an outsized hedge. A breach
         # REFUSES that one quote (it's a sizing limit, not a daily breach — no day-halt).
         self.max_pair_stake_usd = float(getattr(live_cfg, "max_pair_stake_usd", 25.0))
+        # ---- THE IN-PLAY RING-FENCE (P3 from REPORT_inplay_funnel.txt) --------------------------
+        # In-play gets its OWN daily reservation pool that pre-game cannot consume, and pre-game keeps
+        # ``max_daily_stake_usd`` to itself. The two pools never borrow from each other.
+        #
+        # WHY: the funnel measured on 2026-08-06 showed in-play reaching the executor 0.69% of the time
+        # and being refused 100% of the time it got there, always on `daily_stake` — because
+        # ``max_open_quotes`` x the typical projected pair was numerically equal to the whole daily
+        # budget, so pre-game's resting quotes RESERVED the entire pool and in-play was sized at 0
+        # shares forever. Raising the shared budget alone would not have fixed it: pre-game would simply
+        # reserve the bigger number too. A ring-fence is the only shape that guarantees in-play a slice.
+        #
+        # 0.0 disables the ring-fence and restores the single shared pool.
+        self.inplay_pool_usd = float(getattr(live_cfg, "inplay_pool_usd", 0.0) or 0.0)
+        # IN-PLAY-ONLY REALIZED LOSS SUB-CAP ($, positive number). In-play lifetime is -$6.69 over 12
+        # fills and its p50 locked net is negative — only the tail pays. This is the "fail cheaply and
+        # visibly" rail: breaching it stops IN-PLAY for the UTC day while pre-game (the proven earner)
+        # keeps running. It counts UNWIND TOLLS, because the tolls are what actually lost the money
+        # (-$2.20, -$4.75, -$0.96), not the pairs. 0.0 disables it.
+        self.inplay_max_loss_usd = float(getattr(live_cfg, "inplay_max_loss_usd", 0.0) or 0.0)
         self.telegram = telegram
         self.log = log
         # running day state
-        self.stake_today = 0.0            # SUM of all legs actually committed today ($)
+        self.stake_today = 0.0            # SUM of all legs actually committed today ($), BOTH phases
         self.fills_today = 0
         self.pnl_today = 0.0
         self.open_quotes = 0
+        # PER-PHASE splits of the three running numbers above. The totals stay authoritative for the
+        # SHARED rails (the $50 daily-loss brake, the fills-per-day cap); these exist so the two stake
+        # POOLS and the in-play loss sub-cap can be enforced without either phase seeing the other's.
+        self.stake_by_phase: dict = {"pre": 0.0, "inplay": 0.0}
+        self.reserved_by_phase: dict = {"pre": 0.0, "inplay": 0.0}
+        self.pnl_by_phase: dict = {"pre": 0.0, "inplay": 0.0}
+        #: Latched when the in-play realized loss sub-cap breaches. Read by the executor's ``eligible()``
+        #: so enforcement cannot depend on remembering to call a checker.
+        self.inplay_budget_halted = False
         # RESERVED: the SUM of the projected pair costs of the quotes resting RIGHT NOW (N14). The daily
         # cap used to check only the ONE quote being placed against ``stake_today``, so twelve slots at a
         # $350 pair cap were $4,200 of committable exposure against an $800 "cap" — the cap throttled the
@@ -149,6 +177,12 @@ class LiveCaps:
         self.stake_today = 0.0
         self.fills_today = 0
         self.pnl_today = 0.0
+        self.stake_by_phase = {"pre": 0.0, "inplay": 0.0}
+        self.pnl_by_phase = {"pre": 0.0, "inplay": 0.0}
+        # The in-play loss sub-cap is a DAILY budget, so it resets with the day exactly as the daily
+        # stake cap does. (Reserved-by-phase is deliberately NOT reset — a resting order survives
+        # midnight, and so must its reservation; same rule as ``open_quotes``.)
+        self.inplay_budget_halted = False
         if self.halt_reason in self.STICKY_HALTS:
             return                        # keep halted + keep the reason: only a human clears these
         self.halted = False
@@ -172,18 +206,61 @@ class LiveCaps:
         """The $ BOTH legs of a hedged pair would commit if the rest leg fully fills and is hedged."""
         return float(rest_price) * float(rest_shares) + float(hedge_price) * float(hedge_shares)
 
+    # -- the two stake POOLS -------------------------------------------------
+    @staticmethod
+    def _ph(phase: Any) -> str:
+        """Normalise a phase to a pool key. Anything that is not in-play draws on the pre-game pool —
+        'gap' never quotes, and an unknown phase must not silently get its own budget."""
+        return "inplay" if str(phase) == "inplay" else "pre"
+
+    def pool_for(self, phase: Any = "pre") -> float:
+        """The daily stake POOL this phase may draw on. In-play gets its ring-fenced pool when one is
+        configured; everything else gets ``max_daily_stake_usd``. With the ring-fence off (0.0) both
+        phases share ``max_daily_stake_usd`` exactly as before."""
+        if self._ph(phase) == "inplay" and self.inplay_pool_usd > 0.0:
+            return self.inplay_pool_usd
+        return self.max_daily_stake_usd
+
+    def inplay_loss_left(self) -> float:
+        """$ of in-play realized loss still allowed today (inf when the sub-cap is disabled)."""
+        if self.inplay_max_loss_usd <= 0.0:
+            return float("inf")
+        return max(0.0, self.inplay_max_loss_usd + float(self.pnl_by_phase.get("inplay", 0.0)))
+
+    def _check_inplay_loss(self) -> None:
+        """Latch the in-play sub-cap the moment in-play's realized pnl breaches it."""
+        if self.inplay_max_loss_usd <= 0.0 or self.inplay_budget_halted:
+            return
+        if float(self.pnl_by_phase.get("inplay", 0.0)) <= -self.inplay_max_loss_usd:
+            self.inplay_budget_halted = True
+            if self.log:
+                self.log.error("[MAKER_RT][INPLAY] IN-PLAY DAILY LOSS SUB-CAP BREACHED: in-play realized "
+                               "$%.2f today, limit -$%.2f (unwind tolls included). IN-PLAY IS STOPPED "
+                               "for the UTC day. Pre-game is UNAFFECTED and keeps running.",
+                               float(self.pnl_by_phase.get("inplay", 0.0)), self.inplay_max_loss_usd)
+
     # -- pre-place decision --------------------------------------------------
-    def can_place(self, projected_pair_stake: float) -> tuple[bool, str]:
+    def can_place(self, projected_pair_stake: float, phase: Any = "pre") -> tuple[bool, str]:
         """Decide whether a NEW quote may rest, given the $ its pair (rest + worst-case hedge) would
         commit if it fills. Refuses (and HALTS for the day, alerting) when the projected stake would
         breach ``max_daily_stake_usd``; refuses this ONE quote (no day-halt) when the pair alone breaches
         ``max_pair_stake_usd``. Also refuses on the open-quote cap, the fills-per-day cap, or an existing
         halt. Returns (ok, reason)."""
+        ph = self._ph(phase)
         if self.halted:
             return False, f"halted:{self.halt_reason}"
+        # THE SHARED BRAKE, unchanged and deliberately not per-phase: $50 bounds the whole day's
+        # realized loss across both phases. The in-play sub-cap below is an ADDITIONAL, tighter rail on
+        # the unproven phase, never a replacement for this one.
         if self.pnl_today <= -self.max_daily_loss_usd:
             self._halt("max_daily_loss_usd")
             return False, "max_daily_loss_usd"
+        # IN-PLAY ONLY: its own realized-loss sub-cap. Refuses in-play; pre-game is untouched and there
+        # is no day-halt — that is the whole point of ring-fencing the experiment.
+        if ph == "inplay":
+            self._check_inplay_loss()
+            if self.inplay_budget_halted:
+                return False, "inplay_daily_loss"
         if self.open_quotes >= self.max_open_quotes:
             return False, "max_open_quotes"
         if self.fills_today >= self.max_fills_per_day:
@@ -198,41 +275,70 @@ class LiveCaps:
         # PER-PAIR sizing cap FIRST (a single oversized pair is refused, not day-halted).
         if float(projected_pair_stake) > self.max_pair_stake_usd + 1e-9:
             return False, "max_pair_stake_usd"
-        # EXPOSURE TRUTH: spent + OUTSTANDING + this one, against the daily cap.
-        if self.committed_stake() + float(projected_pair_stake) > self.max_daily_stake_usd + 1e-9:
+        # EXPOSURE TRUTH: spent + OUTSTANDING + this one, against THIS PHASE'S pool.
+        pool = self.pool_for(ph)
+        if self.committed_stake(ph) + float(projected_pair_stake) > pool + 1e-9:
             # NOT a day-halt. Unlike money already spent, a reservation is released when its quote is
             # cancelled or ages out, so this is a "full right now" condition, not a spent budget — and
             # halting the day over a temporary one would be the concentration bug wearing a rail's
             # clothes. The day-halt below still fires on genuinely SPENT stake.
-            if self.stake_today + float(projected_pair_stake) > self.max_daily_stake_usd + 1e-9:
+            if self.stake_by_phase.get(ph, 0.0) + float(projected_pair_stake) > pool + 1e-9:
+                # An in-play pool breach REFUSES in-play and leaves pre-game alone — halting the day
+                # because the $500 experiment ran out of room would stop the proven earner to protect
+                # the unproven one, which is backwards.
+                if ph == "inplay":
+                    return False, "inplay_pool_spent"
                 self._halt("max_daily_stake_usd")
                 return False, "max_daily_stake_usd"
-            return False, "daily_stake_reserved"
+            return False, ("inplay_pool_reserved" if ph == "inplay" else "daily_stake_reserved")
         return True, "ok"
 
-    def committed_stake(self) -> float:
-        """Spent today PLUS what the currently-resting quotes would spend if they all filled."""
-        return float(self.stake_today) + max(0.0, float(self.reserved_stake))
+    def committed_stake(self, phase: Any = None) -> float:
+        """Spent PLUS outstanding reservations. ``phase`` None = both phases pooled (reporting and the
+        legacy single-pool readers); a phase = only that pool's own commitments.
 
-    def daily_stake_headroom(self) -> float:
-        """What a NEW quote may still project, once outstanding reservations are honoured."""
-        return max(0.0, float(self.max_daily_stake_usd) - self.committed_stake())
+        WITH THE RING-FENCE OFF there are no separate pools, so a phase-scoped question has to be
+        answered with the GLOBAL total — otherwise turning the fence off would leave each phase blind to
+        the other's reservations against a budget they are still sharing, which is strictly worse than
+        either posture and would silently double the effective cap."""
+        if phase is None or self.inplay_pool_usd <= 0.0:
+            return float(self.stake_today) + max(0.0, float(self.reserved_stake))
+        ph = self._ph(phase)
+        return float(self.stake_by_phase.get(ph, 0.0)) + max(0.0, float(self.reserved_by_phase.get(ph, 0.0)))
+
+    def daily_stake_headroom(self, phase: Any = "pre") -> float:
+        """What a NEW quote in ``phase`` may still project, once that pool's outstanding reservations
+        are honoured. THIS is the number that sizes every quote (plan_size), so getting the phase wrong
+        here is what would let one phase eat the other's ring-fence."""
+        return max(0.0, float(self.pool_for(phase)) - self.committed_stake(phase))
 
     # -- accounting (called on real venue events) ----------------------------
-    def commit_stake(self, usd: float) -> None:
+    # EVERY mutator below takes the PHASE that caused it. The totals keep their old meaning (the shared
+    # rails read them); the per-phase splits are what make the ring-fence real. A caller that forgets
+    # the phase attributes the money to pre-game, which is the SAFE direction: it can only ever make
+    # in-play look like it has more room than it spent, never let it quietly spend pre-game's pool.
+    def commit_stake(self, usd: float, phase: Any = "pre") -> None:
         """Add REAL committed notional from a leg (a rest fill, a hedge lift, or an unwind sell)."""
         self.stake_today += float(usd)
+        ph = self._ph(phase)
+        self.stake_by_phase[ph] = self.stake_by_phase.get(ph, 0.0) + float(usd)
 
-    def on_open(self, projected_pair_stake: float = 0.0) -> None:
-        """A quote is now RESTING: hold its projected pair cost against the daily cap until it stops."""
+    def on_open(self, projected_pair_stake: float = 0.0, phase: Any = "pre") -> None:
+        """A quote is now RESTING: hold its projected pair cost against its OWN pool until it stops."""
         self.open_quotes += 1
-        self.reserved_stake += max(0.0, float(projected_pair_stake))
+        amt = max(0.0, float(projected_pair_stake))
+        self.reserved_stake += amt
+        ph = self._ph(phase)
+        self.reserved_by_phase[ph] = self.reserved_by_phase.get(ph, 0.0) + amt
 
-    def on_close(self, projected_pair_stake: float = 0.0) -> None:
+    def on_close(self, projected_pair_stake: float = 0.0, phase: Any = "pre") -> None:
         """A quote stopped resting (cancelled, aged out, or filled). Release its reservation — on a FILL
         the real legs arrive through ``commit_stake``, so releasing here is what stops double-counting."""
         self.open_quotes = max(0, self.open_quotes - 1)
-        self.reserved_stake = max(0.0, self.reserved_stake - max(0.0, float(projected_pair_stake)))
+        amt = max(0.0, float(projected_pair_stake))
+        self.reserved_stake = max(0.0, self.reserved_stake - amt)
+        ph = self._ph(phase)
+        self.reserved_by_phase[ph] = max(0.0, self.reserved_by_phase.get(ph, 0.0) - amt)
 
     #: The plausible-pnl bound is derived from what a hedged pair CAN produce, not from its stake: a
     #: pair's pnl is ``locked_net x shares``, ``locked_net`` is capped by the sanity ceiling, and the
@@ -268,7 +374,7 @@ class LiveCaps:
         unbounded number is not a rail."""
         return abs(float(pnl)) > self.fill_pnl_bound(locked) + 1e-9
 
-    def on_fill(self, pnl: float = 0.0, *, locked: bool = True) -> None:
+    def on_fill(self, pnl: float = 0.0, *, locked: bool = True, phase: Any = "pre") -> None:
         """Count a fill and move the daily pnl. An IMPLAUSIBLE pnl is booked as ZERO and halts for
         review rather than re-basing the loss rail in either direction (a phantom gain disables it; a
         phantom loss false-halts the day). ``locked`` selects which bound applies — see
@@ -278,16 +384,22 @@ class LiveCaps:
             self._halt("implausible_fill_pnl")
             return
         self.pnl_today += float(pnl)
+        ph = self._ph(phase)
+        self.pnl_by_phase[ph] = self.pnl_by_phase.get(ph, 0.0) + float(pnl)
+        self._check_inplay_loss()
         if self.pnl_today <= -self.max_daily_loss_usd:
             self._halt("max_daily_loss_usd")
 
-    def on_loss(self, usd: float) -> None:
+    def on_loss(self, usd: float, phase: Any = "pre") -> None:
         """Record a realized loss (positive ``usd`` = $ lost), e.g. an unwind cost."""
         self.pnl_today -= float(usd)
+        ph = self._ph(phase)
+        self.pnl_by_phase[ph] = self.pnl_by_phase.get(ph, 0.0) - float(usd)
+        self._check_inplay_loss()
         if self.pnl_today <= -self.max_daily_loss_usd:
             self._halt("max_daily_loss_usd")
 
-    def adjust_pnl(self, usd: float) -> None:
+    def adjust_pnl(self, usd: float, phase: Any = "pre") -> None:
         """Restate today's pnl WITHOUT counting a fill (signed: + improves the day).
 
         For a correction to an ALREADY-counted trade — a provisional worst-case mark rebooked at what the
@@ -296,6 +408,11 @@ class LiveCaps:
         without a single new order being placed. The daily-loss rail is still re-checked, because a
         correction can move the day in either direction."""
         self.pnl_today += float(usd)
+        ph = self._ph(phase)
+        self.pnl_by_phase[ph] = self.pnl_by_phase.get(ph, 0.0) + float(usd)
+        # THE UNWIND TOLL IS THE POINT. In-play's entire lifetime loss came through this path, not
+        # through booked pairs, so the sub-cap has to see it here or it would never fire at all.
+        self._check_inplay_loss()
         if self.pnl_today <= -self.max_daily_loss_usd:
             self._halt("max_daily_loss_usd")
 

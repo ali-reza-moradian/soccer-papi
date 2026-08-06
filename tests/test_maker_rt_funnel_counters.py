@@ -115,7 +115,9 @@ def test_counters_change_nothing_a_refusal_still_refuses(tmp_path):
     (`daily_stake`) rather than only the symptom (`below_venue_minimum`)."""
     ex, _poly = _armed(tmp_path)
     store = _Store(poly_best_ask=0.60, kalshi_ask=0.50)
-    ex.caps.stake_today = ex.caps.max_daily_stake_usd     # nothing left to spend
+    # Spend the PRE-GAME pool. Since the ring-fence, headroom is per-phase — setting only the global
+    # ``stake_today`` would leave pre-game's own pool untouched and the quote would still place.
+    ex.caps.commit_stake(ex.caps.max_daily_stake_usd, "pre")   # nothing left to spend
     ex.place_or_reprice(_cand(), _dec(price=0.46), None, store, _DT, 1.0, "pre")
 
     assert ex.order_client.rests == [], "a full budget must still refuse"

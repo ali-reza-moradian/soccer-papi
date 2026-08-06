@@ -289,6 +289,13 @@ class PregameLiveExecutor:
         # the live process rewrites on every fill for no safety we do not already have.
         self._pending_pairs: dict = {}
         self._pending_seq = 0
+        # VENUE FREE CASH, refreshed on the 5-minute reconcile (never on the quoting path). None = the
+        # read has not landed or failed, which is treated as UNKNOWN and never as a refusal.
+        self._last_hedge: dict = {}          # forensics for the fill being hedged right now
+        self._hedge_stats: dict = {}         # phase -> {n, ms_sum, ms_max, by_outcome, miss_ms}
+        self._venue_cash: dict = {"kalshi": None, "polymarket": None}
+        self._venue_cash_ts = 0.0
+        self._cash_alert_at: dict = {}
         self.rest_confirm_deadline_s = float(getattr(getattr(cfg, "live", None),
                                                      "rest_confirm_deadline_s", 90.0) or 0.0)
         self.rest_confirm_poll_s = max(0.25, float(getattr(getattr(cfg, "live", None),
@@ -560,6 +567,26 @@ class PregameLiveExecutor:
         self.caps.stake_today = float(data.get("stake_today", 0.0) or 0.0)
         self.caps.fills_today = int(data.get("fills_today", 0) or 0)
         self.caps.pnl_today = float(data.get("pnl_today", 0.0) or 0.0)
+        # MIGRATION, and it matters on exactly one restart: a daily-caps file written BEFORE the
+        # ring-fence has ``stake_today``/``pnl_today`` but no per-phase split. Leaving the splits at zero
+        # would tell both pools they had spent nothing while the day's real spend sat in the totals —
+        # i.e. the ring-fence would silently hand out a fresh budget mid-day. Attribute the legacy total
+        # to PRE-GAME: that is the safe direction (it shrinks the proven earner's pool, never inflates
+        # the experiment's) and it is where essentially all of it came from.
+        for attr, legacy in (("stake_by_phase", "stake_today"), ("pnl_by_phase", "pnl_today")):
+            src = data.get(attr)
+            tgt = getattr(self.caps, attr)
+            if isinstance(src, dict):
+                for k in ("pre", "inplay"):
+                    tgt[k] = float(src.get(k, 0.0) or 0.0)
+            else:
+                tgt["pre"] = float(data.get(legacy, 0.0) or 0.0)
+                tgt["inplay"] = 0.0
+                if self.log:
+                    self.log.warning("[MAKER_RT][LIVE] daily-caps file predates the in-play ring-fence — "
+                                     "attributing today's %s of $%.2f to PRE-GAME (the safe direction); "
+                                     "in-play starts its pool clean.", legacy, tgt["pre"])
+        self.caps.inplay_budget_halted = bool(data.get("inplay_budget_halted", False))
         self.caps._day = today                    # so caps.roll(today) is a no-op (don't wipe on restart)
         # IN-PLAY CIRCUIT (N5). The -2% day-halt, the first-fill pause and the in-play fill counter used
         # to be plain attributes, so a tripped in-play halt silently re-armed on the NEXT DEPLOY — and
@@ -595,6 +622,13 @@ class PregameLiveExecutor:
             "stake_today": round(float(self.caps.stake_today), 4),
             "fills_today": int(self.caps.fills_today),
             "pnl_today": round(float(self.caps.pnl_today), 4),
+            # THE RING-FENCE, day-scoped and therefore in the day-keyed file. Without these a restart
+            # would reopen the in-play pool AND wipe the loss sub-cap's accumulated total — and gitguard
+            # restarts 11-21 times on a working day, which is exactly how the in-play circuit used to
+            # silently re-arm before N5.
+            "stake_by_phase": {k: round(float(v), 4) for k, v in self.caps.stake_by_phase.items()},
+            "pnl_by_phase": {k: round(float(v), 4) for k, v in self.caps.pnl_by_phase.items()},
+            "inplay_budget_halted": bool(self.caps.inplay_budget_halted),
             # The in-play circuit rides in the SAME day-keyed file: it is day-scoped state with the same
             # lifetime and the same "must survive a deploy" requirement as the counters beside it.
             "inplay_halted": bool(self.inplay_halted),
@@ -653,7 +687,12 @@ class PregameLiveExecutor:
         if phase == "pre":
             return self.pre_armed()
         if phase == "inplay":
-            return bool(self.inplay_armed() and not self.inplay_halted and now_ts >= self.inplay_pause_until)
+            # THREE in-play gates, and the third is read straight off caps ON PURPOSE: the in-play loss
+            # sub-cap must be enforced even if some new booking path forgets to call the alerting
+            # checker below. A rail whose enforcement depends on a notification is not a rail.
+            return bool(self.inplay_armed() and not self.inplay_halted
+                        and not self.caps.inplay_budget_halted
+                        and now_ts >= self.inplay_pause_until)
         return False
 
     def cooloff_ok(self, store: Any, c: Any, freeze_until_ts: float, now_ts: float) -> bool:
@@ -866,7 +905,7 @@ class PregameLiveExecutor:
         # before it picks a number, so the ladder cannot creep past either one line at a time.
         plan = plan_size(price, hedge_ask, quote_usd_max=self.caps.quote_usd_max,
                          max_pair_stake_usd=self.caps.max_pair_stake_usd,
-                         daily_stake_headroom=self.caps.daily_stake_headroom(),
+                         daily_stake_headroom=self.caps.daily_stake_headroom(phase),
                          game_stake_headroom=self.game_stake_headroom(c.game),
                          hedge_depth=hedge_depth, book_depth=book_depth, venue_minimum=vmin)
         if plan["refused"]:
@@ -887,14 +926,20 @@ class PregameLiveExecutor:
             return
         size = plan["size"]
         projected = self.caps.projected_pair_stake(price, size, hedge_ask, size)
-        ok, reason = self.caps.can_place(projected)
+        ok, reason = self.caps.can_place(projected, phase)
         if ok and not self._reservation_ok(c.direction):     # per-direction slot fairness (global cap passed)
             ok, reason = False, "reserve_per_direction"
         # PER-GAME CONCENTRATION (N15) — checked for a NEW order only; a reprice replaces one of this
         # game's existing quotes and so cannot raise its concentration.
         if ok and existing is None and not self._game_slot_ok(c.game):
             ok, reason = False, "max_open_per_game"
+        # VENUE CASH: budget headroom is not the same thing as money in the bank, and the two legs draw
+        # on different banks. Checked LAST because it is the only one that can be UNKNOWN.
+        if ok and not self._venue_cash_ok(c, price * size, float(hedge_ask or 0.0) * size):
+            ok, reason = False, "venue_cash"
         if not ok:
+            if reason == "venue_cash":
+                self._note_binding_count("venue_cash")
             # UNTHROTTLED, unlike the CSV row below: a slot refusal recurs every loop while the caps are
             # full, and collapsing it into a 300s window is exactly what made it look 3x rarer than the
             # per-tick below_venue_minimum row it competes with in any funnel built from the CSV.
@@ -940,7 +985,7 @@ class PregameLiveExecutor:
         self._slot_wait_since.pop(c.key, None)         # got its slot -> no longer waiting
         self._track_rested(lo)                         # reconcile this instrument for flatness (persisted)
         self._note_quoted(lo, now_ts)                  # BOTH legs enter the 48h sweep scope (see _sweep_unregistered)
-        self.caps.on_open(projected)
+        self.caps.on_open(projected, phase)
         kind = "reprice" if existing is not None else "quote"
         self._record(c, kind, now, phase, price=price, size=size, hedge_ask=hedge_ask, order_id=oid)
         self._note_binding(c, price, size, hedge_ask, plan["binding"], hedge_depth, book_depth, phase)
@@ -1139,6 +1184,123 @@ class PregameLiveExecutor:
             return None
         return max(0.0, cap - self.game_reserved(game))
 
+    # -- T2: HEDGE-MISS FORENSICS + the in-play loss sub-cap alert ---------------
+    def _note_hedge_attempt(self, lo: _LiveOrder, status: str, hedge_ms: float,
+                            walked_depth: Any, requested: float, got: float) -> None:
+        """Stash this fill's hedge round-trip so the outcome row can carry it, and tally the phase's
+        miss/timeout distribution for the digest.
+
+        THE QUESTION THIS ANSWERS: in-play gives the hedge 1500ms and pre-game 3000ms, in faster books.
+        If misses cluster just under the phase's timeout, the timeout is causing them; if they cluster
+        on a shallow walked depth or a long round-trip that still succeeded elsewhere, the book ran away
+        and the timeout is innocent. Recording only 'missed' could never separate those."""
+        self._last_hedge = {"ms": float(hedge_ms), "outcome": str(status or "error"),
+                            "depth": (float(walked_depth) if walked_depth is not None else None)}
+        ph = "inplay" if lo.phase == "inplay" else "pre"
+        st = self._hedge_stats.setdefault(ph, {"n": 0, "ms_sum": 0.0, "ms_max": 0.0, "by_outcome": {},
+                                               "miss_ms": []})
+        st["n"] += 1
+        st["ms_sum"] += float(hedge_ms)
+        st["ms_max"] = max(float(st["ms_max"]), float(hedge_ms))
+        st["by_outcome"][str(status)] = st["by_outcome"].get(str(status), 0) + 1
+        if str(status) in ("missed", "partial", "error"):
+            # The timeout for THIS phase, so a reader can see the boundary the miss sat against.
+            st["miss_ms"].append(round(float(hedge_ms), 1))
+            del st["miss_ms"][:-50]
+            if self.log:
+                self.log.warning("[MAKER_RT][LIVE] HEDGE %s on %s [%s] after %.0fms (phase timeout "
+                                 "%.0fms) — walked depth %s sh, asked %.2f got %.2f.",
+                                 str(status).upper(), self._name_for(lo), lo.phase, hedge_ms,
+                                 self._hedge_timeout_ms(lo.phase),
+                                 ("%.0f" % walked_depth) if walked_depth is not None else "n/a",
+                                 float(requested), float(got))
+
+    def _hedge_timeout_ms(self, phase: str) -> float:
+        """The hedge timeout that applied to ``phase`` (in-play is deliberately tighter). Reporting
+        only — this reads config, it does not set it."""
+        if phase == "inplay":
+            ip = getattr(self.cfg, "live_inplay", None) or getattr(self.cfg, "inplay", None)
+            v = getattr(ip, "hedge_timeout_ms", None)
+            if v:
+                return float(v)
+        return float(getattr(getattr(self.cfg, "live", None), "hedge_timeout_ms", 3000) or 3000)
+
+    def _hedge_forensics(self) -> dict:
+        """The kwargs the outcome row carries (consumed once per fill)."""
+        h = self._last_hedge or {}
+        return {"hedge_ms": h.get("ms"), "hedge_outcome": h.get("outcome") or "",
+                "hedge_depth": h.get("depth")}
+
+    def _check_inplay_budget(self, now: Any) -> None:
+        """The in-play realized-loss sub-cap tripped -> stop in-play, keep pre-game, say so loudly ONCE.
+
+        Enforcement does NOT depend on this running (``eligible`` reads the caps latch directly). This
+        is the part a human needs: the number, in plain words, at the moment it happens."""
+        if not self.caps.inplay_budget_halted or self.inplay_halted:
+            return
+        self.inplay_halted = True
+        lost = float(self.caps.pnl_by_phase.get("inplay", 0.0))
+        if self.log:
+            self.log.error("[MAKER_RT][INPLAY] IN-PLAY STOPPED FOR THE DAY — realized $%.2f against the "
+                           "$%.2f in-play loss sub-cap (unwind tolls included). Pre-game continues.",
+                           lost, self.caps.inplay_max_loss_usd)
+        self._instant(alerts.format_event(
+            "halted", detail=(f"in-play stopped for the day — it has lost {alerts.money(abs(lost))} "
+                              f"today, which is its {alerts.money(self.caps.inplay_max_loss_usd)} daily "
+                              f"limit. Pre-game offers keep running as normal. This is the in-play "
+                              f"experiment failing cheaply, exactly as designed.")))
+        self.cancel_inplay_open(now, "inplay_budget_halt")
+        self.persist_daily_caps()
+
+    # -- VENUE CASH: a pair needs BOTH banks funded, not just budget headroom ----
+    #
+    # At the 2026-08-06 sizes a single pair can commit $1,050 across two venues holding ~$2,445 (Poly)
+    # and ~$4,875 (Kalshi). The daily-stake pools bound what we INTEND to spend; they know nothing about
+    # what is actually in each bank, and the two legs draw on DIFFERENT banks. Without this a quote can
+    # pass every cap, fill, and then fail to hedge because the hedge venue is empty — which is the
+    # single most expensive failure this system has (a naked leg + a forced unwind).
+    def _note_venue_cash(self, cash: dict, now: Any = None) -> None:
+        """Cache the periodic free-cash read and scream if either bank can no longer fund one max pair."""
+        for venue in ("kalshi", "polymarket"):
+            v = cash.get(venue)
+            if v is not None:
+                self._venue_cash[venue] = float(v)
+        self._venue_cash_ts = _epoch(now) if now is not None else self._venue_cash_ts
+        pair = float(self.caps.max_pair_stake_usd)
+        for venue, bal in self._venue_cash.items():
+            if bal is None or pair <= 0:
+                continue
+            if bal < pair and (self._cash_alert_at.get(venue, 0.0) + 3600.0) < (self._venue_cash_ts or 0.0):
+                self._cash_alert_at[venue] = self._venue_cash_ts or 0.0
+                if self.log:
+                    self.log.error("[MAKER_RT][LIVE] %s free cash $%.2f is below ONE max-size pair "
+                                   "($%.2f) — quotes that need that venue will be refused (venue_cash).",
+                                   venue, bal, pair)
+                self._instant(alerts.format_event(
+                    "problem", detail=(f"My {alerts.venue_full(venue)} balance is ${bal:,.0f}, which is "
+                                       f"less than one full-size bet (${pair:,.0f}). I will keep trading "
+                                       f"smaller, but I cannot place the biggest offers on that venue "
+                                       f"until it is topped up.")))
+
+    def _venue_cash_ok(self, c: Any, rest_cost: float, hedge_cost: float) -> bool:
+        """True unless a bank we can READ cannot fund its own leg (plus a safety margin).
+
+        UNKNOWN IS NOT A REFUSAL. A cached None means the periodic read failed, and refusing every quote
+        because a balance endpoint blipped would be a self-inflicted outage — the daily-stake pools are
+        still in force underneath. This check exists to catch the case we CAN see."""
+        rest_venue = str(getattr(c, "rest_venue", "polymarket"))
+        hedge_venue = str((c.hedge_lookup or {}).get("venue") or getattr(c, "hedge_venue", "kalshi"))
+        need: dict = {}
+        need[rest_venue] = need.get(rest_venue, 0.0) + float(rest_cost)
+        need[hedge_venue] = need.get(hedge_venue, 0.0) + float(hedge_cost)
+        for venue, amount in need.items():
+            bal = self._venue_cash.get(venue)
+            if bal is None:
+                continue
+            if float(bal) < amount * self.VENUE_CASH_MARGIN:
+                return False
+        return True
+
     def _fn(self, c: Any, phase: str, stage: str) -> None:
         """Count one candidate dying at ``stage`` of the placement funnel. Instrumentation only — it is
         guarded because ``state`` is optional here and a counter must never break a placement."""
@@ -1304,7 +1466,7 @@ class PregameLiveExecutor:
             # The raced-fill router (see _cancel_confirmed) already closed this order out and freed its
             # slot. Popping again is harmless; decrementing caps again is not — that silently loses a slot.
             return True
-        self.caps.on_close(lo.projected_pair)
+        self.caps.on_close(lo.projected_pair, lo.phase)
         self._record_lifetime(lo, now)
         self._record_lo(lo, "expire", now, reason=reason, store=store)
         age_s = None
@@ -2204,7 +2366,7 @@ class PregameLiveExecutor:
         if self.open_orders.pop(key, None) is None:
             return
         self._forget_cancel_state(key)
-        self.caps.on_close(lo.projected_pair)
+        self.caps.on_close(lo.projected_pair, lo.phase)
         self._slot_released += 1
         self._record_lo(lo, "slot_released", now, reason="venue_not_resting")
         if self.log:
@@ -2468,12 +2630,13 @@ class PregameLiveExecutor:
         lo.hedge_errors = 0
         self._digest["fills"] += 1                          # count for the digest (the hedge is instant-alerted)
         self.persist_daily_caps()                           # a fill moved stake/fills/pnl -> persist NOW
+        self._check_inplay_budget(now)          # the -$40 in-play sub-cap, incl. any unwind toll above
         if lo.phase == "inplay":
             self._apply_inplay_circuit(lo, result, now, now_ts)
         if total >= lo.size - 1e-9:                        # fully filled -> no remainder resting
             self._record_lifetime(lo, now)
             self.open_orders.pop(key, None)
-            self.caps.on_close(lo.projected_pair)
+            self.caps.on_close(lo.projected_pair, lo.phase)
             self._forget_cancel_state(key)                 # nothing left to retry a cancel against
         elif self.caps.halted or (lo.phase == "inplay" and self.inplay_halted):
             # force: a cap/circuit has tripped WITH a live partial resting. Pulling the remainder is the
@@ -2522,7 +2685,7 @@ class PregameLiveExecutor:
         it as this fill's hedged count makes a second fill's remainder compute 0, so genuinely naked
         shares are never unwound and ride to the 5-minute reconcile as an orphan halt."""
         cum = float(cumulative if cumulative is not None else (lo.matched_seen + matched))
-        self.caps.commit_stake(matched * fill_price)              # rest leg committed
+        self.caps.commit_stake(matched * fill_price, lo.phase)    # rest leg committed
         hl = lo.hedge_lookup
         hedge_venue = hl.get("venue", "kalshi")
         hv = store.kalshi_view(hl.get("ticker"), hl.get("side")) if hedge_venue == "kalshi" \
@@ -2556,6 +2719,10 @@ class PregameLiveExecutor:
         # FIRE the hedge on the COMPLEMENT venue (rest_poly -> Kalshi IOC; rest_kalshi -> Poly FAK), with an
         # EXPLICIT price cap so the executed hedge can never be worse than the one the gate just approved.
         cap = self._hedge_price_cap(fill_price, hedge_venue, lo.poly_rate, self.hedge_execution_floor)
+        # T2 FORENSICS: the hedge round-trip, measured. This is the number that decides whether the
+        # in-play 1500ms timeout is guilty of the misses or innocent of them.
+        import time as _t
+        _hedge_t0 = _t.perf_counter()
         if hedge_venue == "polymarket":
             res = self.hedger.hedge_poly({"price": fill_price, "size": matched},
                                          {"token": hl.get("token"), "best_ask": getattr(hv, "best_ask", None),
@@ -2568,8 +2735,13 @@ class PregameLiveExecutor:
             res = self.hedger.hedge({"token_id": lo.token, "side": "BUY", "price": fill_price, "size": matched},
                                     {"ticker": hl.get("ticker"), "side": hl.get("side", "yes"),
                                      "best_ask": getattr(hv, "best_ask", None), "max_price": cap})
+        hedge_ms = (_t.perf_counter() - _hedge_t0) * 1000.0
         status = getattr(res, "status", "error")
         hedged = float(getattr(res, "hedged_shares", 0.0) or 0.0)
+        # Walked depth at the moment we fired — "the book was thin" vs "the book moved" are different
+        # diagnoses and only this distinguishes them.
+        walked_depth = (re_mark or {}).get("shares")
+        self._note_hedge_attempt(lo, status, hedge_ms, walked_depth, matched, hedged)
         hedge_avg = getattr(res, "hedge_avg_price", None)
         hedge_fee = getattr(res, "hedge_fee", None)          # ACTUAL taker fee on the hedge leg ($)
         _detail = getattr(res, "detail", None) or {}
@@ -2627,7 +2799,7 @@ class PregameLiveExecutor:
             sub = self._record_partial_pair(lo, hedged, fill_price, hedge_avg, hedge_fee, hedge_oid,
                                             hedge_venue, locked, matched, now, now_ts)
         elif hedged > 0:                                       # sub-tolerance dust: stake only, no pair
-            self.caps.commit_stake(hedged * float(hedge_avg or 0.0))
+            self.caps.commit_stake(hedged * float(hedge_avg or 0.0), lo.phase)
             lo.hedged_seen += hedged                           # attribute it before the remainder is judged
         remainder = max(0.0, matched - hedged)
         res = self._unwind_and_record(lo, remainder, fill_price, locked, "hedge_unwound", now,
@@ -2732,8 +2904,8 @@ class PregameLiveExecutor:
         # regardless of how this resolves, and the fill has consumed one of the day's scarce fill slots.
         # Only the PNL waits: it is applied at confirmation via ``adjust_pnl`` (restate-without-counting),
         # so a pair cannot be counted as two fills.
-        self.caps.commit_stake(float(hedged) * float(hedge_avg or 0.0) + float(hedge_fee or 0.0))
-        self.caps.on_fill(0.0)
+        self.caps.commit_stake(float(hedged) * float(hedge_avg or 0.0) + float(hedge_fee or 0.0), lo.phase)
+        self.caps.on_fill(0.0, phase=lo.phase)
         lo.hedged_seen += hedge_held      # attribute this fill's hedge now (N4) — the shares exist
         if self.log:
             self.log.warning("[MAKER_RT][LIVE] PAIR PROVISIONAL %s: hedged %.2f sh on %s, but the venue "
@@ -2776,6 +2948,11 @@ class PregameLiveExecutor:
         if pos is None:
             return None
         return max(0.0, float(pos) - float(baseline))
+
+    #: Safety margin on the venue-cash precondition. 1.15 keeps ~15% of a leg's cost in reserve for the
+    #: hedge slipping a tick or two and for the taker fee — both of which are paid out of the SAME bank
+    #: and neither of which is in ``projected_pair``.
+    VENUE_CASH_MARGIN = 1.15
 
     #: Grace past the deadline before a pending pair is decided WITHOUT a fresh read. Only reachable when
     #: no confirmation result lands at all (a starved/abandoned worker, or every read refused as an
@@ -2868,6 +3045,7 @@ class PregameLiveExecutor:
                               int(rec["reads"]), float(rec["hedge_held"]), rec["hedge_venue"])
         if excess > HEDGE_SHARE_TOL:
             self._unwind_unpaired_hedge(rec, excess, delivered, now, now_ts)
+        self._check_inplay_budget(now)          # a deferred pair can resolve into a real in-play loss
 
     def _book_pending(self, rec: dict, matched: float, hedged: float, hedge_held: float,
                       now: Any) -> dict:
@@ -3144,10 +3322,11 @@ class PregameLiveExecutor:
             # The stake and the fill slot were taken when the hedge was BOUGHT. Only the pnl is left, and
             # it moves through ``adjust_pnl`` — the established "restate without counting a fill"
             # doctrine — so one venue execution can never consume two of the day's scarce fill slots.
-            self.caps.adjust_pnl(pnl)
+            self.caps.adjust_pnl(pnl, lo.phase)
         else:
-            self.caps.commit_stake(float(hedged) * float(hedge_avg or 0.0) + float(hedge_fee or 0.0))
-            self.caps.on_fill(pnl)
+            self.caps.commit_stake(float(hedged) * float(hedge_avg or 0.0) + float(hedge_fee or 0.0),
+                                   lo.phase)
+            self.caps.on_fill(pnl, phase=lo.phase)
         # POST-HEDGE HONESTY GUARD, in THREE states against the CONFIGURED floor (not against
         # break-even, which is what it used to assume — see ``pair_outcome``):
         #   profit       -> LOCKED, "profit is GUARANTEED"
@@ -3156,7 +3335,8 @@ class PregameLiveExecutor:
         outcome = self.pair_outcome(fill_price, hedge_avg, locked, self.hedge_execution_floor)
         profit = outcome == "profit"
         self._record_lo(lo, "hedge_locked", now, price=fill_price, size=matched, locked_net=locked,
-                        locked_pnl=pnl, hedge_avg=hedge_avg, hedge_order_id=hedge_oid)
+                        locked_pnl=pnl, hedge_avg=hedge_avg, hedge_order_id=hedge_oid,
+                        **self._hedge_forensics())
         if self.log and outcome == "breach":
             self.log.error("[MAKER_RT][LIVE] HEDGED BELOW THE FLOOR %s: rest %.4f + hedge %.4f = "
                            "%.4f/sh, locked_net %s (floor %.2f%%), pnl $%.2f - booked, alerted ERROR "
@@ -3255,7 +3435,10 @@ class PregameLiveExecutor:
         books its pair AND unwinds its remainder, and ``fills_today`` is a daily CAP, so letting one
         execution consume two of the day's scarce fill slots would quietly halve the budget. The pnl still
         moves either way; only the counter is skipped (the ``adjust_pnl`` doctrine)."""
-        book = (lambda usd: self.caps.on_fill(usd, locked=False)) if count_fill else self.caps.adjust_pnl
+        # THE UNWIND TOLL, attributed to the phase that paid it. In-play's entire -$6.69 lifetime came
+        # through here, so mis-attributing it would leave the in-play sub-cap measuring nothing.
+        book = ((lambda usd: self.caps.on_fill(usd, locked=False, phase=lo.phase)) if count_fill
+                else (lambda usd: self.caps.adjust_pnl(usd, lo.phase)))
         if shares <= 1e-9:                                    # nothing naked (fully hedged) -> flat by construction
             self._record_lo(lo, ok_outcome, now, price=fill_price, size=0, locked_net=locked, unwind_cost=0.0)
             return {"outcome": ok_outcome, "locked_net": locked, "realized_net": locked, "pnl": 0.0,
@@ -3273,14 +3456,15 @@ class PregameLiveExecutor:
             cost = u["cost"] or 0.0
             book(-cost)
             if u["sold"] > 0 and u["sell_px"] is not None:
-                self.caps.commit_stake(float(u["sell_px"]) * float(u["sold"]))
+                self.caps.commit_stake(float(u["sell_px"]) * float(u["sold"]), lo.phase)
             # SIZE IS WHAT WE ACTUALLY SOLD, not what we set out to sell. ``cost`` has always been
             # computed on the true total (it is priced off ``sold``), so a row carrying the REQUEST
             # described a $4.00 exit as 35 shares while 115 had left the account — right money, wrong
             # label, and the label is what a human reads when reconstructing an incident.
             sold = float(u.get("sold") or 0.0)
             self._record_lo(lo, ok_outcome, now, price=fill_price,
-                            size=(sold if sold > 0 else shares), locked_net=locked, unwind_cost=cost)
+                            size=(sold if sold > 0 else shares), locked_net=locked, unwind_cost=cost,
+                            **self._hedge_forensics())
             self._emit_event("unwound", lo, instant=True, size=u["sold"], price=u["sell_px"], cost=cost,
                              reason=("hedge too dear" if ok_outcome == "hedge_declined" else "hedge missed"))
             return {"outcome": ok_outcome, "locked_net": locked,
@@ -3920,6 +4104,9 @@ class PregameLiveExecutor:
             "shares": float(shares or 0.0), "price": float(fill_price), "booked_pnl": float(booked_pnl),
             "day": getattr(self.caps, "day", "") or self._day, "opened": ts, "reason": reason,
             "since_ts": _epoch(now),
+            # WHICH POOL PAID FOR THIS — settle_provisional_marks rebooks it later via adjust_pnl, and
+            # the in-play sub-cap only sees that correction if the phase travels with the mark.
+            "phase": lo.phase,
         }
         self._persist_provisional()
 
@@ -3963,7 +4150,9 @@ class PregameLiveExecutor:
             # carries the provisional, so it gets the DELTA (it converges on truth). The lifetime realized
             # ledger never saw this position at all — a naked leg produces no hedged trade_settled row —
             # so it gets the FULL venue-truth number, in the untracked bucket where naked outcomes belong.
-            self.caps.adjust_pnl(delta)          # a RESTATEMENT, not a new fill — see LiveCaps.adjust_pnl
+            # Attributed to the phase that OPENED the position (recorded on the mark), so an in-play
+            # mark rebooked days later still lands against the in-play sub-cap and not pre-game's.
+            self.caps.adjust_pnl(delta, m.get("phase") or "pre")
             self.persist_daily_caps()
             cost = round(abs(float(m.get("shares") or 0.0) * float(m.get("price") or 0.0)), 4)
             row = {"event": "mark_corrected", "mode": "live", "sport": m.get("sport") or "",
@@ -4054,7 +4243,7 @@ class PregameLiveExecutor:
             return None
         cost = float(u.get("cost") or 0.0)                  # (entry - exit) x sold; negative == we gained
         if u.get("sold", 0) > 0 and u.get("sell_px") is not None:
-            self.caps.commit_stake(float(u["sell_px"]) * float(u["sold"]))
+            self.caps.commit_stake(float(u["sell_px"]) * float(u["sold"]), lo.phase)
         self._send_telegram(alerts.format_event(
             "auto_flattened", name=self._name_for(lo), cost=cost, sold=float(u.get("sold") or 0.0)))
         return round(-cost, 4)
@@ -4122,7 +4311,11 @@ class PregameLiveExecutor:
                        # fill-time pnl estimate that went into that day's loss rail. When the venue tells
                        # us what it really came to, ``reconcile_settlements`` applies the DIFFERENCE, so
                        # the $50 rail converges on truth instead of on an estimate.
-                       "booked_day": getattr(self.caps, "_day", "") or self._day, "booked_pnl": 0.0}
+                       "booked_day": getattr(self.caps, "_day", "") or self._day, "booked_pnl": 0.0,
+                       # WHICH POOL PAID FOR THIS. Settlement restates it days later, and the in-play
+                       # loss sub-cap only measures anything if that restatement lands in the right
+                       # phase. Absent (old records) -> "pre", the safe direction.
+                       "phase": lo.phase}
                 self._market_legs[key] = rec
             rec["kalshi"].update(ticker=k_ticker, side=k_side)
             rec["kalshi"]["shares"] = round(rec["kalshi"]["shares"] + k_sh, 4)
@@ -4381,7 +4574,7 @@ class PregameLiveExecutor:
             rec["restated"] = True
             if abs(delta) < 0.005:                            # the estimate was right; nothing to move
                 continue
-            self.caps.adjust_pnl(delta)      # a RESTATEMENT, not a fill — see LiveCaps.adjust_pnl
+            self.caps.adjust_pnl(delta, rec.get("phase") or "pre")   # a RESTATEMENT, not a fill
             self.persist_daily_caps()
             if self.log:
                 self.log.warning("[MAKER_RT][SETTLE] RESTATED today's pnl for %s: booked estimate "
@@ -4549,6 +4742,21 @@ class PregameLiveExecutor:
                 out["kalshi"][tk] = self._kalshi_position(tk)
             except Exception:  # noqa: BLE001
                 out["kalshi"][tk] = _UNREAD
+        # VENUE FREE CASH, read HERE and nowhere else. At a $1,050 pair both legs have to be funded, and
+        # the reservation system knows the daily budget but not the bank. This rides the 5-minute
+        # reconcile because a balance read on the quoting path would be exactly the hot-path venue call
+        # this module spent phase 2 removing. Two extra calls per 5 minutes; a failure caches None,
+        # which the check below treats as "unknown" (it does not refuse on unknown).
+        out["cash"] = {}
+        from .balance import kalshi_cash_usd, poly_cash_usd
+        try:
+            out["cash"]["kalshi"] = kalshi_cash_usd(self.kalshi.get_balance()) if self.kalshi else None
+        except Exception:  # noqa: BLE001
+            out["cash"]["kalshi"] = None
+        try:
+            out["cash"]["polymarket"] = poly_cash_usd(self.poly.get_balance()) if self.poly else None
+        except Exception:  # noqa: BLE001
+            out["cash"]["polymarket"] = None
         return out
 
     def _reconcile_read(self, venue: str, instrument: Any, balances: Optional[dict]):
@@ -4574,6 +4782,9 @@ class PregameLiveExecutor:
                 self.log.warning("[MAKER_RT][LIVE] batched reconcile FAILED (%s) — nothing pruned, nothing "
                                  "flagged; the next cadence re-reads it.", exc)
             return
+        cash = res.get("cash")
+        if isinstance(cash, dict):
+            self._note_venue_cash(cash, now)
         try:
             self.reconcile_positions(now, balances=res)
             self._note_offloop_pass(
@@ -4800,7 +5011,27 @@ class PregameLiveExecutor:
         n = len(lt)
         med = None if n == 0 else round(lt[n // 2] if n % 2 else (lt[n // 2 - 1] + lt[n // 2]) / 2.0, 1)
         atbest = round(self._atbest_hits / self._atbest_samples, 4) if self._atbest_samples else None
+        # PER-PHASE MONEY, so the panel can show the ring-fence working (or not) without arithmetic.
+        by_phase = {
+            ph: {"stake": round(float(self.caps.stake_by_phase.get(ph, 0.0)), 2),
+                 "reserved": round(float(self.caps.reserved_by_phase.get(ph, 0.0)), 2),
+                 "pool": round(float(self.caps.pool_for(ph)), 2),
+                 "headroom": round(float(self.caps.daily_stake_headroom(ph)), 2),
+                 "pnl": round(float(self.caps.pnl_by_phase.get(ph, 0.0)), 4)}
+            for ph in ("pre", "inplay")}
+        by_phase["inplay"]["loss_cap"] = round(float(self.caps.inplay_max_loss_usd), 2)
+        by_phase["inplay"]["loss_left"] = (round(self.caps.inplay_loss_left(), 2)
+                                           if self.caps.inplay_max_loss_usd > 0 else None)
+        by_phase["inplay"]["budget_halted"] = bool(self.caps.inplay_budget_halted)
         return {"open_quotes": len(self.open_orders), "pre_open": pre_open, "inplay_open": ip_open,
+                "by_phase": by_phase, "venue_cash": dict(self._venue_cash),
+                "hedge_stats": {k: {"n": v["n"],
+                                    "ms_avg": round(v["ms_sum"] / max(1, v["n"]), 1),
+                                    "ms_max": round(v["ms_max"], 1),
+                                    "timeout_ms": self._hedge_timeout_ms(k),
+                                    "by_outcome": dict(v["by_outcome"]),
+                                    "recent_miss_ms": list(v["miss_ms"][-10:])}
+                                for k, v in self._hedge_stats.items()},
                 "stake_today": round(self.caps.stake_today, 2), "stake_cap": self.caps.max_daily_stake_usd,
                 "fills_today": self.caps.fills_today, "pnl_today": round(self.caps.pnl_today, 4),
                 "halted": self.caps.halted, "feed_ok": self.feed_ok,
@@ -4855,7 +5086,8 @@ class PregameLiveExecutor:
     def _record_lo(self, lo: _LiveOrder, event: str, now: Any, *, price: float = None, size: float = None,
                    locked_net: float = None, locked_pnl: float = None, unwind_cost: float = None,
                    hedge_avg: float = None, hedge_order_id: Any = None, reason: str = "",
-                   store: Any = None) -> None:
+                   store: Any = None, hedge_ms: float = None, hedge_outcome: str = "",
+                   hedge_depth: float = None) -> None:
         if self.state is None:
             return
         row = {"event": event, "mode": "live", "sport": lo.sport, "phase": lo.phase, "game": lo.game,
@@ -4866,6 +5098,12 @@ class PregameLiveExecutor:
         age = self._quote_age_s(lo, now)
         if age is not None:
             row["quote_age_s"] = age
+        if hedge_ms is not None:
+            row["hedge_ms"] = round(float(hedge_ms), 1)
+        if hedge_outcome:
+            row["hedge_outcome"] = hedge_outcome
+        if hedge_depth is not None:
+            row["hedge_depth"] = round(float(hedge_depth), 2)
         if store is not None:
             drift = self.hedge_drift(lo, store)
             if drift is not None and drift != float("-inf"):
@@ -5002,7 +5240,15 @@ class PregameLiveExecutor:
                 why = ("sizes were limited by hedge/book depth" if top_binding in
                        ("hedge_depth", "book_depth", "below_venue_minimum")
                        else "nobody crossed our price yet")
-        line = alerts.digest_line(self.digest_min, placed=d["quotes"], cancelled=cancelled,
+        ip_snap = {"open": sum(1 for lo in self.open_orders.values() if lo.phase == "inplay"),
+                   "fills": int(self.inplay_fills_today),
+                   "stake": round(float(self.caps.stake_by_phase.get("inplay", 0.0)), 2),
+                   "pool": round(float(self.caps.pool_for("inplay")), 2),
+                   "pnl": round(float(self.caps.pnl_by_phase.get("inplay", 0.0)), 4),
+                   "loss_cap": round(float(self.caps.inplay_max_loss_usd), 2),
+                   "budget_halted": bool(self.caps.inplay_budget_halted)}
+        line = alerts.digest_line(self.digest_min, inplay=ip_snap,
+                                  placed=d["quotes"], cancelled=cancelled,
                                   fills=d["fills"], open_now=len(self.open_orders),
                                   max_open=self.caps.max_open_quotes,
                                   best_edge_pct=(best if best else None),
