@@ -1,0 +1,374 @@
+================================================================================
+PUSH + THE POLYMARKET N+1 + THE ALARM THAT CRIED WOLF
+2026-08-07 · commits e279f38 (A) and 2e7d7c6 (B)
+================================================================================
+
+TWO commits. A was no-behaviour housekeeping that unblocked a push of nine
+waiting commits. B was the Polymarket N+1 and the false UNTRACKED alarm. Both
+are pushed; origin/main is level with main.
+
+  e279f38  housekeeping: a test that stopped guarding is worse than a test
+           that went red
+  2e7d7c6  maker_rt: the reconcile asked Polymarket 54,000 times, and cried
+           wolf on every win
+
+Both restarted the maker (gitguard watches LOCAL HEAD). The nine commits that
+were merely unpushed had ALREADY deployed when they were committed on 08-06 at
+19:58:59Z — pushing them was off-box backup, not a deploy.
+
+
+--------------------------------------------------------------------------------
+1. THE CLOCK SEAM, AND WHAT THE VACUOUS TESTS WERE HIDING
+--------------------------------------------------------------------------------
+
+THE BOMB. tests/test_maker_rt_klamci_partial_hedge.py pins NOW to the 2026-08-05
+KLAMCI incident (05:58:26Z). _sweep_unregistered aged its 48h quoted scope
+against the WALL clock. At 05:58Z on 08-07 the fixtures crossed 48h; by the time
+it was found they were 56.5h old, so _prune_quoted emptied the scope on every
+call.
+
+TWO tests went RED. That was the harmless half.
+
+FOUR went GREEN VACUOUSLY, and that is the half that mattered:
+
+  test_the_sweep_alerts_but_does_not_halt          asserts halted is False
+  test_the_sweep_ignores_positions_we_never_quoted asserts the sweep returns []
+  test_the_sweep_is_quiet_about_registered_legs    asserts the sweep returns []
+  test_the_sweep_scope_ages_out                    asserts the sweep returns []
+
+Every one of them passes trivially against a sweep that has pruned itself into a
+no-op. The sweep is the guard against the next KLAMCI — the thing that finds a
+position NO registry knows about. It had silently stopped guarding, and the
+suite said 1501 passed.
+
+THE FIX. A clock seam: _sweep_unregistered(now, balances=None, now_ts=None),
+defaulting to time.time(), so live behaviour is byte-identical. Tests inject
+now_ts=TS. Then every "stays quiet" case got a CONTROL proving the same rig
+still screams:
+
+  * ignores-what-we-never-quoted: after asserting the out-of-scope 5000-share
+    position is ignored, put an IN-scope position in the same wallet and assert
+    it IS found.
+  * quiet-about-registered-legs: strip the registrations from the very same rig
+    and assert the very same position is now reported.
+  * scope-ages-out: assert the position is found FIRST, then age the record and
+    assert it is not. An empty result only means "the window closed" if you have
+    shown the rig can produce a non-empty one.
+  * alerts-but-does-not-halt: assert something was actually FOUND, else "it did
+    not halt" asserts nothing at all.
+
+Plus one new test that pins the seam itself: same rig, same data, clock the only
+variable — found at 47h, gone at 49h.
+
+THE SWEEP FOR THE SAME CLASS. Ran the whole suite with the wall clock shifted a
+year each way. A CONSTANT offset leaves every elapsed-time delta correct, so the
+only thing it can break is code comparing the clock to a PINNED absolute date.
+
+  TIMESHIFT_DAYS=+365   1 failed, 1503 passed
+  TIMESHIFT_DAYS=-365   1504 passed
+
+Exactly ONE other hit, and it is a FALSE POSITIVE:
+test_group_markets.py::test_slug_map_cache_hit_skips_network compares now_epoch
+against the cache file's MTIME (catalog.file_age_hours). The shift moves the
+process clock but not the filesystem. In real operation both are real, so it
+cannot age out. Left alone — deliberately.
+
+THE GENERAL GUARD. The detector is now an opt-in conftest shim (default off,
+changes nothing), with that false positive documented in place:
+
+  TIMESHIFT_DAYS=365  python -m pytest -q
+  TIMESHIFT_DAYS=-365 python -m pytest -q
+
+One command finds this whole class next time.
+
+
+--------------------------------------------------------------------------------
+2. GITIGNORE — VERIFIED, NOT ASSUMED
+--------------------------------------------------------------------------------
+
+DELETED (confirmed scratch): data-aug6.zip (64.4 MB), review_20260806_1514.zip
+(0.5 MB), review_20260806_1514/ (6.7 MB, 20 files — copies of live runtime
+state: caps, expected positions, event CSVs).
+
+ADDED: review_*/ , review_*.zip , data-*.zip
+Verified against real files: all three patterns ignore, git status stays clean.
+
+THE REPORTS. data/ops/ excluded the DIRECTORY, and git never descends into an
+excluded directory — so a !data/ops/REPORT_*.txt negation under it would have
+been silently dead. Switched to the contents form, exactly as data/genz/* +
+!data/genz/*.html already does (which is why papi_panel.html is tracked):
+
+  data/ops/*
+  !data/ops/REPORT_*.txt
+
+EXACTLY these 7 became trackable, and NOTHING else:
+
+  REPORT_bigger_and_inplay.txt      REPORT_books_banks.txt
+  REPORT_inplay_funnel.txt          REPORT_klamci_incident.txt
+  REPORT_shaegr_fix.txt             REPORT_sizing_capraise.txt
+  REPORT_stalls_and_inplay.txt
+
+Explicitly re-checked as STILL IGNORED: maker_rt_daily_caps.json,
+maker_rt_expected_positions.json, maker_rt_traded_tokens.json,
+maker_rt_provisional_marks.json, maker_rt_RESTATEMENTS.json,
+maker_rt_tuning.json, maker_rt_quoted_markets.json, maker_rt_settled_ledger.json,
+maker_rt_closed_markets.json, balance_snapshots.json, maker_rt_runstate.json,
+maker_rt.log, maker_rt.lock, supervisor_heartbeat.json, og_budget_alert.json,
+ORPHAN.json, STOP_ALL. Also swept every file actually on disk under data/ops/:
+the 7 reports are the only ones not ignored.
+
+
+--------------------------------------------------------------------------------
+3. THE POLYMARKET N+1
+--------------------------------------------------------------------------------
+
+THE MEASUREMENT. Reconciliation read Poly balances one CLOB GET per token:
+317-320 per pass, 175 passes, 54,065 requests in 14.6h (~1/sec sustained).
+Cloudflare 429'd 6,466 of them — 12% — first at 2026-08-06 23:59:52Z (Ray
+a271ff73889a0360), still firing when found. 100% on ONE endpoint:
+clob.polymarket.com/balance-allowance.
+
+WHY IT WAS NOT JUST NOISE. A 429 raises, which lands as _UNREAD. So ~12% of Poly
+position reads were BLIND on every pass, and an unregistered position on a token
+that happened to 429 was invisible that cycle — the exact blind spot the sweep
+exists to close. Nothing halted and nothing traded wrong, which is precisely
+what made it easy to file as noise.
+
+WHERE THE 317 COME FROM. Not a leak: submit_reconcile rides the 48h _quoted
+scope on the same batch (both legs of every market offered on in 48h). It is
+structural, which is why the per-token shape had to go rather than the scope.
+
+THE FIX. ONE wallet snapshot per pass, reusing the offset-paged data-api read
+balance.py already had (extracted to a module-level poly_wallet_positions).
+Different host — data-api.polymarket.com, not the rate-limited clob.
+
+IT STILL FAILS CLOSED, which was the constraint that mattered:
+  * wallet read FAILS      -> every token _UNREAD (never flat)
+  * page walk TRUNCATED    -> every token _UNREAD (a partial wallet understates
+                              every position not in it; reading that as zero is
+                              the one direction of error that prunes real legs)
+  * absent from a COMPLETE snapshot -> flat. The API drops rows under 0.1sh; the
+                              smallest live leg is 2.12sh of tennis dust, and the
+                              sweep's own floor is 0.5sh.
+  * absent BUT we expect shares -> one TARGETED read rather than trusting a
+                              silence, budgeted at 25/pass so a pathological pass
+                              cannot rebuild the N+1. Over budget reads UNKNOWN,
+                              never flat.
+The sweep's own per-instrument fallback got the same budget, for the same reason.
+
+Payload shape verified live before coding, not guessed: data-api /positions rows
+carry asset (token id), size (shares), redeemable, currentValue. 180 rows, one
+page, no truncation.
+
+
+--------------------------------------------------------------------------------
+4. THE FALSE UNTRACKED ALARM
+--------------------------------------------------------------------------------
+
+_forget_settled_instruments dropped BOTH legs of a settled market on the premise
+"the winning leg redeemed to cash (balance -> 0)". That is false in the window
+between Kalshi settling and Polymarket resolving/redeeming.
+
+26AUG07AVLBMU settled +$1.82, and about two minutes later the sweep screamed
+"holding 295 shares on Polymarket that my own books do not know about" — because
+the books that knew about it had just been deleted. It fired after EVERY settled
+pair whose Poly leg won (26AUG06CFRTIL three times before that).
+
+THE FIX, narrowest form: deregister a leg only once the venue says it is FLAT.
+Unreadable keeps it registered — "I could not ask" may never authorise a
+deregistration.
+
+NOT "never let go": _release_settled_expected re-asks on every reconcile off the
+same free wallet snapshot, so a leg goes the moment it really redeems, and it
+self-heals across restarts (_expected is persisted, already_settled is
+queryable).
+
+THE ORIGINAL HANHAL PROTECTION IS UNCHANGED IN EFFECT. A worthless losing leg
+keeps its _expected entry, so abs(position) - expected == 0 and there is nothing
+unexplained to orphan on. Two existing tests pinned the old MECHANISM ("the leg
+is forgotten"); they now pin the INVARIANT ("it is not re-orphaned, and it is
+not an UNTRACKED surprise"), which is the part worth protecting.
+
+THE ALARM STAYS SHARP. test_a_genuinely_naked_position_still_screams: a position
+on a market we quoted, in NO registry, is still found, still red-alerted, and
+still names the match rather than a token id.
+
+
+--------------------------------------------------------------------------------
+5. THE LOG
+--------------------------------------------------------------------------------
+
+CORRECTION to my earlier report: the log is 3.3 GB, not 3.47 GB — I mis-converted
+KB. The rest of that finding stands.
+
+The HTML bodies were the visible symptom but not the bulk. httpx logs one INFO
+line PER REQUEST: 4,677 of 83,690 lines in a 52-minute sample were "HTTP
+Request:" — 56% of everything written.
+
+  * third-party HTTP loggers (httpx, httpcore, urllib3, requests, websockets,
+    web3, asyncio) -> WARNING. HTTP_LOG_LEVEL=INFO brings the trace back for
+    debugging a venue conversation.
+  * formatted lines capped at 800 chars, with "[+N chars truncated]" so the loss
+    is visible. Our longest real line is the 510-char LIVE ARMED banner; a
+    Cloudflare page was 8,485 bytes. Verified: a 9,000-char body truncates, a
+    510-char line passes intact.
+  * The offending logger is third-party (py_clob_client_v2 logs resp.text
+    unbounded at helpers.py:73). The cap is in OUR config; site-packages is
+    untouched.
+
+ROTATION: 200 MB x 5 (~1 GB ceiling per component) in scripts/run_all.ps1.
+Component logs are stdout piped into Out-File -Append, so nothing inside python
+can own the file — the only safe moment to rename is before the wrapper that
+holds it open starts. Retention reasoning: at the post-fix write rate 200 MB is
+weeks per file, which covers any incident we have had to investigate, and the
+REPORT_*.txt files are the durable record anyway.
+
+NOT ARMED YET, stated plainly: rotation runs at component START, so it needs a
+SUPERVISOR restart to take effect. I did not restart the supervisor — that is
+the whole trading stack, and it was not worth doing unprompted for a change that
+is preventive. The existing 3.3 GB file is also not rotated by this.
+
+
+--------------------------------------------------------------------------------
+6. BEFORE / AFTER
+--------------------------------------------------------------------------------
+
+BEFORE (14:30:21Z -> 15:22:44Z, 52.4 min, pre-B):
+
+  log growth        10.64 MB/hour  (0.25 GB/day)
+  429 events        363            (~416/hour, all on /balance-allowance)
+  httpx INFO lines  4,677          (56% of 83,690 total lines)
+  stalls            0 in-window; 4 earlier today (see below)
+
+AFTER (15:23:34Z -> 15:48:56Z, 25.4 min, post-2e7d7c6):
+
+  log growth        0.48 MB/hour   (0.011 GB/day)      -95.5%
+  429 events        0                                  -100%
+  httpx INFO lines  0                                  -100%
+  stalls            0
+  total lines       1,222 (vs 83,690 in a 52-min window before)
+  halted/ORPHAN     0 / 0 · sockets all three UP · 5 reconciles, 24 fill-polls,
+                    19 quotes placed
+
+(a) 429s: ZERO. This is the reliable signal — the 429s were logged at ERROR by
+    py_clob_client_v2, which the httpx quieting does NOT suppress, so their
+    absence is real and not an artefact of the log change.
+(b) Log growth: 10.64 -> 0.48 MB/hour, a 22x reduction. At this rate the 200 MB
+    rotation threshold is ~17 days per file.
+(c) STALLS: zero in 25.4 min. CONSISTENT with the hypothesis that the Poly N+1
+    was starving the shared worker, but NOT proof — the four stalls today were
+    6, 22 and 26 minutes apart, so a 25-minute clean window is roughly ONE
+    inter-stall gap. Treat as encouraging, not settled. If they come back, the
+    hypothesis is wrong and it gets chased separately.
+
+NOT CAUSED BY THIS DEPLOY, verified present in the BEFORE window too:
+  * 3x "STALE EXPECTED POSITION" (PAFRBS x2 booked 36.7h ago, GIBALE dust) —
+    the SETTLE_AGE_ALERT_S 24h alert doing its job. 3 before, 3 after.
+  * 1x feed_ok=False at 15:25:00 with open=0 — the startup instant before the
+    Poly user socket attached. True on every line thereafter.
+  * 2x auth/api-key 400 — the benign derive-api-key fallback, present at every
+    startup for weeks.
+
+
+--------------------------------------------------------------------------------
+6b. OPEN ITEM — THE AVLBMU 295 SHARES ARE GENUINELY UNTRACKED (needs a decision)
+--------------------------------------------------------------------------------
+
+The UNREGISTERED POSITION alarm fired again at 15:24:59Z. It is NOT a new
+instance of the bug, and NOT a regression: it fired twice in the BEFORE window
+too, and the restart merely cleared the in-memory 1h re-alert throttle.
+
+But it is no longer a FALSE alarm. It is now TRUE, and that is worse:
+
+  asset        2104117667...66272  (26AUG07AVLBMU total_goals|4.5)
+  title        Aston Villa vs. Bayern Munich: O/U 4.5
+  size         295 shares          curPrice 0.9995 -> currentValue $294.85
+  redeemable   FALSE  <- Polymarket has NOT resolved the market yet
+  in registry  NO (not _expected, not _traded_tokens, not _provisional)
+
+Kalshi settled this pair at ~14:51Z (+$1.82 booked). Polymarket has not resolved,
+so the winning leg is still really in the wallet — the exact window B5 describes.
+The pre-fix code deregistered it at settlement, and 2e7d7c6 cannot retroactively
+re-register a leg that was already dropped before it shipped. So $294.85 of real,
+ours, winning position is sitting in no registry, and the sweep is correctly
+telling us so.
+
+SELF-LIMITING BUT NOISY: once Polymarket resolves and the shares redeem, the
+balance goes to 0 and the alarm stops on its own; failing that, the 48h _quoted
+scope ages it out around 08-09. Until then it re-alerts roughly hourly.
+
+RECOMMENDED REPAIR (NOT DONE — needs a call, because it edits live books and
+requires stopping the trading process):
+  Re-register the leg as an expected position (venue polymarket, 295 sh, game
+  26AUG07AVLBMU, market_key total_goals|4.5). It is then explained rather than a
+  surprise, and _release_settled_expected drops it automatically the moment it
+  redeems — the new machinery handles the exit without further intervention.
+
+  Per the established procedure, a data/ops edit needs the process DOWN or the
+  ~30s persist clobbers it: kill ONLY the python child (cmdline match
+  '*genz.maker*'), apply, let the wrapper restart it — the wrapper is untouched
+  so the supervisor sees no gap. NOTE the cost: a hard kill does not let the
+  maker self-cancel, so its resting quotes are briefly unmanaged until the new
+  process's stray-cancel sweeps them. That is why this was not done unprompted.
+
+
+--------------------------------------------------------------------------------
+7. DEPLOY VERIFICATION
+--------------------------------------------------------------------------------
+
+Both commits: git HEAD changed -> exit 0 -> clean shutdown cancel-all -> singleton
+lock -> LIVE ARMED, caps restored.
+
+  e279f38  15:09:04Z HEAD change, 8 orders cancelled, ARMED 15:09:24Z
+  2e7d7c6  15:23:23Z HEAD change, 5 orders cancelled, ARMED 15:23:44Z
+
+BANNER (verbatim, 15:23:44Z) — every figure matches config.yaml:
+
+  LIVE ARMED (rest-kalshi,rest-poly; phases: pre+inplay). stray-cancel=0.
+  pre-game daily_stake<=$2500 + RING-FENCED in-play pool $500 (neither pool can
+  borrow the other's). SHARED across both phases: open<=24 (reserve/direction 3),
+  fills/day<=40, loss<=$50. Per bet: quote<=$210, pair<=$1050, per-game<=4,
+  sanity_ceiling 5.0%. in-play loss sub-cap -$40/day (unwind tolls included;
+  breach stops IN-PLAY only). in-play circuit: first-fill pause 120s, day-halt at
+  locked_net -2.0%.
+
+GATES (clean, exit 0):
+  soccer    31/10   0.792   0.650   -0.000   12.34   EDGE-POSITIVE
+  mlb/tennis/ufc still MEASURING (need 13/33/10 more) — no cap raise justified.
+
+BALANCE (clean exit 0, verdict DEFERRED — NOT a clean pass):
+  Kalshi $4,744.50 + Polymarket $2,581.99 = $7,326.48
+  Since last check (55m 57s): -$79.65 vs books +$1.82 -> DEFERRED (diff $81.47)
+  Since baseline (Aug 4):     +$85.05 vs books +$110.27 -> DEFERRED (diff $25.22)
+  Both deferred because pairs were open at the window edges, so the two sides are
+  not measured on the same basis. The next flat-to-flat check answers it.
+  Books: settled lifetime +$135.66 (+$27.01 hedged pairs, +$120.57 luck,
+  -$11.91 exit costs).
+
+EXPECTED-POSITION REGISTRY — survived BOTH restarts, 5 legs:
+  26AUG06PAFRBS   kalshi      34.64 sh
+  26AUG06PAFRBS   polymarket  34.6372 sh
+  GIBALE (WTA)    polymarket  2.1228 sh   (the tennis dust)
+  26AUG08DUNABE   polymarket  50.0 sh
+  26AUG08DUNABE   kalshi      50.0 sh
+
+  26AUG07AVLBMU is NOT in this list, and that is correct rather than a loss: it
+  SETTLED at ~14:51Z today, before either commit — and its settlement is the very
+  event that produced the false UNTRACKED alarm B5 fixes. The fix could not
+  retroactively save a leg already deregistered; it stops the next one.
+
+
+--------------------------------------------------------------------------------
+8. DELIBERATELY NOT DONE
+--------------------------------------------------------------------------------
+
+  * SUPERVISOR NOT RESTARTED, so log rotation is not armed and the existing
+    3.3 GB maker_rt.log is not rotated. Needs a deliberate stack restart.
+  * The 19 pre-existing committed scratch files (_probe_*.py, _tree_check.txt,
+    _poly_game.json, ...) left alone, as instructed.
+  * test_slug_map_cache_hit_skips_network left alone — false positive of the
+    timeshift detector, documented rather than "fixed".
+  * A losing Poly leg's token balance never goes to zero, so it now stays
+    registered indefinitely instead of being forgotten at settlement. It is
+    explained (expected == position) so it cannot orphan or alarm, and with the
+    wallet snapshot it costs nothing to watch. Flagged, not solved.
