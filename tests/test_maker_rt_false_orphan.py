@@ -126,30 +126,45 @@ def test_expected_positions_persist_across_restart(tmp_path):
     assert ex2._expected_shares("polymarket", "TOKR") == 5.0
 
 
-def test_settlement_prunes_expected_positions(tmp_path):
-    ex, _koc, kx, _poly, _state = _locked_rest_poly_pair(tmp_path)
+def test_settlement_releases_only_the_legs_the_venue_says_are_gone(tmp_path):
+    """Settlement releases a leg as it REDEEMS, not on the settlement alone.
+
+    This used to drop both legs the moment the market settled, on the premise that "the winning leg
+    redeemed to cash (balance -> 0)". False: between Kalshi settling and Polymarket resolving, the Poly
+    leg is still really in the wallet — and deleting the registration of a position we really hold is
+    what made the sweep scream UNTRACKED after every won pair (26AUG06CFRTIL x3, 26AUG07AVLBMU)."""
+    ex, _koc, kx, poly, _state = _locked_rest_poly_pair(tmp_path)
     # Seed the settlement of BOTH legs' market (Kalshi HAL won) and reconcile. (Production passes the
     # Kalshi client into the constructor; this fake injects it after, so point the reconciler at it.)
     kx.get_settlements = lambda **_kw: {"settlements": [{"ticker": "KX-1", "market_result": "yes",
                                                          "revenue": 500}]}
     ex._settle_reconciler.kalshi = kx
+    poly.position = 5.0                                  # Polymarket has NOT redeemed yet
     ex.reconcile_settlements(NOW)
-    assert ex._expected_shares("kalshi", "KX-1") == 0.0, "a settled market's legs are no longer expected"
+    assert ex._expected_shares("kalshi", "KX-1") == 0.0, "settled AND flat -> released"
+    assert ex._expected_shares("polymarket", "TOKR") == 5.0, "settled but still HELD -> still ours"
+    # ...and the conservatism is not a leak: redemption lands, and the next reconcile lets it go.
+    poly.position = 0.0
+    ex._release_settled_expected()
     assert ex._expected_shares("polymarket", "TOKR") == 0.0
+    assert "TOKR" not in ex._traded_tokens
 
 
-def test_settled_losing_poly_leg_is_forgotten_not_reorphaned(tmp_path):
+def test_settled_losing_poly_leg_is_not_reorphaned(tmp_path):
     """The stranded-HANHAL class: after settlement the LOSING Poly leg is worthless but its token
-    balance stays non-zero in the wallet. Once settled, the trade must forget the leg so the next
-    reconcile does not read those worthless tokens as a naked orphan."""
+    balance stays non-zero in the wallet. The next reconcile must NOT read it as a naked orphan.
+
+    That used to be achieved by FORGETTING the leg. The leg now stays REGISTERED instead (see above),
+    so the protection comes from the other side of the same subtraction: ``abs(position) - expected``
+    is zero, so there is nothing unexplained to orphan on. Same invariant, different mechanism — and
+    this asserts the invariant, which is the part that matters."""
     ex, _koc, kx, poly, _state = _locked_rest_poly_pair(tmp_path)
     assert "TOKR" in ex._traded_tokens, "the rest leg is watched while the pair is open"
     kx.get_settlements = lambda **_kw: {"settlements": [{"ticker": "KX-1", "market_result": "yes",
                                                          "revenue": 500}]}   # HAL won -> hanfmann lost
     ex._settle_reconciler.kalshi = kx
+    poly.position = 5.0            # the worthless losing tokens stay in the wallet forever
     ex.reconcile_settlements(NOW)
-    assert "TOKR" not in ex._traded_tokens, "a settled trade's legs are dropped from the watch-set"
-    # The worthless losing tokens remain in the wallet, but a reconcile must NOT orphan on them.
-    poly.position = 5.0
-    assert ex.reconcile_positions(NOW) is None
-    assert ex.caps.halted is False
+    assert ex.reconcile_positions(NOW) is None, "explained, not unexplained"
+    assert ex.caps.halted is False and ex.orphan is None
+    assert ex._is_registered("polymarket", "TOKR") is True, "and not an UNTRACKED surprise either"

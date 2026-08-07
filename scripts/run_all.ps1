@@ -58,9 +58,39 @@ try {
 }
 if ($components.Count -eq 0) { Log 'FATAL: ops.py returned no components - exiting.'; exit 1 }
 
+# SIZE-BOUNDED LOG ROTATION. Component logs are stdout piped into Out-File -Append, so nothing inside
+# python can own the file — the only safe moment to rename one is HERE, before the wrapper that will hold
+# it open is started. maker_rt.log reached 3.3 GB on a 77 GB disk before this existed: an unbounded log
+# is a slow-motion outage, and the measurement-gates report already had to scan 1.99 GB of it.
+#
+# 200 MB x 5 caps each component at ~1 GB. After the httpx quieting and the response-body cap that ship
+# alongside this, maker_rt writes a small fraction of what it used to, so 200 MB is weeks of history per
+# file — enough to investigate any incident we have ever had to investigate, and the reports in
+# data/ops/REPORT_*.txt are the durable record anyway.
+#
+# LIMITATION, stated: this runs at component START, so a process that never restarts never rotates.
+# maker_rt restarts on every deploy (gitguard), which in practice is often.
+$LogMaxBytes = 200MB
+$LogKeep = 5
+function Rotate-Log($path) {
+    if (-not (Test-Path $path)) { return }
+    try {
+        if ((Get-Item $path).Length -lt $LogMaxBytes) { return }
+        if (Test-Path "$path.$LogKeep") { Remove-Item "$path.$LogKeep" -Force }
+        for ($i = $LogKeep - 1; $i -ge 1; $i--) {
+            if (Test-Path "$path.$i") { Move-Item "$path.$i" "$path.$($i + 1)" -Force }
+        }
+        Move-Item $path "$path.1" -Force
+        Log "rotated $(Split-Path $path -Leaf) (>= $([int]($LogMaxBytes / 1MB)) MB; keeping $LogKeep)"
+    } catch {
+        Log "WARN: could not rotate $path ($($_.Exception.Message))"
+    }
+}
+
 function Start-Component($name) {
     $c = $components[$name]
     $log = Join-Path $ops "$name.log"
+    Rotate-Log $log
     # UTF-8 log capture. PS5.1 `*>>` writes the file as UTF-16 (BOM + null-interleaved bytes), which
     # blinds grep/tail. Instead: force the child console to DECODE the native (python) UTF-8 output
     # correctly ([Console]::OutputEncoding), merge ALL streams (*>&1), and APPEND as UTF-8 via Out-File.

@@ -78,6 +78,48 @@ _POLY_MAX_PAGES = 20
 
 _JOB_KEY = ("balance",)
 
+#: The data API drops rows below this many shares. Any leg this bot cares about is orders of magnitude
+#: larger (the smallest live one is 2.12sh of tennis dust), and the sweep's own floor is 0.5sh — so an
+#: absence from the snapshot is safely "flat", not "hidden".
+_POLY_SIZE_FLOOR = 0.1
+
+
+def poly_wallet_positions(*, timeout: float = 12.0) -> tuple:
+    """``(rows, truncated)`` — the WHOLE funder wallet in one offset-paged read of the data API.
+
+    Paged HERE rather than through ``PolyExec.list_positions`` because that helper takes the API's
+    default page (100 rows on 2026-07-31, against a wallet holding 180) and this number must not be a
+    silent floor.
+
+    ``truncated`` is True only when the page budget ran out, i.e. the snapshot is INCOMPLETE. Callers
+    must treat that as "could not read", never as "the rest is flat": a truncated wallet understates
+    every position not in it, and reading that as zero is how a watched leg gets pruned or a real
+    position goes unseen. This lives at module level because reconciliation needs the same read — see
+    ``pregame_exec._poly_wallet_snapshot``, which replaced 317 per-token CLOB calls per pass with this
+    single one after Cloudflare started 429ing 12% of them.
+
+    NOTE the host: ``data-api.polymarket.com``, NOT the ``clob.polymarket.com`` that was being rate
+    limited. Different service, different budget."""
+    import requests
+    from ...executor.poly_exec import resolve_wallet
+    funder = resolve_wallet().get("funder")
+    if not funder:
+        return [], False
+    rows: list = []
+    offset = 0
+    for _ in range(_POLY_MAX_PAGES):
+        r = requests.get("https://data-api.polymarket.com/positions",
+                         params={"user": funder, "sizeThreshold": _POLY_SIZE_FLOOR,
+                                 "limit": _POLY_PAGE, "offset": offset}, timeout=timeout)
+        r.raise_for_status()
+        data = r.json()
+        page = data if isinstance(data, list) else (data.get("positions") or data.get("data") or [])
+        rows.extend(x for x in (page or []) if isinstance(x, dict))
+        if len(page or []) < _POLY_PAGE:
+            return rows, False
+        offset += len(page)
+    return rows, True
+
 
 # --------------------------------------------------------------------------- #
 # money parsers — one per venue field, each with its unit written down          #
@@ -828,30 +870,8 @@ class BalanceReconciler:
 
     @staticmethod
     def _poly_positions(poly: Any) -> tuple:
-        """(rows, truncated) from the Polymarket data API, offset-paged.
-
-        Paged HERE rather than through ``PolyExec.list_positions`` because that helper takes the API's
-        default page (100 rows on 2026-07-31, against a wallet holding 173) and this number must not be
-        a silent floor. Nothing on the trading path changes."""
-        import requests
-        from ...executor.poly_exec import resolve_wallet
-        funder = resolve_wallet().get("funder")
-        if not funder:
-            return [], False
-        rows: list = []
-        offset = 0
-        for _ in range(_POLY_MAX_PAGES):
-            r = requests.get("https://data-api.polymarket.com/positions",
-                             params={"user": funder, "sizeThreshold": 0.1,
-                                     "limit": _POLY_PAGE, "offset": offset}, timeout=12)
-            r.raise_for_status()
-            data = r.json()
-            page = data if isinstance(data, list) else (data.get("positions") or data.get("data") or [])
-            rows.extend(x for x in (page or []) if isinstance(x, dict))
-            if len(page or []) < _POLY_PAGE:
-                return rows, False
-            offset += len(page)
-        return rows, True
+        """(rows, truncated) from the Polymarket data API — see ``poly_wallet_positions``."""
+        return poly_wallet_positions()
 
     # -- persistence ---------------------------------------------------------
     def _persist(self, snap: dict, *, consume_slot: bool) -> tuple:

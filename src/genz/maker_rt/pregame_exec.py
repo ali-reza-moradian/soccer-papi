@@ -4482,35 +4482,97 @@ class PregameLiveExecutor:
             return False
         return abs(float(pos)) - exp <= HEDGE_SHARE_TOL
 
-    def _forget_settled_instruments(self, rec: Optional[dict]) -> None:
-        """A market has SETTLED -> stop watching BOTH its legs for nakedness. The winning leg redeemed to
-        cash (balance -> 0) and the LOSING leg is now WORTHLESS but its token/contract balance can remain
-        non-zero in the wallet (Polymarket does not auto-burn a losing outcome token). Left in the
-        watch-set, that worthless leg reads as a naked position on the NEXT reconcile and false-orphans
-        the bot (exactly the stranded HANHAL hanfmann leg). Once the trade is booked in settled pnl,
-        neither leg carries risk, so forget both. Best-effort."""
+    def _leg_reads_flat(self, venue: str, instrument: Any, balances: Optional[dict] = None) -> bool:
+        """True ONLY when the venue positively says we hold nothing on this leg.
+
+        Unreadable is False, deliberately: "I could not ask" must never authorise a deregistration, and
+        this is the one decision where being wrong costs a leg its safety net."""
+        if not instrument:
+            return False
+        held = self._reconcile_read("polymarket" if venue == "polymarket" else "kalshi",
+                                    str(instrument), balances)
+        if held is _UNREAD or held is None:
+            held = self._sweep_read(venue, str(instrument))
+        if held is None:
+            return False
+        try:
+            return abs(float(held)) <= HEDGE_SHARE_TOL
+        except (TypeError, ValueError):
+            return False
+
+    def _forget_settled_instruments(self, rec: Optional[dict], balances: Optional[dict] = None) -> None:
+        """A market has SETTLED -> stop watching a leg for nakedness, but ONLY once the venue agrees the
+        leg is actually gone.
+
+        THE ORIGINAL BUG (HANHAL): a LOSING leg is worthless but its token balance can remain non-zero
+        (Polymarket does not auto-burn a losing outcome token). Left in the watch-set it reads as a naked
+        position and false-orphans the bot. So both legs were forgotten on settlement.
+
+        THE BUG THAT CREATED (26AUG06CFRTIL x3, then 26AUG07AVLBMU): the premise "the winning leg
+        redeemed to cash (balance -> 0)" is FALSE in the window between Kalshi settling and Polymarket
+        resolving/redeeming. AVLBMU settled +$1.82 and ~2 minutes later the sweep screamed "holding 295
+        shares on Polymarket that my own books do not know about" — because we had just deleted the books
+        that knew about it. It fired after EVERY settled pair whose Poly leg won. An alarm that cries
+        wolf on every win is an alarm nobody reads, and this one exists to catch the next KLAMCI.
+
+        So deregister a leg only when the venue says it is FLAT. Until then it stays registered — which
+        is what makes it explained rather than a surprise, and it costs nothing: a still-held losing leg
+        keeps its ``_expected`` entry, so ``abs(pos) - expected == 0`` and it cannot orphan either.
+        ``_release_settled_expected`` re-checks on every later pass and lets them go when they do settle,
+        so nothing is registered forever. Best-effort."""
         if not isinstance(rec, dict):
             return
         tk = (rec.get("kalshi") or {}).get("ticker")
         tok = (rec.get("poly") or {}).get("token")
         changed = False
-        if tk and tk in self._traded_tickers:
+        if tk and tk in self._traded_tickers and self._leg_reads_flat("kalshi", tk, balances):
             self._traded_tickers.discard(tk)
             changed = True
-        if tok and tok in self._traded_tokens:
+        if tok and tok in self._traded_tokens and self._leg_reads_flat("polymarket", tok, balances):
             self._traded_tokens.discard(tok)
             changed = True
         if changed:
             self._persist_traded_tokens()
 
-    def _prune_expected(self, game: str, market_key: str) -> None:
-        """Drop every expected leg of a market that has SETTLED (its positions redeemed to cash)."""
+    def _prune_expected(self, game: str, market_key: str, balances: Optional[dict] = None) -> None:
+        """Drop the expected legs of a SETTLED market — but only the ones the venue says we no longer
+        hold. A winning Poly leg that has not been redeemed yet is still a position we hold on purpose;
+        deleting its registration is what turned every won pair into a false UNTRACKED alarm."""
         drop = [k for k, r in self._expected.items()
-                if r.get("game") == game and r.get("market_key") == market_key]
+                if r.get("game") == game and r.get("market_key") == market_key
+                and self._leg_reads_flat(str(r.get("venue") or ""), r.get("instrument"), balances)]
         for k in drop:
             self._expected.pop(k, None)
         if drop:
             self._persist_expected_positions()
+
+    def _release_settled_expected(self, balances: Optional[dict] = None) -> None:
+        """Let go of expected legs whose market has SETTLED and which now finally read flat.
+
+        Without this, the conservatism above would be a leak: a leg still unredeemed at settlement time
+        would keep its registration forever, because the settled-pnl record that triggered the release
+        has already been consumed. This runs on every reconcile against the batch snapshot, so it costs
+        no extra venue reads, and it self-heals across restarts (``_expected`` is persisted and
+        ``already_settled`` is queryable)."""
+        if not self._expected or self._settle_reconciler is None:
+            return
+        drop = []
+        for k, r in list(self._expected.items()):
+            game, mk = str(r.get("game") or ""), str(r.get("market_key") or "")
+            if not self._settle_reconciler.already_settled(game, mk):
+                continue
+            if self._leg_reads_flat(str(r.get("venue") or ""), r.get("instrument"), balances):
+                drop.append((k, r))
+        for k, r in drop:
+            self._expected.pop(k, None)
+            inst = str(r.get("instrument") or "")
+            self._traded_tokens.discard(inst)
+            self._traded_tickers.discard(inst)
+        if drop:
+            self._persist_expected_positions()
+            self._persist_traded_tokens()
+            if self.log:
+                self.log.info("[MAKER_RT][LIVE] released %d settled leg(s) that now read flat.", len(drop))
 
     def _load_expected_positions(self) -> None:
         """Reload the expected-position registry at startup. This is what lets a settlement or reconcile
@@ -4758,6 +4820,40 @@ class PregameLiveExecutor:
             self._reconcile_applied_ts = float(now_ts)       # start the watchdog clock at the first submit
         return submitted
 
+    #: Cap on the per-token CLOB reads a single reconcile pass may fall back to. The whole point of the
+    #: wallet snapshot is that the per-token path stops being the normal path; this stops a pathological
+    #: pass (a wallet read that half-works, a registry full of expected-but-absent legs) from quietly
+    #: rebuilding the N+1 that caused the rate limiting in the first place. Over budget reads UNKNOWN.
+    POLY_CONFIRM_MAX = 25
+
+    def _poly_wallet_snapshot(self) -> tuple:
+        """``({token: shares}, ok)`` for the WHOLE funder wallet in one paged read.
+
+        ``ok`` is False for any failure AND for a truncated page walk, because a partial wallet read
+        must never be mistaken for "everything else is flat" — that direction of error prunes real legs
+        and hides real positions. Fail closed: the caller marks every token _UNREAD and the next cadence
+        tries again, exactly as it did when a single token's read raised."""
+        try:
+            from .balance import poly_wallet_positions
+            rows, truncated = poly_wallet_positions()
+        except Exception:  # noqa: BLE001 — unreadable wallet is UNKNOWN, never "flat"
+            return {}, False
+        if truncated:
+            if self.log:
+                self.log.warning("[MAKER_RT][LIVE] poly wallet snapshot TRUNCATED — treating every token "
+                                 "as unread rather than assuming the unseen ones are flat.")
+            return {}, False
+        snap: dict = {}
+        for r in rows:
+            asset = str(r.get("asset") or "")
+            if not asset:
+                continue
+            try:
+                snap[asset] = abs(float(r.get("size") or 0.0))
+            except (TypeError, ValueError):
+                continue
+        return snap, True
+
     def _reconcile_job(self, toks: list, tks: list) -> dict:
         """OFF-LOOP. Read every watched instrument's position. Decides nothing.
 
@@ -4765,11 +4861,39 @@ class PregameLiveExecutor:
         'the venue says zero' must not arrive as the same answer — that distinction is what stops a
         network blip from pruning a watched instrument or inventing an orphan."""
         out: dict = {"polymarket": {}, "kalshi": {}}
+        # ONE wallet snapshot for ALL tokens. This was one CLOB /balance-allowance GET **per token** —
+        # 317-320 of them per pass, 175 passes, 54,065 requests in 14.6h (~1/sec sustained), of which
+        # Cloudflare 429'd 6,466 (12%). That is not merely noisy: a 429 raises, which lands here as
+        # _UNREAD, so ~12% of Poly position reads were BLIND every pass — an unregistered position on a
+        # token that happened to 429 was invisible that cycle, which is the exact blind spot the sweep
+        # below exists to close. Same N+1 shape the Kalshi side shed in 5cbd190, same fix.
+        snap, snap_ok = self._poly_wallet_snapshot()
+        confirms = 0
         for tok in toks:
-            try:
-                out["polymarket"][tok] = self.poly.conditional_balance(tok)
-            except Exception:  # noqa: BLE001
+            if not snap_ok:                              # unreadable wallet -> "we could not ask"
                 out["polymarket"][tok] = _UNREAD
+                continue
+            held = snap.get(str(tok))
+            if held is not None:
+                out["polymarket"][tok] = held
+                continue
+            # ABSENT from a COMPLETE snapshot means "below the data API's 0.1sh floor" == flat. But
+            # absence is also precisely the reading that would prune a watched leg, so where we EXPECT
+            # shares we pay for one targeted read rather than trust a silence. Normally zero of these.
+            if self._expected_shares_any(str(tok)) > 0.0 and confirms < self.POLY_CONFIRM_MAX:
+                confirms += 1
+                try:
+                    out["polymarket"][tok] = self.poly.conditional_balance(tok)
+                except Exception:  # noqa: BLE001
+                    out["polymarket"][tok] = _UNREAD
+            elif self._expected_shares_any(str(tok)) > 0.0:
+                out["polymarket"][tok] = _UNREAD         # over budget -> UNKNOWN, never "flat"
+            else:
+                out["polymarket"][tok] = 0.0
+        if confirms >= self.POLY_CONFIRM_MAX and self.log:
+            self.log.warning("[MAKER_RT][LIVE] reconcile hit the targeted-confirm budget (%d) — the "
+                             "remaining expected-but-absent legs were left UNREAD, not called flat.",
+                             self.POLY_CONFIRM_MAX)
         # ONE portfolio fetch for ALL tickers. This was one full fetch PER ticker, which is what made the
         # pass take 65s against a 45s deadline and took the fill poll down with it every five minutes.
         # A failed fetch marks every ticker _UNREAD — "we could not ask" must never arrive as "flat".
@@ -4863,6 +4987,13 @@ class PregameLiveExecutor:
             # reconcile continues normally. A confirmed or unreadable latch still short-circuits.
             if not self.verify_latched_orphan(now):
                 return self.orphan
+        # Settled legs we kept registered because they had not been redeemed yet: let them go now that
+        # the batch can say whether they are finally flat. Free — it reads the same snapshot.
+        try:
+            self._release_settled_expected(balances)
+        except Exception as exc:  # noqa: BLE001 — bookkeeping never blocks reconciliation
+            if self.log:
+                self.log.warning("[MAKER_RT][SETTLE] settled-leg release pass failed: %s", exc)
         open_toks = {lo.token for lo in self.open_orders.values()}
         suspects: dict = {}
         flat_toks: list = []
@@ -4964,13 +5095,18 @@ class PregameLiveExecutor:
         now_ts = float(now_ts) if now_ts is not None else _time.time()
         self._prune_quoted(now_ts)
         found: list = []
+        reads = 0
         for inst, rec in sorted(self._quoted.items()):
             venue = str(rec.get("venue") or "")
             if self._is_registered(venue, inst):
                 continue
             held = self._reconcile_read("polymarket" if venue == "polymarket" else "kalshi", inst,
                                         balances)
-            if held is _UNREAD or held is None:
+            # The per-instrument fallback is BUDGETED. This scope is the 48h quoted set — several hundred
+            # instruments — so an unreadable batch used to mean several hundred individual venue reads
+            # right here, which is the N+1 the batch exists to avoid, rebuilt at the worst moment.
+            if (held is _UNREAD or held is None) and reads < self.POLY_CONFIRM_MAX:
+                reads += 1
                 held = self._sweep_read(venue, inst)
             if held is None or abs(float(held)) <= self.UNREGISTERED_MIN_SHARES:
                 continue
