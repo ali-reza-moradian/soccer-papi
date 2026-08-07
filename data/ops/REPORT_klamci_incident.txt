@@ -1,0 +1,451 @@
+================================================================================
+KLAMCI PARTIAL-HEDGE INCIDENT — 2026-08-05
+An unhedged 80-share position rode a live match for nine hours, and only the
+balance check could see it (as -$2.47, under its own alert threshold).
+================================================================================
+Written 2026-08-05 ~15:10Z. Every number below is VENUE TRUTH, pulled read-only
+from Kalshi /portfolio/{fills,orders,positions,settlements} and Polymarket
+/positions + /activity + the CLOB balance-allowance endpoint.
+
+--------------------------------------------------------------------------------
+0. THE SHORT VERSION
+--------------------------------------------------------------------------------
+A 115-share rest-kalshi fill hedged only 80/115 on Polymarket. The executor
+computed the 35-share naked remainder CORRECTLY. Two things then went wrong:
+
+  1. Nothing registered the 80 hedged shares. The partial branch committed the
+     stake, advanced hedged_seen and went straight to the unwind — it never
+     reached _record_hedge_locked, which is the ONLY path that writes the
+     expected-position registry, the settled-pnl cost basis and the watch-set.
+  2. The unwind then sold the hedged leg too. _verified_unwind_kalshi asked for
+     35, got them, re-read the position, saw the 80 contracts we were holding ON
+     PURPOSE, called that an unsold remainder and sold those as well.
+
+Result: the Kalshi leg was liquidated, its Poly counterpart was left naked and
+directional, and the ledger recorded a tidy $4.00 unwind. The 80 Under shares
+were in NO registry, so orphan detection, the 5-minute reconcile and the
+maker-position line of the 8-hourly audit were all blind to them BY
+CONSTRUCTION — they only ever look at instruments something registered.
+
+The match finished Under. The naked position paid $80.00 against a $54.48 cost.
+That is LUCK, not edge: had the pair been booked as a pair it would have settled
+at about -$0.08.
+
+--------------------------------------------------------------------------------
+1. TIMELINE FROM VENUE TRUTH (T1)
+--------------------------------------------------------------------------------
+Market: KXCLUBFTOTAL-26AUG05KLAMCI-6 / "K-League Allstars vs. Manchester City:
+O/U 5.5"  (Poly condition 0x2fb5ae0df0d500a2a74cfa03eb59db833af185bf21bc05c4df46e37e8a72b43f)
+
+  05:51:16.705Z  KALSHI  order e7da0579-08b9-4b5c-9200-801c0d4eae53 placed
+                         (client_order_id mrt-245-1785909076389)
+                         rest-kalshi BUY 115 YES (Over 5.5) @ $0.3200, GTC maker
+  05:58:26.889Z  KALSHI  FILLED 115/115, maker, fee $0.00, cash -$36.80
+                         (fill f3c0d583-91b8-5d72-ff4e-c52ba816e18b)
+                         pre-hedge gate walked the Poly ladder and approved at
+                         locked_net +2.2% (CSV column hedge_locked_now)
+  05:58:27Z      POLY    hedge FAK market-BUY of the Under complement, sized to
+                         115 sh. Log: "poly hedge PARTIAL 287693742604 (got
+                         80/115) -> caller must unwind."
+  05:58:30Z      POLY    on-chain: BUY 80 Under, makingAmount $54.4844 /
+                         takingAmount 80 sh -> $0.681055/sh
+                         tx 0x32fe3f772426...  (the walk had priced ~$0.658;
+                         the real sweep paid 2.3c more)
+  05:58:27-33Z   POLY    _complement_shares polled the CTF balance 7x over ~6s
+                         waiting for >= 114.5; it read 80 and returned 80.
+                         => naked = 115 - 80 = 35.   CORRECT.
+  05:58:34.106Z  KALSHI  pre-unwind cancel of e7da0579 -> 404 (already filled;
+                         that 404 is the documented "already terminal" case)
+  05:58:34.422Z  KALSHI  order 1f475433-824d-47cf-abce-7b7f77822f27
+                         (client_order_id unwind-1785909514106) SELL 35
+                         -> 0.25 @ no 0.68 + 34.75 @ no 0.70, fee $0.5148
+                         cash +$9.9902.        <-- the CORRECT unwind
+  05:58:3xZ      KALSHI  _settle_kalshi_flat re-read the position: 80 contracts.
+                         80 >= 1, so the reconcile-to-flat loop treated it as an
+                         unsold naked remainder.
+  05:58:37.093Z  KALSHI  order f131dcd7-fcae-43d0-b099-923470ac030c
+                         (client_order_id unwind-1785909516779) SELL 80
+                         -> 80 @ no 0.70, fee $1.1760, cash +$22.8240
+                         <-- THE BUG. These 80 were the HEDGED leg.
+  05:58:37Z      LEDGER  hedge_unwound  size=35.0  realized_pnl_usd=-3.9965
+                         (cost right, label wrong: 115 had been sold)
+                         Telegram: "UNWOUND ... Cost me $4.00 (that's the safety
+                         net working — no open risk)".  There WAS open risk.
+  05:58:37-38Z   LEDGER  3x fill_untracked rows — our own two unwind orders
+                         coming back through the account fill sweep on ids we
+                         never rested.
+  05:58:38Z .. 13:35Z    80 Poly Under shares held naked through the match.
+                         In NO registry: expected_positions {} , traded_tokens
+                         (4 tokens, none of them this one), provisional_marks [].
+  08:00:01Z      AUDIT   the 8-hourly balance check DID see it, as an
+                         unexplained -$2.4737 — the position marked at $52.00
+                         against a $54.4844 cost. Under the $5.00 alert
+                         threshold, and n_maker was 0 (the token was not in any
+                         maker registry), so the window was even judged
+                         "reliable". Nothing said a word.
+  13:35:20.937Z  KALSHI  KLAMCI-6 SETTLED market_result=no (UNDER won).
+                         Kalshi revenue $0.00 — we were flat by then.
+  15:02:12Z      POLY    REDEEM 80 Under sh -> +$80.0000, tx 0x923921cfb8fd...
+                         conditional_balance now reads 0.0.
+
+WHERE THE 80 SHARES WERE LOST, IN CODE
+  src/genz/maker_rt/pregame_exec.py, _hedge_fill, the MISS/PARTIAL/ERROR branch:
+
+      hedged = min(hedged, matched)
+      if hedged > 0:
+          self.caps.commit_stake(hedged * float(hedge_avg or 0.0))
+          lo.hedged_seen += hedged
+      remainder = max(0.0, matched - hedged)
+      return self._unwind_and_record(lo, remainder, ...)
+
+  The stake was committed and the attribution advanced, but _note_expected_legs,
+  _note_pair_legs and _track_rested — all of which live inside
+  _record_hedge_locked — were never called. The share COUNT was never wrong:
+  PolyExec._normalize read takingAmount=80 correctly off venue cash (verified in
+  tests/test_poly_hedge_sizing.py::test_the_klamci_hedge_response_reads_as_eighty_shares).
+  The 80 shares were lost by the REGISTRY, not by the parser. Those two failures
+  must not be conflated — the parser bug was TBTOR, 2026-07-23, and it is fixed.
+
+  And src/genz/maker_rt/pregame_exec.py, _verified_unwind_kalshi: the
+  reconcile-to-flat loop's target was ZERO. Its stop condition asked "is the
+  venue position empty?" when the right question is "is there anything beyond
+  what we hold on purpose?".
+
+WHY LARIBE WAS FINE — AND WHAT IT ACTUALLY WAS
+  The prompt describes LARIBE as a hedge that filled fully. Venue truth says
+  otherwise, and the correction sharpens the diagnosis rather than weakening it:
+  LARIBE (KXUELTOTAL-26AUG06LARIBE-6, 17:38:28Z) was a rest-POLY fill of 42
+  Under @96c whose KALSHI hedge got 0/42 — "hedge MISSED ... got 0/42". With
+  ZERO hedged there is no hedged leg for the reconcile-to-flat loop to eat, so
+  the unwind sold 42 back @95.54c and left nothing behind. LARIBE is the 0% case
+  and KLAMCI the 70% case of the SAME code path. Only the partial one breaks —
+  which is exactly what T3 asserts, now at 0/30/70/100%.
+
+A SECOND, LATENT INSTANCE OF THE SAME UNWIND BUG
+  The keep-floor failure needs no partial hedge at all. On any multi-fill order:
+  fill #1 hedges in full and registers 60 expected contracts; fill #2 misses and
+  asks to unwind 40; the loop sells the 40, re-reads 60, and liquidates fill #1's
+  properly hedged rest leg. Pinned by
+  test_a_second_fills_unwind_does_not_liquidate_the_first_fills_hedge.
+
+--------------------------------------------------------------------------------
+2. RECOVERY + BOOKING (T2)
+--------------------------------------------------------------------------------
+RECEIPT
+  The 80 shares were ALREADY REDEEMED before I could act, at 2026-08-05T15:02:12Z
+  (tx 0x923921cfb8fd..., +$80.0000). This was not done by this bot — there is no
+  redeem/relayer code anywhere in the repo (grep: none) — so it was either the
+  owner by hand or Polymarket auto-redemption. Verified after the fact:
+      conditional_balance(287693742604...513) = 0.0
+      Poly cash 2394.6985 -> 2474.698471   (+$80.000, to the cent)
+  So T2's redeem step needed no action; what remained was the BOOKING.
+
+BOOKED, at venue truth, in the LUCK bucket
+  data/ops/maker_rt_RESTATEMENTS.json  key "klamci-naked-under-20260805"
+  (backup of the prior file: maker_rt_RESTATEMENTS.json.pre_klamci.bak)
+
+      cost   $54.4844   (Poly makingAmount, 05:58:30Z)
+      proceeds $80.0000 (CTF redemption, 15:02:12Z)
+      untracked_usd  +25.5156      <- LUCK. never hedged pnl.
+      cost_usd        54.4844      <- the ROI denominator
+      trades_n             1
+      effective_ts   2026-08-05T15:02:12Z   (when the CASH moved)
+
+  It is applied ONCE, keyed, by state.apply_restatements at the next process
+  start, in the same atomic write as its key — so the 10-21 restarts a working
+  day sees cannot double-book it. It now also passes sane_settled() on UNTRACKED
+  terms, the same unit-error rail a live trade_settled row passes, and carries
+  its cost basis and trade count so settled_trades and the ROI denominator do not
+  drift away from the trades that actually settled.
+
+  The -$3.9965 unwind cost is ALREADY booked (live, into lifetime and the exits
+  bucket) and is deliberately NOT restated. Venue truth for that exit was
+  -$3.9858; the $0.0107 difference is the ceil-to-cent fee model being
+  conservative, and is left as it is.
+
+COUNTERS, before -> after
+      settled_pnl_lifetime            22.7195 -> 48.2351
+      settled_pnl_untracked_lifetime   8.3788 -> 33.8944
+      settled_pnl_hedged_lifetime     25.6159 -> 25.6159   (UNMOVED — as it must be)
+      settled_pnl_exits_lifetime     -11.2752 -> -11.2752
+      settled_trades                       39 -> 40
+
+WHAT WOULD HAVE HAPPENED UNDER THE FIXED CODE
+      pair:   Kalshi 80 YES @0.32 (lost, $0) + Poly 80 Under @0.681055 (won, $80)
+              revenue $80.0000 vs cost $80.0844          =  -$0.0844
+      exit:   unwind 35 only, at the price order 1f475433 actually got
+              (0.32 - 0.30014) x 35 + $0.52 fee          =  -$1.2150
+      total                                              ~= -$1.30 realized
+  Against the -$3.9965 booked + $25.5156 of luck we actually got. The bot was
+  lucky, and the books now say so in the bucket where luck belongs.
+
+NOT DONE, DELIBERATELY: registering the token
+  T2 asks for the token to be registered so the balance check counts it as ours.
+  There is nothing left to register — the position is redeemed and the balance
+  reads 0.0. Registering a zero-balance token would make n_maker non-zero for a
+  position that no longer exists, which would make is_flat() call every future
+  snapshot unreliable, and the next reconcile would prune it as flat anyway. The
+  mechanism that WOULD have registered it at fill time is what T3 shipped.
+
+--------------------------------------------------------------------------------
+3. WHAT CHANGED (T3, T4, T5 + the side fix)
+--------------------------------------------------------------------------------
+T3  A PARTIAL HEDGE IS A SMALLER PAIR, NOT A FAILURE
+    * _hedge_fill: on a shortfall the FILLED portion is now booked through
+      _record_partial_pair -> _record_hedge_locked. Both legs land in the
+      expected-position registry, the cost basis reaches the settlement
+      reconciler, the watch-set gets the instrument, and the locked net is
+      computed from the ACTUAL hedge fill price and fee. Only the shortfall is
+      unwound. One venue execution still consumes exactly ONE of the day's fill
+      slots (fills_today is a cap; the unwind half books its pnl through
+      adjust_pnl, the established "restate without counting a fill" doctrine).
+    * LiveHedger.hedge / .hedge_poly now report hedge_fee on the PARTIAL branch
+      too — a partial bought real shares at a real fee, and without it the
+      sub-pair's locked net is one fee optimistic.
+    * _verified_unwind{,_kalshi,_poly}: "flat" now means "nothing beyond what we
+      hold on purpose". The sell floor and the stop condition come from
+      _expected_shares(rest_venue, token), and `remaining` is reported NET of it
+      so a caller's orphan check sees only genuinely naked shares.
+    * Share-count plumbing: verified already correct and PINNED, not changed.
+      _normalize takes the SIDE's share leg (BUY -> takingAmount) and the
+      executed price from the making/taking RATIO. New property tests cover FAK
+      fills at 0/30/70/100%, plus the literal KLAMCI response.
+
+T4  OUR OWN EXITS RECOGNISE THEMSELVES
+    * _kalshi_unwind_sell registers the instrument as "unwinding" BEFORE the sell
+      is submitted (there is no order id yet, and the fill sweep can route an
+      execution the instant it fills), then adds the returned order id to
+      _own_order_ids. _untracked_fill labels those unwind_confirmed instead of
+      fill_untracked, and never orphans on them. The marker expires after 300s so
+      it can never explain away a real surprise an hour later.
+    * The hedge_unwound row now records the size ACTUALLY SOLD, not the size
+      requested. The cost was always computed on the true total; only the label
+      was wrong, and the label is what a human reconstructs an incident from.
+
+T5  THE BLIND SPOT, CLOSED
+    * New 48h QUOTED scope (data/ops/maker_rt_quoted_markets.json): every market
+      we offered on, BOTH legs — the one we rest and the complement we would
+      hedge into. Written at placement, pruned at 48h, persisted across restarts.
+    * _sweep_unregistered runs inside the 5-minute reconcile (reads batched
+      off-loop with everything else, so the loop does not block). For any
+      instrument in that scope that is in NO registry — not the watch-set, not
+      the expected legs, not the provisional marks, not an open order — and whose
+      venue position exceeds 0.5 shares, it fires a RED Telegram naming the
+      market, writes a position_unregistered ledger row, and logs CRITICAL.
+    * It ALERTS, it does not halt. An unregistered position is a bookkeeping
+      failure whose right response is a human looking at it; halting the maker
+      over a position that may well be perfectly hedged trades a silent failure
+      for a loud useless one. Throttled to one scream per instrument per hour.
+    * Scoped to quoted markets ON PURPOSE: this funder wallet holds ~180
+      positions that are not ours, and a blanket sweep would alarm on all of them.
+
+SIDE FIX  THE DIGEST'S TWO WINDOWS NOW SAY WHICH IS WHICH
+    "Currently offering 2/2 · today $594/$1200 used · 0 fills · +$1.67" put the
+    INTERVAL's fill count next to TODAY's stake and pnl. On 2026-08-04 that
+    printed "0 fills · +$1.67" on an eleven-fill day — either impossible or an
+    admission that two counters disagree, with no way to tell which. Line 1 is
+    now the interval ("42 offers placed · 0 taken"); everything after "Today:" is
+    the day, including the fill count.
+
+--------------------------------------------------------------------------------
+4. CLASSIFIED CASH, 2026-08-04T15:00:32Z (baseline) -> 2026-08-05T15:08Z (T6)
+--------------------------------------------------------------------------------
+KALSHI   start $4711.2800
+  08-04 18:36:33Z   -27.5518   SHAEGR-4 hedge BUY 109 YES @0.24, fee $1.3918
+  08-04 18:40:58Z   -29.3211   SHAEGR-4 hedge BUY 116 YES @0.24, fee $1.4811  [*]
+  08-04 21:09:20Z  +225.0000   SHAEGR-4 SETTLED yes — 225 contracts x $1.00
+  08-05 05:58:26Z   -36.8000   KLAMCI-6 rest BUY 115 YES @0.32, maker, fee $0
+  08-05 05:58:34Z    +9.9902   KLAMCI-6 unwind #1, sell 35, fee $0.5148
+  08-05 05:58:37Z   +22.8240   KLAMCI-6 unwind #2, sell 80, fee $1.1760  [THE BUG]
+  08-05 13:35:20Z    +0.0000   KLAMCI-6 SETTLED no — we were flat
+                    --------
+                   +164.1413   end $4875.4213   VENUE READS $4875.4213   diff $0.0000
+
+POLY     start $2530.1590
+  08-04 15:39:39Z    -1.9999   US x Iran ceasefire BUY 2.666664 @0.75   } the $2
+  08-04 15:39:42Z    +1.9684   US x Iran ceasefire SELL 2.66 @0.74      } sizing
+                               net -$0.0316 — the 2026-08-04 --smoke-sell proof
+                               ("the $0.03 probe"); the maker's books never saw
+                               it, because it was not the maker's order.
+  08-04 17:38:32Z   -40.3200   LARIBE U5.5 rest-poly FILL, BUY 42 @0.96
+  08-04 17:38:35Z   +40.0354   LARIBE U5.5 verified unwind, SELL 42 @0.955357
+                               net -$0.28456 (Kalshi hedge got 0/42; books
+                               recorded $0.2887 — $0.0041 conservative)
+  08-04 18:36:36Z   -80.6600   SHAEGR U3.5 rest-poly FILL, BUY 109 @0.74  [*]
+                               STILL HELD, worthless (Under lost)
+  08-05 05:58:30Z   -54.4844   KLAMCI U5.5 partial hedge, BUY 80 @0.681055
+  08-05 15:02:12Z   +80.0000   KLAMCI U5.5 REDEEM 80 sh
+                    --------
+                    -55.4606   end $2474.6984  VENUE READS $2474.698471  diff $0.00003
+                               (the $0.000029 is the baseline's own 4-dp rounding)
+
+JEJU, and why it is not in this table
+  The $459.22979 Jeju/Bayern O1.5 redemption landed 2026-08-04T14:56:11Z — four
+  minutes and twenty-one seconds BEFORE the baseline was taken. It is already
+  INSIDE the baseline: the 14:45:52Z snapshot read Poly cash 2070.9292 with
+  $459.0712 of resolved-but-unredeemed position, and 2070.9292 + 459.22979 =
+  2530.15899 = the baseline's cash, to the cent. It belongs to the previous
+  window, not this one.
+
+TOTALS
+  venue     7241.4390 -> 7350.1198      = +$108.6808
+  books     lifetime 25.3947 -> 22.7195 = -$2.6752
+  DISCREPANCY                             +$111.3560
+
+  It decomposes exactly (to $0.00003):
+    +85.8571  SHAEGR — see section 5. Of which +$86.6789 is a NAKED 116-contract
+              Kalshi position that won, and -$0.8218 is the 109-share pair being
+              booked at +$1.61 when venue truth was +$0.7882.
+    +25.5263  KLAMCI — +$25.5156 the naked Under leg (NOW BOOKED, section 2) plus
+              +$0.0107 of conservative fee model on the unwind.
+    +0.0041   LARIBE — conservative fee model on that exit.
+    -0.0316   the ceasefire probe — a hand-run smoke order the maker never booked.
+    --------
+    111.3559
+
+--------------------------------------------------------------------------------
+5. A SECOND INCIDENT FOUND BY THIS AUDIT — NOT FIXED, NOT BOOKED  [*]
+--------------------------------------------------------------------------------
+SHAEGR (KXUELTOTAL-26AUG06SHAEGR-4 / "Shamrock Rovers FC vs. KF Egnatia
+Rrogozhinë: O/U 3.5", 2026-08-04) is a DIFFERENT bug, and a worse one.
+
+  18:36:33Z  Poly rest leg FILLED 109 Under @74c ($80.66). Kalshi hedge LOCKED
+             109 Over @24c. A real, correct, +0.72% pair.
+  18:40:57Z  The bot believed a SECOND Poly fill: "Someone took $85.84 of Total
+             U3.5 @ 74c (116 sh)". It hedged it — 116 real Kalshi Over @24c,
+             $29.3211 of real money — and alerted "profit is GUARANTEED either
+             way".
+  VENUE TRUTH: that second Poly fill never delivered shares.
+       conditional_balance(33024417091507491293...161) = 109.0, not 225
+       Poly cash moved -$80.66 for SHAEGR in total, i.e. 109 x $0.74 exactly
+       the data API shows ONE SHAEGR trade: BUY 109, usdcSize 80.66
+  So 116 Kalshi contracts were opened NAKED, believed hedged, and announced as
+  guaranteed. Over 3.5 hit; Kalshi settled all 225 at $1.00.
+
+  the naked 116:   116.00 - 27.84 - 1.4811  = +$86.6789   pure luck
+  the real  109:   109.00 - 26.16 - 1.3918 - 80.66 = +$0.7882 (books said +$1.61)
+  SHAEGR venue net across both venues                = +$87.4671
+
+WHY IT IS NOT FIXED HERE
+  It is a different class: KLAMCI is "we did not register a hedge we owned";
+  SHAEGR is "we hedged against a rest fill that never delivered". The executor
+  already re-verifies the HEDGE leg against venue truth before unwinding
+  (_complement_shares — that guard is what made KLAMCI's 35 correct); nothing
+  re-verifies the REST leg before booking LOCKED. The likely fix is symmetric:
+  read the rest instrument's own venue position before _record_hedge_locked and
+  refuse to book a pair whose rest leg the venue does not confirm. That is a
+  behaviour change on the hot path of every fill, it deserves its own
+  evidence-first pass, and this prompt is explicit that behaviour changes go one
+  at a time.
+
+WHY IT IS NOT BOOKED HERE
+  The untracked half (+$86.6789) is unambiguous. The other half is a -$0.8218
+  correction to a trade_settled row the reconciler already wrote, and it lands in
+  settled_pnl_hedged_lifetime — the number --gates reads to justify cap raises,
+  and the number this prompt requires to be UNCHANGED. I am not moving it on my
+  own initiative. The entry is ready; it needs one word from you.
+
+  READY-TO-APPLY (paste into data/ops/maker_rt_RESTATEMENTS.json):
+      key            "shaegr-phantom-fill-20260804"
+      untracked_usd  +86.6789     the naked 116 that won
+      hedged_usd      -0.8218     the 109 pair, restated to venue truth
+      cost_usd        29.3211     the naked leg's own basis
+      trades_n             1
+      effective_ts   "2026-08-04T21:09:20Z"
+  After that, hedged lifetime becomes $24.7941 and books=banks reconciles to
+  -$0.0168 since baseline (the two conservative fee models and the smoke probe).
+
+ALSO STILL OPEN: 109 SHAEGR Under shares sit in the wallet, worthless and
+unredeemable (Under lost). They cost $80.66 and are already fully expensed in the
++$1.61 the books took for that pair. No action needed; noted so nobody
+re-discovers them as a surprise.
+
+--------------------------------------------------------------------------------
+6. THE BALANCE LINE — MEASURED, NOT PREDICTED
+--------------------------------------------------------------------------------
+Deployed 2026-08-05T15:49:16Z (gitguard restart #1), restatement applied at
+15:49:35Z, LIVE ARMED at 15:49:35Z. Then `--balance`, verbatim:
+
+    Kalshi $4,875.42 (cash $4,875.42 + positions $0.00)
+    Polymarket $2,474.70 (cash $2,474.70 + positions $0.00; of which ours $0.00)
+    TOTAL $7,350.12
+    Since the last check (8s): +$0.00 - bot's books say +$0.00 - match (diff $0.00)
+    Since baseline (Aug 4): +$108.68 - bot's books say +$22.84 - MISMATCH (diff $85.84)
+       where: Kalshi cash +$164.14/positions +$0.00 - Polymarket cash -$55.46/positions +$0.00
+    My books: settled lifetime +$48.24 (+$25.62 from hedged pairs, +$33.89 luck,
+       -$11.28 exit costs) - today's locked estimate -$4.00
+    Open pairs at snapshot: 0 - nothing outstanding, so the numbers should agree closely
+    BOOKS DISAGREE WITH THE EXCHANGES ... a gap of $85.84 ... Investigate.
+
+  Every figure matches section 4 to the cent: Kalshi cash +$164.14, Poly cash
+  -$55.46, and a residual of exactly the SHAEGR windfall. Hedged lifetime is
+  +$25.62, UNMOVED by the booking — the luck went where luck goes.
+
+  THE $85.84 ALARM IS CORRECT AND IS MEANT TO STAY UP. It is section 5's
+  phantom-fill windfall, which I found, measured and deliberately did not book.
+  BOOKS=BANKS DOES NOT FULLY RECONCILE YET, and I am saying so rather than
+  quietly netting it.
+
+  The short window reads +$0.00 because the anchor is my own read: `--balance`
+  records a snapshot, so the two runs a few seconds apart compare to each other.
+  The transition window itself (14:35:10Z manual -> 15:49:52Z) measured venue
+  +$0.04 against books +$25.5156. That is not a leak either — it is the books
+  catching up in ONE step to money the venue total had been carrying as a MARK
+  since 05:58Z (the 14:35Z snapshot already valued the naked leg at $79.96
+  against its $54.4844 cost). See the effective_ts note in section 8.
+
+  For reference, the 08:00Z check had printed an unexplained -$2.4737. That was
+  the same artefact in the other direction — the position marked at $52.00
+  against $54.4844 of cost — and it is the ONLY warning any system gave about
+  this incident, four hours late and $2.53 under its own alert threshold.
+
+--------------------------------------------------------------------------------
+7. VERIFICATION
+--------------------------------------------------------------------------------
+  pytest             1437 passed (1397 before this work; +40 new)
+                     new: tests/test_maker_rt_klamci_partial_hedge.py (27)
+                          tests/test_poly_hedge_sizing.py (+7 FAK-ratio/venue-truth)
+                          tests/test_maker_rt_exit_costs.py (+3 restatement)
+                          tests/test_maker_rt_alerts.py (+1 digest windows)
+  --gates            UNCHANGED, byte for byte, before and after the deploy:
+                     soccer 27/10 EDGE-POSITIVE, mean 0.848%, p50 0.714%, $9.81;
+                     mlb 0/13, tennis 0/33, ufc 0/10 still MEASURING.
+                     (Nothing here touches the hedged bucket, by design.)
+  --balance          run after the deploy — section 6 quotes it verbatim. Clean
+                     on the short window; the $85.84 SHAEGR alarm stands, as
+                     intended.
+  deploy             15:49:16Z HEAD change -> 15:49:35Z restatement applied ->
+                     15:49:35Z LIVE ARMED (rest-kalshi, rest-poly; pre+inplay).
+
+--------------------------------------------------------------------------------
+8. DELIBERATELY NOT DONE
+--------------------------------------------------------------------------------
+  1. The SHAEGR phantom-fill bug (section 5) — found here, not fixed, not booked.
+     This is the biggest open item and it is worth more than the KLAMCI one.
+  2. The Poly fee-model correction — excluded by the prompt, on purpose.
+  3. Registering the KLAMCI token in the maker registries (section 2) — the
+     position is redeemed; there is nothing left to register.
+  4. The $0.0107 / $0.0041 conservative-fee residuals on the two unwinds — real,
+     tiny, and left alone rather than chased with a second fee model.
+  5. The 48h quoted scope starts EMPTY at this deploy and fills as we quote. It
+     will not retroactively find the 109 worthless SHAEGR Under shares unless we
+     quote that market again. Everything opened from now on is in scope.
+  6. THE RESTATEMENT'S effective_ts IS THE REDEEM (15:02:12Z), AND ARGUABLY IT
+     SHOULD BE THE OPEN (05:58:30Z). restatements_in() removes a correction from
+     a window when the CASH moved outside it — but this audit compares venue
+     TOTAL, which is cash PLUS marked positions, and a held position's mark
+     credits the total continuously from the moment it is opened. By the 14:35Z
+     snapshot the venue total had already accrued $25.4756 of the $25.5156; the
+     redeem itself moved the total by only $0.04. So a window that starts after
+     the open does not net this correction out, and reads a -$25.48 "mismatch"
+     that is pure bookkeeping catch-up. Consequence NOW: none — two manual
+     snapshots re-anchored the comparison past the transition, and the
+     since-baseline window contains both timestamps either way. Left as it is
+     rather than hand-editing the 1.2 MB tuning file the live process rewrites
+     every 30s; the money is right and the key is consumed, so it can never move
+     again. Worth fixing properly the next time a restatement is written for a
+     position that was HELD across a snapshot.
+  7. One CRITICAL fired during this session at 15:49:09Z — the in-process gates
+     job exceeding its 180s deadline, the known off-loop-starvation pattern. It
+     self-recovered ("Off-loop work resumes") and is unrelated to this work.
+================================================================================

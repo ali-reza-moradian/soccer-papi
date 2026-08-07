@@ -1,0 +1,393 @@
+================================================================================
+OFF-LOOP STALLS, THE IN-PLAY REFUSAL, REDEMPTION, AND THE 5% CEILING
+Deployed 2026-08-06T19:59:22Z, commit 5cbd190. T1+T3 fixed; T2+T4 measured only.
+================================================================================
+Written 2026-08-06 ~20:05Z. Context: in-play's first profitable pair landed today
+(26AUG06CFRTIL total_goals|5.5, rest-poly 119.05 @0.58, Kalshi hedge 119 @0.40 in
+~2s, locked +0.33% = +$0.3919, settled 18:39:04Z). The ring-fence works.
+
+--------------------------------------------------------------------------------
+T1 — THE OFF-LOOP STALL: MEASURED, THEN FIXED
+--------------------------------------------------------------------------------
+1.1 THE MEASUREMENT, BEFORE ANY PROPOSAL
+
+Per-call latency, 5 samples each, against the live venues:
+
+    kalshi get_positions (FULL portfolio)   p50  379.8ms   max 887.7ms
+    kalshi get_balance                      p50  145.6ms
+    poly conditional_balance (1 token)      p50   46.6ms
+    poly get_balance                        p50   43.7ms
+    poly open_orders (/data/orders)         p50   40.3ms
+
+Applied to a real reconcile pass (the log's own count: 179 poly + 149 kalshi):
+
+    179 x poly conditional_balance    :   8.3s
+    149 x kalshi get_positions        :  56.6s   <-- 87% of the pass
+    2   x venue cash reads            :   0.2s
+    ------------------------------------------
+    TOTAL per reconcile pass          :  65.1s   against a 45s worker deadline
+
+THE CAUSE: ``_kalshi_position(ticker)`` issued ONE FULL ``GET /portfolio/positions``
+PER TICKER. 149 tickers = 149 full portfolio fetches. The pass could not finish
+inside its deadline, so every ~5 minutes the worker abandoned its thread — and the
+FILL POLL, queued behind it on the same worker, went down with it. That is why
+every stall line read "2 job(s) in flight" and why ``abandoned`` climbed 2 -> 8
+across the day.
+
+IT WAS NOT HUNG SOCKETS. The one "py_clob_client_v2 read operation timed out"
+(19:19:21Z) is a 5s httpx timeout doing its job. Verified:
+``httpx.Client(http2=True).timeout`` -> ``Timeout(timeout=5.0)``, and Kalshi's
+client sets 20s explicitly. The 45s was 149 sequential SUCCESSFUL calls, not one
+hang. I checked this before proposing a timeout fix, because "add timeouts" would
+have been a plausible-sounding change that fixed nothing.
+
+WHY IT WAS GETTING WORSE: the watch-set grows with the markets we quote, and the
+2026-08-06 caps raise (12 -> 24 slots) widened it. It was 149 kalshi tickers at
+19:34Z and 153 by 19:54Z.
+
+1.2 THE FIXES
+
+  (a) ONE portfolio fetch per reconcile, indexed. 65.1s -> ~8.9s (7.3x).
+      The three-way answer is preserved EXACTLY, and it is the whole point:
+        row found but unparseable  -> None  (NOT flat)
+        ticker absent, portfolio readable -> 0.0 (genuinely flat)
+        portfolio unreadable       -> None for EVERY ticker
+      "We could not ask" must never arrive as "the venue says zero" — that
+      distinction is what stopped reconciliation pruning real naked positions in
+      2026-07-23, and it survives the batching. Pinned by four tests.
+
+  (b) EXPLICIT Poly HTTP timeout, 10s. Reads were already bounded at 5s, but by a
+      library default we do not own. Pinning it makes the bound ours: a future SDK
+      or httpx change cannot silently turn a venue blip into a thread hostage.
+
+  (c) GATES no longer re-reads 1.99 GB every 15 minutes. It scanned 8 files in
+      97.7s standalone, which stretched past its own 180s deadline under GIL
+      contention with the quote loop — so the thread was abandoned every 15
+      minutes and THE REPORT NEVER LANDED. The events log is append-only and
+      dated, so past-day files never change: they are now cached on (size,
+      mtime) and only today's file is re-read.
+      MEASURED: 96.8s cold -> 17.2s warm, result byte-identical.
+      (gates already had its OWN worker, so it was not starving the fill poll —
+      it was burning CPU and failing to produce a report. Both now fixed.)
+
+1.3 VERIFICATION — BEFORE / AFTER
+
+  BEFORE (19:54:49Z, the last stall):
+      worker {'submitted': 759, 'completed': 749, 'dropped': 0, 'abandoned': 8,
+              'restarts': 0, 'in_flight': 2, 'alive': True}
+      55 stall/deadline lines in the preceding hour of log.
+  AFTER: see section 6 — the 30-minute post-deploy watch.
+
+--------------------------------------------------------------------------------
+T3 — THE IN-PLAY REFUSAL AT 0.94 WAS **TRUE**. IT WAS NOT A SIZING BUG.
+--------------------------------------------------------------------------------
+The report said in-play had used $118.64 of its $500 and was therefore 76% free.
+It was not. The pool's committed total includes RESERVATIONS:
+
+    in-play at 19:21Z:  spent $118.64
+                     + reserved $380.54   (two open in-play quotes)
+                     = committed $499.18 of a $500 pool
+                     -> HEADROOM $0.82
+
+Reproduced exactly with the real sizer:
+
+    plan_size(0.94, 0.05, quote_usd_max=210, pair=1050, headroom=0.82,
+              hedge_depth=9713, book_depth=117385, venue_minimum=5)
+        -> refused=True, size=0, limiter="daily_stake"
+
+    ...and with the pool genuinely free (headroom 381), the SAME inputs give
+        -> size=223, limiter="quote_usd_max"
+
+So the refusal was correct and the deep hedge book was irrelevant — we had $0.82.
+THE MONEY WAS RIGHT AND THE EXPLANATION WAS WRONG, which is worse than useless:
+it sends a human hunting a bug that does not exist.
+
+WHAT WAS ACTUALLY BROKEN — the reporting:
+  * "projected pair $0.00" was a LITERAL ZERO passed to ``_refuse``, because the
+    refusal happens BEFORE a size (and therefore before any projected pair)
+    exists. It read as broken arithmetic.
+  * The reason recorded was ``below_venue_minimum`` — the SYMPTOM (the largest
+    fittable size fell under the venue floor) with nothing about the CAUSE.
+
+FIXED:
+  * the reason now carries the limiter: ``below_venue_minimum:daily_stake``
+  * the log prints the pool arithmetic:
+      "limiter daily_stake; inplay pool $0.82 free of $500 [spent $118.64 +
+       reserved $380.54]; hedgeDepth=9713 bookDepth=117385"
+  * ``_refuse`` labels its amount "headroom" or "projected pair" per path, so
+    neither is a lie.
+
+REGRESSION TESTS: the exact 0.94 shape, plus the price extremes
+(0.01/0.02/0.50/0.94/0.97/0.98) asserting the recorded reason is the constraint
+that ACTUALLY bound — plus a control where the leg cap binds and the reason must
+NOT blame the pool. (0.99 is deliberately absent: a 0.99 maker bid needs an ask
+above it, so the never-cross guard refuses it before the sizer is reached.)
+
+WHAT THIS MEANS OPERATIONALLY: at $210/quote the $500 in-play pool supports about
+TWO concurrent in-play quotes. That is the ring-fence working as designed and it
+is tight. Whether $500 is the right number is a policy question I have not
+touched.
+
+--------------------------------------------------------------------------------
+T2 — THE UNREGISTERED-POSITION ALARM + REDEMPTION (MEASURED; NOTHING IMPLEMENTED)
+--------------------------------------------------------------------------------
+2(a) IS THE ALARM A FALSE POSITIVE BY CONSTRUCTION? **YES.**
+
+The 18:39:40Z ``position_unregistered`` for 26AUG06CFRTIL total_goals|5.5, 119.0476
+shares IS the winning Polymarket leg of the pair booked 36 seconds earlier. The
+chain is deterministic:
+
+  1. Kalshi settles -> ``reconcile_settlements`` books the pair and calls
+     ``_forget_settled_instruments``, which drops BOTH legs from the watch-set.
+  2. The winning POLY leg is still 119.05 shares in the wallet.
+  3. The instrument is still in the 48h QUOTED scope.
+  4. ``_is_registered`` -> False (just pruned in step 1).
+  5. held 119.05 > 0.5 -> ALARM.
+
+``_forget_settled_instruments``' own docstring states the false premise out loud:
+"The winning leg redeemed to cash (balance -> 0)". It does not. It stays until
+redemption, which is minutes-to-hours later and sometimes longer.
+
+SO IT WILL FIRE AFTER EVERY SETTLED PAIR WHOSE POLY LEG WON. That is exactly the
+cry-wolf failure the sweep was built to avoid — it exists to catch the next
+KLAMCI, and an alarm that fires on every winning trade trains us to ignore it.
+
+PROPOSED NARROWEST FIX (NOT IMPLEMENTED — this prompt is measure+propose):
+  When ``_forget_settled_instruments`` prunes a settled market, record the
+  WINNING leg's expected share count in a small "settled, awaiting redemption"
+  registry carrying (instrument, shares, settled_ts). ``_is_registered`` consults
+  it, and the sweep stays SHARP: a holding LARGER than the recorded winning leg
+  still screams, and the entry expires on a timer (say 24h) so a position that
+  genuinely never redeems becomes visible rather than permanently excused.
+  This is strictly narrower than suppressing the alarm for settled markets, which
+  would blind it for the full 48h quoted window.
+
+2(b) HOW MUCH IS SITTING IN RESOLVED, REDEEMABLE POLYMARKET POSITIONS?
+
+  **$0.00.** Measured across all 179 non-dust positions in the funder wallet:
+
+      redeemable WITH value :   0    $     0.00   <-- the free capital: none
+      redeemable, worthless : 177    $     0.00   (lost bets; redeeming pays $0)
+      still open/unresolved :   2    $   135.44
+
+  The two open ones are:
+      $118.99  119.05 sh  Under   FC CFR 1907 Cluj vs Tromso IL: O/U 5.5
+      $ 16.45   34.64 sh  Over    FC Red Bull Salzburg vs Pafos FC: O/U 1.5
+
+  NOTE the CFR Cluj leg reads NOT redeemable: Kalshi has settled that market but
+  POLYMARKET HAS NOT RESOLVED IT YET. So it is not unredeemed winnings — it is an
+  unresolved market. That is also the honest reason the alarm fired.
+
+  DOES POLYMARKET AUTO-REDEEM? **YES.** 390 REDEEM rows on this wallet, including
+  $2.13 at 2026-08-06T17:36:12Z and the KLAMCI $80.00 at 2026-08-05T15:02:12Z.
+  There is no redeem code anywhere in this repo, and the timestamps (07:17Z,
+  01:55Z, 01:58Z, 21:37Z) are not consistent with a human clicking. KLAMCI settled
+  on Kalshi at 13:35:20Z and redeemed at 15:02:12Z — about 1h27m, unattended.
+  SETTLED: it is Polymarket's own auto-redemption, not the owner and not this bot.
+
+2(c) SHOULD WE BUILD AUTOMATIC REDEMPTION?
+
+  ON TODAY'S EVIDENCE, NO — IT WOULD FREE $0.00.
+  The premise of the question was that winnings sit unredeemed and redemption is
+  free capital. Measured, nothing is sitting: every resolved position is already
+  redeemed, and the only value held is in markets that have not resolved yet.
+  Building a redeemer would duplicate something the venue already does for us and
+  would add a signing/relayer path — real risk — for no measured gain.
+
+  Polymarket cash is genuinely our tightest constraint ($2,446 against $1,050 max
+  pairs = 2.03 fundable pairs), but the cause is NOT unredeemed winnings. It is
+  simply that the money is on the other venue. A transfer moves it; redemption
+  cannot, because there is nothing to redeem.
+
+  IF the evidence changes — i.e. if the "redeemable WITH value" line above ever
+  reads non-zero for more than a few hours — the design would be: read
+  ``redeemable && currentValue > 0`` positions on the existing 5-minute reconcile;
+  redeem via the CTF ``redeemPositions`` call through the same proxy-wallet signer
+  the maker already uses (gasless via the Polymarket relayer, which is what
+  auto-redemption itself rides); idempotency by conditionId with a persisted
+  keyed ledger, exactly like the restatements file, so the 10-21 restarts a
+  working day cannot double-submit; a per-day cap on redemption count; and it
+  would be smoke-proven first on ONE tiny resolved position with the amount
+  asserted against the CTF balance before and after — the same shape as
+  --smoke-sell. What could go wrong: a wrong conditionId burns the wrong tokens;
+  a failed relayer leaves a half-state; and a redemption racing the venue's own
+  auto-redeem double-submits. All three are why this needs its own prompt, its
+  own smoke proof, and a measured reason to exist — which today it does not have.
+
+--------------------------------------------------------------------------------
+T4 — IS THE 5% CEILING EATING THE IN-PLAY TAIL? (MEASURED; CEILING UNTOUCHED)
+--------------------------------------------------------------------------------
+1,379 implausible_edge rejections since 2026-07-30 (7 days).
+
+  phase    band     rows  distinct  median   median      median
+                            mkt-sides  net%   hedge_ask  rest px
+  ---------------------------------------------------------------
+  inplay   5-8%      207     178      6.16     0.1700    0.7600
+  inplay   8-15%     198     171     10.01     0.2000    0.6900
+  inplay   >15%      458     309     29.02     0.0845    0.4800
+  pre      5-8%       79      33      5.91     0.1500    0.7900
+  pre      8-15%      92      27     11.57     0.2700    0.6000
+  pre      >15%      345      51     32.69     0.1000    0.3800
+
+THE DISCRIMINATOR THAT ACTUALLY SEPARATES THEM is the PAIR SUM (rest + hedge). A
+genuine two-sided pair sums just under $1.00 — that IS the edge. A broken pairing
+sums far below it, because the "edge" is just two unrelated cheap legs:
+
+  phase    band     n    pair p10   pair p50   pair p90   share pair > 0.85
+  --------------------------------------------------------------------------
+  inplay   5-8%    252    0.9100     0.9300     0.9410         100.0%
+  inplay   8-15%   243    0.8510     0.8900     0.9100          92.6%
+  inplay   >15%    568    0.3300     0.6800     0.8200           0.0%
+  pre      5-8%    114    0.9200     0.9300     0.9400         100.0%
+  pre      8-15%   127    0.8500     0.8800     0.9070          90.6%
+  pre      >15%    409    0.1800     0.6800     0.8100           0.0%
+
+THE ANSWER, AS FAR AS THIS DATA CAN GIVE ONE:
+
+  * The >15% band is unambiguously BROKEN PAIRINGS. Pair sums of 0.18-0.68, i.e.
+    "buy both sides of a binary for 33c". The worst are rest 0.01 + hedge 0.01 =
+    a 98% "edge". The ceiling earns its keep here and the 40.06% FIODEP rejection
+    the prompt cited is in this band. No argument for touching it.
+
+  * The 5-8% in-play band is STRUCTURALLY A REAL PAIR: 214 distinct market-sides,
+    pair sum p50 0.9300, 100% above 0.85, 0% below 0.60. A broken pairing cannot
+    produce a 0.93 pair sum by coincidence. These are two genuinely complementary
+    legs priced to cost 93c for a dollar.
+
+  * BUT A REAL SHAPE IS NOT A LIVE PRICE, and I cannot close that gap with the
+    data recorded. The band sits at extreme prices — median rest 0.76, and the
+    top of it is rest 0.88-0.94 against hedge asks of 0.004-0.06. A 0.94/0.005
+    pair is a deep-in-the-money totals line late in a match, which is exactly
+    where a hedge book goes one-sided and a half-cent ask can be a stub nobody
+    fills. The pair-sum test cannot tell a live 93c pair from a stale one.
+
+WHAT I COULD NOT MEASURE, AND WHY IT IS THE THING THAT WOULD SETTLE IT:
+  1. FRESHNESS. The prompt asked for book age at the instant of rejection. The
+     ``rails_ok`` column is EMPTY on every implausible_edge row — the row builder
+     for that event does not populate it. So freshness share reads "nan" above.
+     What I CAN say from the code path: an in-play implausible_edge rejection has
+     already passed the freeze and stale rails (they run before compute_quote), so
+     these are not frozen or socket-dead nodes. But ``node_quiet_max_s`` is 180s,
+     so "fresh" tolerates a three-minute-old book — which is an eternity in a live
+     match and is precisely the regime this band lives in.
+  2. HEDGE DEPTH at the rejection instant — not recorded on these rows either. At
+     a 0.5c hedge ask the depth question is the whole question.
+  3. REALIZED OUTCOME. A rejected quote never fills, so there is no realized pnl
+     to compare. Reconstructing "what it would have made" requires settling BOTH
+     legs of a pair that was never opened, and for the 214 in-play market-sides
+     that is a per-market settlement lookup I did not attempt within this prompt.
+
+PROPOSAL (NARROWEST, AND I HAVE CHANGED NOTHING):
+  Do NOT raise max_plausible_edge_pct. Instead, first make the band MEASURABLE:
+  populate ``rails_ok``, the walked hedge depth, and the node's last-tick age on
+  implausible_edge rows. That is instrumentation, not policy, and it costs
+  nothing. With a week of that data the question "are 5-8% in-play edges real"
+  becomes answerable instead of arguable.
+  IF it then shows the band is fresh and deep, the narrowest treatment is a
+  freshness-gated in-play ceiling — e.g. allow up to 8% ONLY when both books
+  ticked within a few seconds AND the walked hedge covers the full size — leaving
+  the 5% ceiling in force everywhere else. I would not go further than 8%: every
+  band above it is broken pairings in this sample.
+
+--------------------------------------------------------------------------------
+5. WHAT CHANGED IN 5cbd190
+--------------------------------------------------------------------------------
+  pregame_exec.py  ``_kalshi_position_from`` (new); ``_reconcile_job`` fetches the
+                   Kalshi portfolio ONCE; the sizing refusal names its limiter and
+                   logs the pool arithmetic; ``_refuse`` labels its amount.
+  poly_exec.py     explicit 10s HTTP timeout pinned on the SDK's shared client.
+  gates.py         per-file row cache keyed on (path, size, mtime).
+  tests/test_maker_rt_stalls_and_sizing_truth.py  15 new tests.
+  1503 tests pass (1488 before). No trading-behaviour change.
+
+--------------------------------------------------------------------------------
+6. VERIFICATION
+--------------------------------------------------------------------------------
+6.1 THE 30-MINUTE POST-DEPLOY WATCH (deploy 19:59:22Z, checked to 20:22:03Z)
+
+  EVERY stall/deadline line in the window, complete:
+
+      20:03:10 CRITICAL off-loop job(s) [('gates',)] exceeded the 180s deadline
+
+  That is the ENTIRE list. Specifically:
+      fill-poll "has not landed"        BEFORE: ~1 per 5 min   AFTER: ZERO
+      ('reconcile',) 45s breaches       BEFORE: ~1 per 5 min   AFTER: ZERO
+      ('fill_poll',) 45s breaches       BEFORE: ~1 per 5 min   AFTER: ZERO
+      ('gates',) 180s breaches          BEFORE: ~1 per 15 min  AFTER: ONE (see 6.2)
+
+  COUNTERS, before -> after:
+      last pre-deploy stall (19:54:49Z):
+        worker {'submitted': 759, 'completed': 749, 'dropped': 0, 'abandoned': 8,
+                'restarts': 0, 'in_flight': 2, 'alive': True}
+        55 stall/deadline lines in the preceding hour.
+      post-deploy: no stall line has been emitted at all, so no counter snapshot
+        exists to quote — that absence IS the result.
+
+  AND IT IS DOING MORE WORK THAN BEFORE. The 20:10:23Z pass handled 198 poly +
+  166 kalshi instruments — a LARGER watch-set than the 179 + 149 that used to
+  blow the deadline every five minutes — and completed cleanly.
+
+6.2 THE ONE REMAINING BREACH, STATED HONESTLY
+
+  gates exceeded 180s once, at 20:03:10Z. That was its FIRST run after the
+  19:59:22Z restart, when the row cache is empty and it pays the full cold scan.
+  The next cycle landed: ``measurement_gates`` is now present in the summary
+  (soccer n=29, mean 0.810%, EDGE-POSITIVE), which it was NOT before this change —
+  the report had been abandoned every 15 minutes and never landed at all.
+
+  SO THE LIMITATION IS: the cache is per-process, and gitguard restarts 10-21
+  times on a working day, so gates pays one cold scan per restart and that scan
+  can still be abandoned. Warm runs land. The fix is real but partial.
+  FOLLOW-UP (not done here): persist the per-file row cache to disk, keyed the
+  same way on (path, size, mtime). Past-day files are immutable, so a persisted
+  cache would make even the first run after a restart warm. I did not do it in
+  this prompt because it adds a state file to a live trading process and the
+  measured benefit — one abandoned reporting job per restart — did not justify
+  bundling it with a fix to the fill-poll authority.
+
+6.3 THE REST
+
+  pytest      1503 passed (1488 before; +15 new in
+              tests/test_maker_rt_stalls_and_sizing_truth.py). Full suite green.
+              Covers: exactly ONE portfolio fetch for 60 tickers; absent-but-
+              readable is flat; an unreadable portfolio is unknown for EVERY
+              ticker and never flat; an unparseable row is unknown; single-ticker
+              reads still work for the non-batch callers; the gates cache returns
+              the same answer and re-reads a changed file; the 0.94 refusal
+              reproduces with limiter=daily_stake; the recorded reason is TRUE at
+              six prices; a leg-cap refusal does NOT blame the pool; and the log
+              carries the pool arithmetic instead of "$0.00".
+
+  --gates     soccer 29/10 EDGE-POSITIVE, mean 0.810%, p50 0.700%, +$10.30.
+              (29 fills now, up from 28 — today's in-play pair is in it.)
+              mlb/tennis/ufc still MEASURING, unchanged.
+
+  --balance   Kalshi $4,825.59 · Polymarket $2,513.23 · TOTAL $7,338.82
+              Since baseline (Aug 4): venue +$97.38 vs books +$108.45.
+              Reported as UNRELIABLE, not as a mismatch, because 2 maker pairs
+              were open at the window's end — the audit correctly refuses to
+              judge a cost-basis-vs-mark comparison. NO alarm. Deferred to the
+              next flat-to-flat check, which is the honest answer rather than a
+              clean pass I did not get.
+              (Note: Kalshi cash -$49.60 over the window is the 119-contract
+              hedge + its $2.00 fee, reconciled to the cent in the prior session,
+              NOT the pending bank transfer — no withdrawal has posted.)
+
+--------------------------------------------------------------------------------
+7. DELIBERATELY NOT DONE
+--------------------------------------------------------------------------------
+  1. NO REDEMPTION CODE, as instructed — and section T2(c) argues it should stay
+     that way until the "redeemable WITH value" line reads non-zero, because
+     today it would free $0.00.
+  2. THE UNREGISTERED-POSITION ALARM IS STILL A FALSE POSITIVE. T2 was
+     measure+propose, so the fix is proposed (a settled-awaiting-redemption
+     registry) and NOT implemented. Until it is, expect this alarm after every
+     settled pair whose Poly leg won. It fired once today and will fire again.
+  3. max_plausible_edge_pct UNTOUCHED at 5.0, as instructed. The proposal in T4
+     is to instrument the band first (rails_ok, hedge depth, node tick age on
+     implausible_edge rows) — none of which I added, because T4 said measure only
+     and adding columns is a change I was not asked to make.
+  4. The gates cold-start scan (6.2).
+  5. In-play's $500 pool supports ~2 concurrent quotes at $210/quote. Noted, not
+     changed — that is a policy number.
+================================================================================

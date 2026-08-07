@@ -47,7 +47,13 @@ data/cache/group_slugmap.json
 # Claude Code local session/agent state — never commit.
 .claude/
 # Supervisor runtime: logs, heartbeat, STOP_ALL flag (scripts/run_all.ps1). Machine-local, never commit.
-data/ops/
+# NOTE the CONTENTS form (`data/ops/*`, not `data/ops/`): git never descends into an EXCLUDED DIRECTORY,
+# so a `!data/ops/REPORT_*.txt` negation under `data/ops/` would be silently dead. Same idiom as the
+# `data/genz/*` + `!data/genz/*.html` rule below, which is why papi_panel.html is tracked.
+data/ops/*
+# EXCEPT the incident/analysis reports: these are the project's written memory (the KLAMCI incident, the
+# books-vs-banks reconciliation, the in-play funnel...) and losing them costs more than the diff noise.
+!data/ops/REPORT_*.txt
 
 data/cache/
 data/arbitrage_opportunities.csv
@@ -59,3 +65,11 @@ data/og_current_*.json
 data/og_multi/
 data/genz/*
 !data/genz/*.html
+
+# Terminal review snapshots and ad-hoc data exports, dropped in the repo root by the operator's review
+# commands. They are COPIES of live runtime state (caps, expected positions, event CSVs) plus zipped
+# bundles that ran to 64MB — regenerable, never source, and exactly the kind of thing that silently
+# lands in a commit during a busy deploy.
+review_*/
+review_*.zip
+data-*.zip

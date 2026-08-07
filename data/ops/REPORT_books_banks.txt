@@ -1,0 +1,243 @@
+BOOKS vs BANKS — 2026-08-04  (short version; full detail in docs/BOOKS_VS_BANKS_20260804.md)
+
+================================================================================
+THE HEADLINE — the $5.23 gap is fully explained, to $0.002
+================================================================================
+Flat-to-flat since the 2026-07-31 baseline: books said +$8.53, exchanges moved +$3.30.
+
+  exchanges actually moved                                          +3.2988
+  books claimed                                                     +8.5301
+    - three unwinds paid in cash, never booked into lifetime        -6.9900
+  books, corrected                                                  +1.5401
+  remaining                                                         +1.7587
+    explained: baseline snapped with a pair OPEN (Kalshi at COST
+      $70.00 vs Poly at MARK $27.91; it settled for $100.00)        +1.8561
+    explained: naked share dust an unwind could not sell            -0.0994
+  UNEXPLAINED                                                       +0.0020   (rounding)
+
+Both causes are fixed: exits enter lifetime (T2); an open-pair snapshot can no
+longer be a baseline or fire a red alert (T3).
+
+================================================================================
+T1 — CLASSIFIED CASH  (full table: data/ops/CASH_CLASSIFIED_20260804.txt)
+================================================================================
+Window 2026-07-31T15:27:25Z -> 2026-08-04T14:12Z. Read-only probe; nothing placed.
+
+  kalshi  fill_open    n=22   -381.5946     poly  fill_open    n=17   -732.1347
+  kalshi  fill_close   n= 4   +102.8800     poly  settlement   n= 3   +184.0730
+  kalshi  fee          n=14     -9.3805     transfer/rebate    n= 0      0.0000
+  kalshi  settlement   n=11   +479.6500     UNKNOWN            n= 0      0.0000
+
+  Kalshi   4519.7251 + 191.5549 = 4711.2800   venue says 4711.2800   diff +0.0000
+  Poly     2618.9910 - 548.0618 = 2070.9292   venue says 2070.9292   diff -0.0000
+  => BOTH VENUES REPRODUCE TO THE CENT. Nothing unclassified. No deposits/withdrawals.
+
+Two Kalshi mechanics this pinned down (getting them wrong missed by $666):
+  * Kalshi debits COLLATERAL on OPEN, credits proceeds on CLOSE. A fill reported
+    `action=sell side=no book_side=ask` while FLAT is an OPEN of NO: cash out =
+    count x (1 - yes_price). Proven by JEJBMU-6 (14.91+44.74+76.00 sh = $86.9220 =
+    the settlement row's no_total_cost_dollars) and by the 00:00Z->08:00Z cash
+    move of -105.6609 = collateral 105.3720 + taker fees 0.2889.
+  * A settlement row's fee_cost RESTATES that market's lifetime FILL fees. It is
+    not a second charge. Counting it twice would have double-booked $9.38.
+
+THE THREE EXITS, books vs venue cash:
+  2026-08-02T00:31Z  26AUG01DIMCAL total_goals|1.5     -2.2000  vs  -2.3106
+  2026-08-02T02:45Z  26AUG01PORSEA team_total|por|1.5  -4.7500  vs  -4.7421
+  2026-08-02T22:00Z  26AUG02RIVCARC total_goals|5.5    -0.0400  vs  -0.0367
+                                             TOTAL     -6.9900  vs  -7.0894
+  The -0.0994 residual is NOT exit cost — it is share dust the unwind could not
+  sell (DIMCAL bought 116.72 YES, Kalshi would only take 116.00 back; 0.72 sh x
+  $0.16 expired worthless). Reported, NOT booked. See "open items".
+
+================================================================================
+T2 — EXIT COSTS NOW ENTER LIFETIME
+================================================================================
+Bug: an unwound market settles with us FLAT, so no trade_settled row is ever
+written for it, and the toll lived only in unwind_cost_today — which rolls to
+zero at UTC midnight.
+
+New counter settled_pnl_exits_lifetime. A VERIFIED exit books into BOTH
+settled_pnl_lifetime (so lifetime tracks venue cash) AND the exits bucket.
+  hedge_unwound   -> always (a zero-cost row simply adds nothing)
+  hedge_declined  -> only when it carries a real paid cost
+  unwind_FAILED   -> NEVER: that position still exists and settles later via
+                     mark_corrected/trade_settled. Booking it here double-counts.
+
+ONE formula, one place — state.hedged_lifetime():
+    hedged = lifetime - untracked - exits        (exits are negative)
+used by state.summary, state.heartbeat, balance.books_from and balance.run_cli.
+
+Idempotency: an exit persists immediately (like hedge_locked) and nothing replays
+the CSV at startup. Restatement key `exits-20260804` (-6.99, n=3) is written into
+the tuning file by the SAME atomic write that moves the money, and is refused
+forever after. Pre-Jul-30 history untouched.
+
+NEW LIFETIME NUMBERS
+                                     before        after
+  settled_pnl_lifetime             +32.3847     +25.3947
+  settled_pnl_hedged_lifetime      +24.0059     +24.0059   <- UNCHANGED (the point)
+  settled_pnl_untracked_lifetime    +8.3788      +8.3788
+  settled_pnl_exits_lifetime              —      -6.9900
+  settled_exits                           —            3
+
+================================================================================
+T3 — HONEST WINDOWS (balance.py stays pure; all three unit-tested)
+================================================================================
+ 1. Only a FLAT snapshot may be a baseline. The first flat ok snapshot after this
+    deploys becomes baseline_v2; the old one is kept as baseline_v1 and the report
+    says so once. (Flatness asks whether a VALUATION can move — a resolved,
+    unredeemed leg is marked at $1.00 face and stays "flat".)
+ 2. A window with a pair open at EITHER end may not fire red. It is labelled
+    "unreliable while pairs are open (marks move)" and judgement defers to the next
+    flat-to-flat window. The number is still measured and still printed.
+    Flat-to-flat keeps the $5 threshold; a real breach now adds "Both ends of this
+    window were flat, so it is not mark noise."
+ 3. Every window (not just a breach) names the split:
+       where: Kalshi cash -$10.00/positions +$0.00 · Polymarket cash -$15.00/positions +$0.00
+ 4. A BOOK CORRECTION IS NOT A DISCREPANCY (found by deploying). The -$6.99
+    restatement moves the BOOKS when applied, for cash the venues moved Aug 2 --
+    indistinguishable from $6.99 leaving the account, so it would have fired the
+    exact false red alert the rest of T3 removes, at the very next check. An
+    adjustment is cash the books never saw; a restatement is the mirror image.
+    Entries are now dated with BOTH times and a window subtracts one only when
+    applied_ts is inside and effective_ts is not (both inside -> the window already
+    holds the real venue move; applied before -> both endpoints include it). It
+    subtracts exactly what it declares: a real $20 leak alongside still alarms.
+    Every correction is NAMED, like every adjustment.
+ Also fixed: --balance raised UnicodeEncodeError on a cp1252 console AFTER the
+ venue reads, the persist and the re-anchor — it ran, changed state, and printed a
+ traceback instead of its answer.
+
+================================================================================
+T4 — THE WORDS MATCH THE POSITION (alerts.py; escaping unchanged)
+================================================================================
+ 1. Any unhedged remainder forbids "GUARANTEED". 26AUG04JEJBMU O/U5.5 held 142.2222
+    Poly sh against 135.65 Kalshi: pair +$1.80, remainder -$2.27 (-100%) — the trade
+    LOST money while the alert called it a lock. Now:
+      "hedged 135.65 sh · 6.5722 sh riding unhedged ($2.27 at risk, settles on its own)"
+    plus a line saying the net covers only the matched shares. Priced on whichever
+    leg holds the remainder; 0.01-sh tolerance so ordinary dust never warns.
+ 2. A dust fill with NO hedge never uses the LOCKED template. The 1-sh U1.5 fill at
+    3c was announced "profit is GUARANTEED either way · pays $1.00" with the hedge
+    shown as "$— @ —". It now gets its own short line, honest about both outcomes.
+ 3. "Lifetime" says which lifetime: "+$32.38 settled (+$33.62 including today's
+    estimate)" — overnight Aug 4 it read +$33.62 against a settled truth of +$32.38.
+ 4. [UNTRACKED naked] settled rows say "the UNHEDGED REMAINDER of this trade ...
+    luck, not edge. The hedged pair on this game is reported separately."
+
+================================================================================
+T5 — KALSHI MAKER FEE: MEASURED, AND IT IS NOT ZERO EVERYWHERE
+================================================================================
+Evidence: our own GET /portfolio/fills, 2026-07-22..08-04, 91 fills, 46 MAKER.
+
+  FORMULA  maker fee = ceil( 0.0175 * C * p * (1-p), 4dp )
+           = exactly a QUARTER of the 0.07 taker rate, same base.
+           All 8/8 fee-charging maker fills reproduce TO THE CENT.
+
+  CHARGED     : KXMLBGAME, KXATPMATCH, KXWTAMATCH
+  NOT CHARGED : every soccer + UFC series — 38/38 maker fills at exactly $0.00,
+                including one of 353 sh and one of 179 sh.
+
+Change: quotes.rest_maker_fee() is subtracted from the floor AND from net_at_quote
+for rest-kalshi, rate from cfg.kalshi_maker_fee_rates. A series absent from the map
+prices at zero, so SOCCER AND UFC QUOTING IS BYTE-IDENTICAL (asserted by test).
+kalshi_maker_fee_series (the hard-refusal list) stays EMPTY and untouched — a fee
+that is priced does not need a series banned; its stale "verified list" comment is
+corrected.
+
+EFFECT ON EDGES: cost is 0.0831% at 5c/95c, 0.3281% at 25c/75c, peak 0.4375% at 50c
+(target_net is 0.6%). Share of achievable samples clearing 0.6%, before -> after:
+    mlb|inplay   31.40% -> 25.60%   <- where it actually bites
+    tennis|pre    2.40% ->  2.36%
+    mlb|pre/gap, tennis|inplay: 0.00% before and after (p50 already -1.80%/-0.94%)
+    soccer|pre 14.92%, ufc|pre 0.00% — UNAFFECTED (rate 0)
+MLB and tennis are both still MEASURING on --gates (0 clean hedged fills), so no
+realised edge changes; the correction lands before those samples are collected.
+
+================================================================================
+T6 — EXCESS SHARES (report only, nothing changed)
+================================================================================
+WHY 6.5722 sh rode unhedged: not a partial fill, not floored sizing, not a venue
+minimum. place_market_buy sends best_ask + 2 TICKS with size=floor(target); a Poly
+market BUY spends the whole USDC maker amount, so price improvement comes back as
+EXTRA SHARES, not a refund. Predicted vs venue, to 6 decimals:
+    14.91 -> floor 14 @ 0.31, filled 0.29 -> 14.965517 (venue 14.965516)  +0.0555
+    44.74 -> floor 44 @ 0.31, filled 0.29 -> 47.034483 (venue 47.034481)  +2.2945
+    76.00 -> floor 76 @ 0.38, filled 0.36 -> 80.222222 (venue 80.222221)  +4.2222
+                                                              TOTAL       +6.5722
+Overshoot = 2 ticks / fill price -> WORSE THE CHEAPER THE HEDGE:
+    +2.1% @95c   +5.6% @36c   +6.9% @29c   +20% @10c   +40% @5c
+
+CUMULATIVE NAKED-REMAINDER P&L. All [UNTRACKED naked] rows total +$39.13/$128.61,
+but that is the +$42 UFC ghost-order stack and a +$0.40 ATP row — naked ORDERS, not
+over-bought hedges. The hedge-overshoot remainders alone:
+    2026-07-29  26JUL29TOTSYD  4.5   18.3489 sh  $6.65   -6.6456   -99.9%  sellable
+    2026-07-31  26JUL31BCBAR   4.5    1.5000 sh  $0.44   -0.4399  -100.0%  <5 sh dust
+    2026-08-01  26JUL31JUAPUM  5.5    6.5143 sh  $0.48   +6.0355 +1257.4%  sellable
+    2026-08-04  26AUG04JEJBMU  1.5    1.2298 sh  $1.17   +0.0559    +4.8%  <5 sh dust
+    2026-08-04  26AUG04JEJBMU  5.5    6.5722 sh  $2.27   -2.2737  -100.2%  sellable
+                               TOTAL             $11.01  -3.2678   -29.7%
+Five hedges, five overshoots — this happens EVERY time, not occasionally. EV of a
+naked share bought at market is ~0, so -29.7% on n=5 is noise; the VARIANCE is not
+(+/-$6 swings under a strategy selling a locked 0.6-1%).
+
+OPTIONS — YOUR CALL:
+  A. Ride (status quo). $0 to implement, EV~0, but +/-$6 per-event variance that
+     GROWS with hedge size — at the $70 quote cap a 10c hedge rides ~20% naked.
+  B. Sweep-sell above a threshold. Only 3 of 5 were sellable (Poly minimum is 5 sh;
+     below that it is genuinely un-closable dust, already handled by _book_dust).
+     Flatten cost = 1 tick spread + 0.05*min(p,1-p) fee:
+        TOTSYD 18.3489sh @0.362 -> $0.516 (7.8%)
+        JUAPUM  6.5143sh @0.074 -> $0.089 (18.6%)
+        JEJBMU  6.5722sh @0.345 -> $0.179 (7.9%)
+        => ~$0.78 of CERTAIN cost to remove three +/-$6 exposures.
+     Note the fee is a fraction of stake, so it is worst on cheap legs — exactly
+     where the overshoot is largest.
+  C. (Not asked for; it is the root cause and the cheapest.) Don't over-buy: size
+     the USDC amount from an expected fill price rather than the padded limit, or
+     use a marketable limit with share semantics. Excess -> ~0 for $0 of fees, and
+     it covers the sub-5-share cases B structurally cannot. The 2-tick padding
+     exists to survive a moving book, so this trades a KNOWN over-buy for a POSSIBLE
+     under-hedge — a decision, not a patch.
+  RECOMMENDATION: C, with B as the fallback for whatever remainder survives.
+
+================================================================================
+OPEN ITEMS (not actioned — flagged)
+================================================================================
+ 1. -$0.0994 of naked share dust from the three unwinds is confirmed against venue
+    cash but deliberately NOT booked: it is not exit cost, and sweeping it into the
+    exits bucket would misname it.
+ 2. `auto_flattened` never reaches lifetime — state.record() only inspects
+    hedge_declined|hedge_unwound|unwind_FAILED. It has NEVER FIRED (0 rows in every
+    CSV), so nothing is mis-stated today, but it is a verified exit that pays real
+    cash and is the same class of hole. Left alone because the task named exactly
+    three bookable events.
+
+================================================================================
+VERIFICATION
+================================================================================
+  pytest                                    1380 passed (51 new; no live state written)
+  python -m src.genz.maker_rt --gates       clean, unchanged (soccer 25 EDGE-POSITIVE)
+  python -m src.genz.maker_rt --balance     clean (cp1252 crash fixed)
+
+DEPLOYED AND CONFIRMED LIVE
+  restatement applied ONCE at 2026-08-04T14:54:50Z. Counters now:
+     settled_pnl_lifetime 25.3947 | exits -6.99 | settled_exits 3
+     untracked 8.3788 | hedged 24.0059 | restatements_applied ['exits-20260804']
+  baseline re-anchored on the first flat snapshot after it:
+     baseline_v2 = 2026-08-04T15:00:32Z, TOTAL $7,241.44
+                   (Kalshi $4,711.28 + Polymarket $2,530.16, both flat)
+                   carrying the CORRECTED books.
+     baseline_v1 = 2026-07-31T15:27:25Z kept intact (Kalshi $70.00 COST vs
+                   Polymarket $27.91 MARK -- the $1.86 artefact). Latch set; once only.
+
+THE BOOKS LINE THE NEXT 8h BALANCE CHECK SHOULD PRINT
+(the --balance run above already prints it verbatim):
+
+   My books: settled lifetime +$25.39 (+$24.01 from hedged pairs, +$8.38 luck, -$6.99 exit costs) · today's locked estimate +$1.67 (not settled yet — it is still in the positions above)
+
+  +$25.39 / +$24.01 / +$8.38 / -$6.99 are exact and hold unless something further
+  settles; the locked estimate moves with the day. The "NEW BASELINE (baseline_v2)"
+  line has already printed and will not repeat. Both windows currently read
+  "match (diff $0.00)" with the per-venue split beneath them.

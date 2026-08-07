@@ -1,0 +1,317 @@
+================================================================================
+BIGGER SIZES + THE IN-PLAY RING-FENCE
+Deployed 2026-08-06T17:38:29Z, commit 241e25f. Rails untouched.
+================================================================================
+Written 2026-08-06 ~17:55Z. Every number below is measured, from the shipped
+config, the live counters, or a read-only venue call — none is arithmetic on
+intent.
+
+--------------------------------------------------------------------------------
+0. THE HEADLINE
+--------------------------------------------------------------------------------
+IN-PLAY IS PLACING. Within ten minutes of the deploy:
+
+    17:48:06  SIZE 212 sh @ 0.9900 ($209.88) [inplay] binding=quote_usd_max
+    17:48:06  PLACED · Soccer · Debreceni vs Copenhagen · in-play
+
+The binding constraint on in-play moved from `daily_stake` (its own budget, fully
+reserved by pre-game) to `quote_usd_max` (the size of the bet we chose). That is
+the whole point of the ring-fence, and it is visible in one log line.
+
+And the fence holds in the direction that matters. At 17:48:43Z:
+
+    pre-game : $63.36 spent, $0 reserved, pool $2,500  -> $2,436.64 headroom
+    in-play  : $0 spent, $420.18 RESERVED, pool $500   ->    $79.82 headroom
+
+In-play is nearly full on its own pool while pre-game's is untouched. Before the
+change the identical situation refused every in-play quote, because there was one
+pool and pre-game had already reserved it.
+
+--------------------------------------------------------------------------------
+1. PRECONDITION — --gates, RUN FIRST
+--------------------------------------------------------------------------------
+  mlb        0/13        —     —     —      0.00   MEASURING  (need 13 more)
+  soccer    28/10       0.828    0.707   -0.000      9.91   EDGE-POSITIVE
+  tennis     0/33        —     —     —      0.00   MEASURING  (need 33 more)
+  ufc        0/10        —     —     —      0.00   MEASURING  (need 10 more)
+
+Soccer EDGE-POSITIVE on 28 clean hedged fills. Precondition MET, so the work
+proceeded. Re-run after the deploy: BYTE-IDENTICAL (gates reads the append-only
+event log; a caps change cannot move it, and did not).
+
+--------------------------------------------------------------------------------
+2. OLD -> NEW
+--------------------------------------------------------------------------------
+  key                     old      new    note
+  ---------------------------------------------------------------------------
+  quote_usd_max          105      210     rest-leg notional cap
+  max_pair_stake_usd     525     1050     MUST scale with the leg or the raise is inert
+  max_daily_stake_usd   1200     2500     now PRE-GAME's pool only
+  inplay_pool_usd          —      500     NEW — ring-fenced, pre-game cannot touch it
+  inplay_max_loss_usd      —       40     NEW — in-play realized loss/day, tolls included
+  max_fills_per_day       20       40     SHARED across both phases
+  max_open_quotes         12       24     SHARED
+  max_open_per_game        3        4     NOT 6 — see below
+  auto_flatten_max_usd   180      360     from its own rule, not the directive's number
+
+  auto_flatten: the rule is the original ratio 120/70 = 1.7142857 against the rest
+  leg. 210 x 1.7142857 = 360.0 EXACTLY. The rule and the directive agree; the
+  number used is the rule's.
+
+  WHY max_open_per_game IS 4 AND NOT 6 (in the config file, not just here): at
+  $1,050/pair, six slots on one match is $6,300 of projected pair against a
+  ~$7,350 bankroll — one match holding ~86% of the book. And because there is
+  exactly ONE in-flight hedge guard globally, six correlated fills arriving on the
+  same goal do NOT hedge in parallel: they queue, the later ones time out, and the
+  timeouts become an unwind cascade at the worst possible moment. 4 x $1,050 =
+  $4,200 is already the largest single-match concentration this system has ever
+  allowed.
+
+  UNCHANGED, each with its reason written into config.yaml:
+    max_daily_loss_usd $50   the brake. Never hit, so it is not throttling us;
+                             doubling it only makes a bad day worse.
+    target_net 0.6%          percentages do not scale with size
+    max_plausible_edge_pct 5.0%
+    hedge_execution_floor -1.0%
+    in-play circuit          first_fill_pause_s 120, halt_locked_net -2%
+
+  GATES HONESTY, stated in the config file so a future reader cannot mistake it
+  for an evidence-based decision: these caps are GLOBAL, not per-sport. mlb
+  (0/13), tennis (0/33) and ufc (0/10) are still MEASURING and now ride on
+  SOCCER's evidence at double the size. That is a deliberate owner decision.
+
+--------------------------------------------------------------------------------
+3. THE FUNNEL, BEFORE AND AFTER
+--------------------------------------------------------------------------------
+A HONEST NOTE ON WINDOWS FIRST. T5 asked for a genuine 24h baseline. It does not
+exist: the funnel counters shipped at 2026-08-06T15:59:43Z and this change went
+out at 17:38:29Z, so the longest possible "before" window is 99 minutes. The
+baseline below is 76 minutes and the after-window is 10 minutes. I have given
+RATES rather than pretending the totals are comparable, and the top-of-funnel
+ordering is still not fully settled (it has moved between every reading).
+
+BEFORE — 2026-08-06 15:59:43Z -> 17:15:31Z (76 min), 2,588,592 in-play evaluations
+AFTER  — 2026-08-06 17:38:29Z -> 17:48:43Z (10 min),   630,771 in-play evaluations
+
+  stage                          BEFORE %      AFTER %    moved
+  ------------------------------------------------------------------
+  hedge_thin_cooldown              35.06        31.87     -3.2
+  shock-freeze (frozen)            27.53        30.12     +2.6
+  inplay_stale                     29.99        29.44     -0.6
+  now_behind                        4.65         3.79     -0.9
+  no_hedge_ask                      0.93         1.71
+  poly_leg_cap                      0.84         0.85
+  -> REACHED THE EXECUTOR           0.40         0.78     +0.38  (~2x)
+       size_refused:daily_stake     0.24         0.22
+       PLACED                     16 total    17 total
+
+  THE TWO NUMBERS THAT MOVED, and they are the ones the change was aimed at:
+
+  (a) OF THE IN-PLAY EVALUATIONS THAT REACH THE EXECUTOR, THE SHARE REFUSED FOR
+      SIZE FELL FROM 58% TO 29%.
+        before: 6,104 refused of 10,463 arrivals
+        after : 1,418 refused of  4,922 arrivals
+  (b) IN-PLAY PLACEMENT RATE ROSE ~8x.
+        before: 16 placements / 76 min = 0.21/min
+        after : 17 placements / 10 min = 1.67/min
+
+  THE RAILS ARE NOW THE WALL, AND THIS IS THE EVIDENCE THE P2 CONVERSATION NEEDED.
+  With daily_stake no longer the binding constraint on in-play, the top three
+  stages are all RAILS: hedge-thin cooldown 31.9%, shock-freeze 30.1%, stale
+  29.4% — 91.4% of in-play evaluations, against 0.22% now lost to budget. That is
+  the number the prompt asked for: if in-play is to trade materially more than it
+  now does, the next thing in the way is the rails, not the money.
+  I have changed NOTHING about them, and I would not on this evidence: in-play
+  has 0 fills since the deploy, so there is still no realized data saying the
+  edge those rails filter out is worth having.
+
+  PRE-GAME, same after-window (control): 44,824 evaluations, now_behind 95.4%,
+  to_executor 1.35%, PLACED 2. Pre-game is dominated by not-at-best, as always,
+  and its pool sat at $2,436 of headroom throughout — it was never squeezed by
+  in-play.
+
+--------------------------------------------------------------------------------
+4. T3 — THE NEW BINDING ORDER, MEASURED (real plan_size / can_place)
+--------------------------------------------------------------------------------
+Deep books, empty pools, the shipped caps. NOT arithmetic — this is the actual
+sizing code run over realistic price shapes.
+
+  shape                            phase    size  binding         rest$    pair$
+  ------------------------------------------------------------------------------
+  cheap rest / dear hedge (TBTOR)  pre      1039  pair_cap        62.34  1049.39
+  cheap rest / dear hedge          inplay    495  daily_stake     29.70   499.95
+  mid / mid (0.35/0.63)            pre       600  quote_usd_max  210.00   588.00
+  mid / mid                        inplay    510  daily_stake    178.50   499.80
+  dear rest / cheap hedge          pre       283  quote_usd_max  209.42   277.34
+  dear rest / cheap hedge          inplay    283  quote_usd_max  209.42   277.34
+  near-certain (0.94/0.05)         both      223  quote_usd_max  209.62   220.77
+  balanced (0.50/0.49)             both      420  quote_usd_max  210.00   415.80
+
+CONCURRENT QUOTES EACH POOL ACTUALLY SUPPORTS (each successive quote re-sized
+against the shrinking headroom, exactly as production does):
+
+  pre     TBTOR shape        3   then below_venue_minimum(daily_stake)
+  pre     mid/mid            5   then below_venue_minimum(daily_stake)
+  pre     dear/cheap         9   then below_venue_minimum(daily_stake)
+  pre     near-certain      12   then below_venue_minimum(daily_stake)
+  pre     balanced           7   then below_venue_minimum(daily_stake)
+  inplay  TBTOR shape        1 · mid/mid 1 · dear/cheap 2 · near-certain 3 · balanced 2
+
+IS max_open_quotes = 24 REACHABLE? NO.
+  pre-game : 12 of 24 in the BEST case (the cheapest possible pair shape), 3-9 in
+             ordinary shapes.
+  in-play  : 3 of 24 in the best case, 1-2 in ordinary shapes.
+
+SO, PLAINLY: `daily_stake` IS STILL THE WALL FOR PRE-GAME — just a higher one.
+The prompt predicted ~12 concurrent against $2,500 and that is exactly what the
+real sizing code produces. `max_open_quotes: 24` is not a cap anyone will meet;
+it is headroom above a budget that binds first. For in-play the wall is now its
+own $500 pool, which is the intended, bounded shape of the experiment — in-play
+hit $420 of $500 within ten minutes of the deploy.
+
+--------------------------------------------------------------------------------
+5. T1 — VENUE CASH, MEASURED TODAY
+--------------------------------------------------------------------------------
+  Kalshi      $4,869.29    4.03 full-size pairs fundable (margin x1.15)   OK
+  Polymarket  $2,446.84    2.03 full-size pairs fundable (margin x1.15)   OK
+  TOTAL       $7,316.13
+
+POLYMARKET IS THE TIGHT SIDE: it funds just TWO max-size pairs. At the old $525
+pair it funded four. This is a real new constraint at these sizes and it is why
+the check exists — the stake pools bound what we intend to spend and know nothing
+about what is in each bank, and the two legs of a pair draw on DIFFERENT banks.
+
+HOW IT WORKS: free cash is read on the existing 5-minute off-loop reconcile and
+cached — never on the quoting path (a balance read there is exactly the hot-path
+venue call phase 2 removed). A quote whose leg exceeds its bank's cached cash x
+1.15 is refused with binding reason `venue_cash`, counted in binding_counts and
+in the funnel. When either bank drops below one max pair it alerts, throttled to
+once per venue per hour.
+UNKNOWN IS NOT A REFUSAL: a failed read caches None and the check abstains. The
+stake pools are still in force underneath, and refusing every quote because a
+balance endpoint blipped would be a self-inflicted outage.
+
+--------------------------------------------------------------------------------
+6. T2 — HEDGE-MISS INSTRUMENTATION (measurement only, no behaviour change)
+--------------------------------------------------------------------------------
+THE QUESTION: in-play's entire -$6.69 lifetime came from hedge MISSES, not from
+bad pairs (-$2.20, -$4.75, -$0.96), and in-play allows the hedge 1500ms against
+pre-game's 3000ms in faster books. Nothing recorded how long a hedge actually
+took, so "is the timeout guilty?" was unanswerable.
+
+THREE NEW CSV COLUMNS on every fill outcome row, both phases:
+  hedge_ms       wall time from hedge submit to venue answer
+  hedge_outcome  locked | partial | missed | error
+  hedge_depth    shares the pre-hedge walk could cover at that moment
+
+Plus a per-phase roll-up in the panel (`live.hedge_stats`): n, mean/max ms, the
+phase's own timeout, outcome counts, and the last 10 MISS latencies. Every miss
+also logs a line naming the elapsed ms against the phase timeout and the walked
+depth.
+
+HOW TO READ IT WHEN THE DATA ARRIVES:
+  misses clustered just under 1500ms  -> the timeout is causing them (next prompt)
+  misses on shallow walked depth, or at latencies well inside the timeout
+                                      -> the book ran away; the timeout is innocent
+NO DATA YET: zero fills since the 17:38Z deploy, so `hedge_stats` is empty. This
+answers nothing today; it makes the question answerable from the next fill on.
+
+NOTE ON SCALE, since it changes the stakes: unwind tolls scale with size. The
+-$4.75 in-play exit of 2026-08-02 is ~-$9.50 at these caps, so the -$40 in-play
+sub-cap is roughly FOUR bad exits, not eight.
+
+--------------------------------------------------------------------------------
+7. T4 — VISIBILITY (every key REAL and ENFORCED — audit N16)
+--------------------------------------------------------------------------------
+ARMED BANNER, verbatim from the deploy at 17:38:29Z:
+
+  LIVE ARMED (rest-kalshi,rest-poly; phases: pre+inplay). stray-cancel=0.
+  pre-game daily_stake<=$2500 + RING-FENCED in-play pool $500 (neither pool can
+  borrow the other's). SHARED across both phases: open<=24 (reserve/direction 3),
+  fills/day<=40, loss<=$50. Per bet: quote<=$210, pair<=$1050, per-game<=4,
+  sanity_ceiling 5.0%. in-play loss sub-cap -$40/day (unwind tolls included;
+  breach stops IN-PLAY only). in-play circuit: first-fill pause 120s, day-halt at
+  locked_net -2.0%.
+
+  It previously claimed "SHARED caps (ONE budget across pre-game AND in-play —
+  there are no per-phase exposure caps)", which this change made false.
+
+DIGEST — in-play on its own line:
+  In-play (ring-fenced): 2 offers · 1 taken · $143.00/$500.00 of its own pool used
+     · -$12.50 vs its $40.00 daily loss limit
+  ...and on breach:
+  🔴 in-play is STOPPED for the day (it hit its own loss limit) — pre-game continues
+
+PANEL: `live.by_phase` carries stake/reserved/pool/headroom/pnl per phase plus
+in-play's loss_cap, loss_left and budget_halted; `live.venue_cash` and
+`live.hedge_stats` are new alongside.
+
+BOTH NEW CONFIG KEYS ARE READ AND ENFORCED in caps.LiveCaps — `inplay_pool_usd`
+by pool_for()/committed_stake()/can_place(), `inplay_max_loss_usd` by
+_check_inplay_loss() and by eligible(). Pinned by tests.
+
+--------------------------------------------------------------------------------
+8. VERIFICATION
+--------------------------------------------------------------------------------
+  pytest      1488 passed (1463 before; +25 new in
+              tests/test_maker_rt_inplay_ringfence.py), full suite green.
+              The new tests cover exactly what was asked:
+                * in-play places while pre-game has reserved its ENTIRE ceiling
+                * neither pool can borrow the other's (both directions)
+                * an in-play pool breach refuses in-play and NEVER day-halts
+                * a pre-game pool breach still day-halts exactly as before
+                * the -$40 sub-cap stops in-play while pre-game keeps running
+                * the sub-cap counts UNWIND TOLLS (adjust_pnl), not just pairs
+                * the shared $50 brake and the 40-fill cap bind across BOTH phases
+                * pre-game losses never trip the in-play sub-cap
+                * the sub-cap resets with the UTC day; disabled (0) never halts
+                * a reservation is released into the pool it came from
+                * venue_cash refuses on the rest bank AND the hedge bank, is
+                  counted, and an UNREADABLE balance is not a refusal
+                * EVERY untouched rail still holds, read from the shipped config:
+                  shock_move 0.05 / window 10 / freeze 30, persist_ms 1500,
+                  conn_fresh_s 30, node_quiet_max_s 180, stale_grace_s 5,
+                  freeze_cooloff_s 10, first_fill_pause_s 120,
+                  halt_locked_net -0.020, hedge_timeout_ms 1500,
+                  target_net 0.006, ceiling 5.0, hedge floor -0.010
+  --gates     before == after, byte-identical (section 1)
+  --balance   run after the deploy:
+                Kalshi $4,875.28 (cash $4,869.29 + positions $5.99)
+                Polymarket $2,472.64 (cash $2,446.84 + positions $25.80)
+                TOTAL $7,347.92
+                Since baseline (Aug 4): +$106.48 · books +$108.06 · diff $1.57,
+                correctly reported as UNRELIABLE-while-pairs-are-open (2 open).
+                No books-vs-banks alarm.
+  deploy      17:38:29Z ARMED with the new banner; caps confirmed live in the log
+              ("open 2/24", "$63.36 of $2500.00 used", in-play SIZE 212 sh
+              binding=quote_usd_max). runstate restarts 1 -> 2. feed_ok=True,
+              halted=False.
+
+--------------------------------------------------------------------------------
+9. DELIBERATELY NOT DONE / KNOWN GAPS
+--------------------------------------------------------------------------------
+  1. THE RAILS (P2). Untouched, as instructed, and section 3 now shows them
+     holding 91.4% of in-play evaluations — they ARE the wall. That is the
+     evidence a P2 conversation would start from, and it is not yet a reason to
+     act: in-play has taken 0 fills since the deploy, so nothing says the edge
+     the rails filter out is worth having. Its lifetime is still -$6.69/12 fills.
+  2. NO GENUINE 24h BASELINE EXISTS. The counters were 76 minutes old when this
+     shipped. Both windows here are short and the top-of-funnel ordering has
+     moved between every reading. The bottom of the funnel (executor arrivals,
+     refusals, placements) has been stable and is what the conclusions rest on.
+  3. HEDGE FORENSICS HAVE NO DATA YET (0 fills post-deploy). The schema is live;
+     the answer is not.
+  4. max_open_quotes 24 is unreachable (section 4). I did not adjust it — it is
+     harmless headroom, and the number that actually governs is the pool. Worth
+     knowing before anyone reads "24 slots" as capacity.
+  5. POLYMARKET FUNDS ONLY 2 MAX-SIZE PAIRS. Not a bug and not blocking, but at
+     these caps it is the tightest real constraint in the system after the pools,
+     and it is now visible rather than latent.
+  6. Legacy daily-caps files (written before the ring-fence) have no per-phase
+     split. On the one restart that matters, the whole day's spend is attributed
+     to PRE-GAME — the safe direction, since it shrinks the proven earner's pool
+     rather than handing the experiment a second budget. Logged when it happens.
+  7. The in-play reserve is per-DIRECTION (3 of 24), still not per-PHASE. The
+     ring-fence bounds in-play's MONEY, not its slot count; if slots ever become
+     the in-play constraint that is a separate change.
+================================================================================

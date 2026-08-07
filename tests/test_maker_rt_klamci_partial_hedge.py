@@ -349,11 +349,17 @@ def _quoted_only(tmp_path):
     return ex, poly, kx, sent
 
 
+# THE CLOCK. ``NOW``/``TS`` pin the incident instant, but the 48h quoted scope used to age against the
+# WALL clock — so on 2026-08-07, 56.5h after the fixture date, the scope pruned itself empty and these
+# tests stopped testing anything. The two that demand a FIND went red; the four that assert the sweep
+# stays QUIET went green FOR THE WRONG REASON, which is the dangerous half: the guard against the next
+# KLAMCI silently became a no-op. ``now_ts=TS`` injects the clock, and every "stays quiet" case below now
+# carries a CONTROL that proves the same rig still screams when it should.
 def test_the_sweep_finds_the_unregistered_poly_leg(tmp_path):
     """The 2026-08-05 state, exactly: 80 Under shares in the wallet, nothing in any registry."""
     ex, poly, _kx, sent = _quoted_only(tmp_path)
     poly.balances[TOKEN] = 80.0
-    found = ex._sweep_unregistered(NOW)
+    found = ex._sweep_unregistered(NOW, now_ts=TS)
     assert [f["instrument"] for f in found] == [TOKEN]
     assert found[0]["shares"] == pytest.approx(80.0)
     assert any("UNTRACKED POSITION" in m for m in sent), "a RED alert, naming the market"
@@ -363,18 +369,24 @@ def test_the_sweep_finds_the_unregistered_poly_leg(tmp_path):
 def test_the_sweep_alerts_but_does_not_halt(tmp_path):
     """An unregistered position needs a human, not a stopped maker — halting over one that may well be
     perfectly hedged trades a silent failure for a loud useless one."""
-    ex, poly, _kx, _sent = _quoted_only(tmp_path)
+    ex, poly, _kx, sent = _quoted_only(tmp_path)
     poly.balances[TOKEN] = 80.0
-    ex._sweep_unregistered(NOW)
-    assert ex.caps.halted is False and ex.orphan is None
+    found = ex._sweep_unregistered(NOW, now_ts=TS)
+    assert found, "the position must actually be FOUND, or 'it did not halt' asserts nothing"
+    assert any("UNTRACKED POSITION" in m for m in sent), "it screamed..."
+    assert ex.caps.halted is False and ex.orphan is None, "...and kept trading"
 
 
 def test_the_sweep_ignores_positions_on_markets_we_never_quoted(tmp_path):
     """This funder wallet holds ~180 positions that are not ours. None of them may ever trigger this."""
     ex, poly, _kx, sent = _quoted_only(tmp_path)
     poly.balances["some-other-bitcoin-token"] = 5000.0
-    assert ex._sweep_unregistered(NOW) == []
+    assert ex._sweep_unregistered(NOW, now_ts=TS) == []
     assert sent == []
+    # CONTROL: the scope is LIVE. A 5000-share position out of scope is ignored while an in-scope one is
+    # still caught — without this, a sweep that had pruned itself into a no-op would pass identically.
+    poly.balances[TOKEN] = 80.0
+    assert [f["instrument"] for f in ex._sweep_unregistered(NOW, now_ts=TS)] == [TOKEN]
 
 
 def test_the_sweep_is_quiet_about_registered_legs(tmp_path):
@@ -383,25 +395,50 @@ def test_the_sweep_is_quiet_about_registered_legs(tmp_path):
     r = _klamci(tmp_path)
     sent: list = []
     r.ex._send_telegram = sent.append
-    assert r.ex._sweep_unregistered(NOW) == []
+    assert r.ex._sweep_unregistered(NOW, now_ts=TS) == []
     assert sent == []
+    # CONTROL: the shares are really there and the scope is really live — strip the registrations and the
+    # very same sweep screams about the very same position. The silence above is "registered", not
+    # "nothing to see here".
+    r.ex._traded_tokens.clear()
+    r.ex._traded_tickers.clear()
+    r.ex._expected.clear()
+    r.ex._provisional.clear()
+    for k in list(r.ex.open_orders):
+        r.ex.open_orders.pop(k)
+    assert TOKEN in [f["instrument"] for f in r.ex._sweep_unregistered(NOW, now_ts=TS)]
 
 
 def test_the_sweep_scope_ages_out(tmp_path):
     ex, poly, _kx, sent = _quoted_only(tmp_path)
     poly.balances[TOKEN] = 80.0
+    # CONTROL FIRST: in scope, this position IS found. Only then does an empty result after ageing the
+    # record mean "the window closed" rather than "the sweep never worked".
+    assert [f["instrument"] for f in ex._sweep_unregistered(NOW, now_ts=TS)] == [TOKEN]
+    sent.clear()
     for rec in ex._quoted.values():
         rec["ts"] = 1.0                                    # quoted at the dawn of the epoch
-    assert ex._sweep_unregistered(NOW) == []
+    assert ex._sweep_unregistered(NOW, now_ts=TS) == []
     assert sent == []
 
 
 def test_the_sweep_re_alert_is_throttled(tmp_path):
     ex, poly, _kx, sent = _quoted_only(tmp_path)
     poly.balances[TOKEN] = 80.0
-    ex._sweep_unregistered(NOW)
-    ex._sweep_unregistered(NOW)
-    assert len([m for m in sent if "UNTRACKED POSITION" in m]) == 1
+    assert ex._sweep_unregistered(NOW, now_ts=TS), "found on the first pass"
+    assert ex._sweep_unregistered(NOW, now_ts=TS), "and STILL found on the second — throttling silences"
+    assert len([m for m in sent if "UNTRACKED POSITION" in m]) == 1, "the ALERT, not the detection"
+
+
+def test_the_sweep_uses_the_injected_clock_not_the_wall_clock(tmp_path):
+    """THE TIME BOMB ITSELF, pinned. These fixtures sit at a fixed date; the wall clock does not. If the
+    48h scope ever goes back to ageing against ``time.time()``, every "stays quiet" case above silently
+    becomes vacuous again — so assert the seam directly: same rig, same data, clock the only variable."""
+    ex, poly, _kx, _sent = _quoted_only(tmp_path)
+    poly.balances[TOKEN] = 80.0
+    assert ex._sweep_unregistered(NOW, now_ts=TS) == ex._sweep_unregistered(NOW, now_ts=TS + 47 * 3600.0)
+    assert ex._sweep_unregistered(NOW, now_ts=TS + 47 * 3600.0), "47h in: still ours to answer for"
+    assert ex._sweep_unregistered(NOW, now_ts=TS + 49 * 3600.0) == [], "49h in: aged out of scope"
 
 
 def test_the_quoted_scope_covers_both_legs_and_survives_a_restart(tmp_path):

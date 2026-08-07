@@ -1,0 +1,435 @@
+================================================================================
+SHAEGR PHANTOM-FILL CLASS — CLOSED
+A venue-reported rest fill that never delivered shares was hedged with real money
+and announced "GUARANTEED". The rest leg is now proved against venue truth before
+a pair may be booked.
+================================================================================
+Written 2026-08-05 ~17:30Z. Deployed 2026-08-05T17:22:39Z (gitguard restart #2),
+commit 508adb3. Every venue number below was pulled read-only, this session,
+except where it is quoted from the logs.
+
+--------------------------------------------------------------------------------
+0. THE SHORT VERSION
+--------------------------------------------------------------------------------
+On 2026-08-04 the REST FILL POLL read Polymarket order 0x7b537497… , saw
+``size_matched`` 116, and hedged it with 116 REAL Kalshi contracts ($29.3211).
+The shares never arrived. Not late — never: the CTF balance for that token read
+109.0 then, and still reads 109.0 today, and the data API has exactly ONE trade on
+it, ever. The bot alerted "profit is GUARANTEED either way" over 116 naked
+contracts. Over 3.5 hit and they paid $86.68 of pure luck.
+
+``size_matched`` is set when the book MATCHES. Polymarket's trade lifecycle is
+MATCHED -> MINED -> CONFIRMED and a MATCHED trade can still FAIL, and nothing
+walks the field back down when it does. All three fill detectors read that field,
+so this is a property of the FIELD, not of any one detector.
+
+THE SPLIT NOW SHIPPED: hedging is a race and stays one — the hedge still fires off
+the signal with no venue read in front of it. BOOKING is not a race, and now waits
+for venue truth.
+
+--------------------------------------------------------------------------------
+1. T1 — EVIDENCE: WHICH DETECTOR FIRED, AND ON WHAT
+--------------------------------------------------------------------------------
+1.1 THE RAW SIGNAL, FROM THE LOG (maker_rt.log, byte 2038531212; times are UTC —
+    this host's clock is UTC, verified against `date -u`)
+
+  18:40:07  DELETE /order + GET /data/order/0xa9cd97…   (an unrelated cancel)
+  18:40:07  POST /order  ->  "PLACED · Soccer · Shamrock vs Egnatia Rrogozhine"
+                             <- the SECOND SHAEGR rest order is born here
+  18:40:17  off-loop fill-poll pass OK — 5 listed, 0 read individually, 5 open
+  18:40:27  GET /data/orders
+  18:40:37  GET /data/orders
+  18:40:47  GET /data/orders
+  18:40:57  GET /data/orders?next_cursor=MA%3D%3D            <- the batch LIST
+  18:40:57  GET /data/order/0x7b53749773fa49a61b349c110aebac9e5001f0f6a3675040fcb2f020928714cf
+                                                             <- the PER-ORDER read
+  18:40:57  "FILLED! · Soccer · Shamrock vs Egnatia Rrogozhine"
+  18:40:58  hedge LOCKED KXUELTOTAL-26AUG06SHAEGR-4 x116 @ 0.2400 (fee $1.490) -> pnl $0.83
+  18:40:58  "LOCKED · … · profit is GUARANTEED either way"
+  18:40:59  untracked fill on …SHAEGR-4 (order 5d0693a4…, 116) — position EXPECTED
+            hedge/rest leg (hold 225) (read=225.00); logged hedge_confirmed, no orphan
+
+  THE DETECTOR WAS THE REST FILL POLL, not the websocket. The per-order GET
+  immediately BEFORE the FILLED line is the signature: ``_fill_poll_job`` only
+  issues one when the ``/data/orders`` list cannot answer "how much is matched"
+  for that order — which is exactly what happens once the venue considers an order
+  fully matched and drops it from the open list. Compare the REAL fill at
+  18:36:33Z, which has NO per-order read in front of it (the Poly user socket beat
+  the next poll to it).
+
+1.2 THE FIELD THAT CARRIED THE PHANTOM
+
+  pregame_exec.py ``_order_matched`` (Poly branch) is one line:
+      v = o.get("size_matched")   ->  float(v)
+  and ``poll_open_orders`` routes any increase straight to ``_on_fill_detected``.
+  Nothing anywhere read a trade STATUS. The order payload's own ``status`` at that
+  moment would have been MATCHED — a state that is not a delivery and can still
+  fail. The raw JSON body was NOT logged (only httpx's request line), so the
+  payload shape below is reconstructed from the code path and the venue's schema;
+  it is pinned in tests as ``_MATCHED_THEN_FAILED``:
+      {"id": "0x7b5374…", "status": "MATCHED", "side": "BUY", "outcome": "Under",
+       "original_size": "116", "size_matched": "116", "price": "0.74", …}
+  (every number a STRING — the same shape that produced the 2026-07-30 TypeError,
+  re-pinned here).
+
+1.3 VENUE TRUTH, RE-READ READ-ONLY TODAY (2026-08-05T17:1xZ, ~22h later)
+
+  conditional_balance(33024417091507491293…161)   = 109.0
+  data-api /activity, all rows on that token, ever = 1
+      {"timestamp": 1785868596, "side": "BUY", "size": 109, "usdcSize": 80.66,
+       "price": 0.74, "type": "TRADE",
+       "transactionHash": "0xa0ddef2581cf45c2746a8a8c741cea1ba9af214244d41ce2b486ac9c562ac900",
+       "title": "Shamrock Rovers FC vs. KF Egnatia Rrogozhinë: O/U 3.5",
+       "outcome": "Under"}
+  get_order(0x7b5374…)                             = null (purged; not evidence
+                                                     on its own, listed for
+                                                     completeness)
+
+  So the 116 was never slow. It never existed. This is the single most important
+  measurement in this report: it rules out "we just did not wait long enough".
+
+1.4 HOW LONG A **REAL** POLY DELIVERY TAKES — MEASURED, NOT GUESSED
+
+  Method: every ``_complement_shares`` call runs
+  ``settle_conditional_balance(timeout 6.0s, poll 0.75s)``, which emits one
+  ``GET /balance-allowance`` per round. The BURST of those reads following a
+  ``poly hedge PARTIAL/MISSED`` line is a direct measurement of how long the CTF
+  balance took to satisfy the predicate. Scanned the whole 2.4 GB maker_rt.log
+  (13 days); 13 bursts matched.
+
+     time      outcome     got/want   polls  span   what it measures
+     -------------------------------------------------------------------------
+     04:33:19  PARTIAL       52/52      3     1s    CONVERGED — real delivery
+     10:56:33  PARTIAL         5/5      2     1s    CONVERGED — real delivery
+     16:22:06  PARTIAL         4/4      2     1s    CONVERGED — real delivery
+     05:58:27  PARTIAL (KLAMCI) 80/115   8     6s    read 80 (the 80 WERE there);
+                                                    never reached 115 because only
+                                                    80 were ever bought
+     15:11:12  MISSED         0/54      3     2s    nothing bought, nothing to see
+     19:10:32  MISSED         0/25      1     0s          "
+     21:03:07  MISSED         0/20      8     7s          "
+     17:21:43  MISSED        0/114      8     7s          "
+     17:05:09  MISSED        0/114      4     2s          "
+     00:31:19  MISSED        0/117      7     6s          "
+     02:45:17  MISSED        0/179      7     6s          "
+     22:00:44  MISSED         0/18      8     7s          "
+     05:51:39  MISSED          0/1      1     0s          "
+
+  EVERY burst that had real shares to find, found them in 2-3 polls (~0.75-2.25s).
+  Only the zero-delivery cases ran the clock out — which is the phantom signature,
+  not a latency signature.
+
+  A REST-leg (not hedge-leg) data point, LARIBE 2026-08-04:
+     17:38:28  rest-poly FILL, 42 Under
+     17:38:31  the verified unwind's SELL was placed AND FILLED (42 @ 0.955357)
+               -> the 42 shares were in the wallet within 3 seconds of the fill
+     17:38:31-34  3 settle rounds later the balance confirmed flat -> "UNWOUND"
+
+  CONCLUSION FOR THE DEADLINE: real deliveries land in ~1-3s. The long-standing
+  ``settle_conditional_balance`` guard has used a 6s ceiling for weeks without ever
+  false-negating a real delivery.
+
+--------------------------------------------------------------------------------
+2. T2 — THE FIX
+--------------------------------------------------------------------------------
+2.1 WHAT DID NOT CHANGE
+
+  The hedge path. A fill signal still goes straight to ``_hedge_fill`` and the
+  hedge order is sent with NO venue read in front of it. This is pinned by
+  ``test_no_venue_read_happens_before_the_hedge_is_submitted`` (asserts the hedge
+  is the FIRST event in an ordered trace) and by a wall-clock guard.
+
+2.2 WHAT CHANGED
+
+  ``_defer_pair`` now stands between the hedge and the booking. It tries ONE
+  confirmation read inline — that read happens strictly AFTER the hedge order has
+  been sent and filled, the same place and the same reasoning as the existing
+  ``_complement_shares`` re-verify of the hedge leg — and:
+
+    * rest leg ALREADY THERE  -> book immediately, byte-for-byte as before. This
+                                 is the common case and costs nothing new.
+    * otherwise               -> a PENDING PAIR, retried off the loop.
+
+  Confirmation reads the REST instrument: ``conditional_balance`` for a Poly rest
+  leg, the portfolio position for a Kalshi one. The expected number is
+  ``baseline + this fill's size``, where ``baseline`` is what we already believed
+  we held on that instrument (``_expected_shares``, snapshotted before booking).
+  On SHAEGR that is 109 + 116 = 225; the venue said 109; delivered = 0.
+
+  DECISION TABLE
+
+    verdict              trigger                      what happens
+    ------------------------------------------------------------------------------
+    CONFIRMED (full)     delivered >= fill size       book exactly as today,
+                         (at any point before the     including the KLAMCI partial
+                         deadline)                    logic. LOCKED alert fires.
+    CONFIRMED PARTIAL    0 < delivered < fill size    book the DELIVERED-size pair
+                         AT THE DEADLINE              through the same
+                                                      _record_hedge_locked; pnl is
+                                                      re-scaled to the shares that
+                                                      arrived; the unpaired hedge
+                                                      excess is unwound (verified).
+                                                      Alert says what arrived.
+    PHANTOM              delivered ~ 0 AT THE         no pair, no pnl, no
+                         DEADLINE                     registration. The unpaired
+                                                      hedge is unwound (verified),
+                                                      the toll is booked into
+                                                      EXITS, and a RED Telegram
+                                                      names the market in plain
+                                                      words. Never "GUARANTEED".
+    UNREADABLE           the venue read raises        NOT a phantom. Keep waiting.
+                                                      Unknown is never "nothing
+                                                      arrived".
+
+  A partial/phantom verdict is only ever reached AT THE DEADLINE. Before it, only
+  a positive confirmation can short-circuit — so a slow MINED is never punished.
+
+2.3 THE DEADLINE, AND WHY IT IS WHAT IT IS
+
+  live.rest_confirm_deadline_s = 90.0   (new, configurable)
+  live.rest_confirm_poll_s     =  2.0   (new, configurable)
+
+  90s is ~40x the measured convergence (§1.4) and 15x the existing 6s guard. The
+  error here is ONE-SIDED and the asymmetry is the whole argument: a false phantom
+  verdict on a real fill would unwind a good hedge AND strand a real rest leg,
+  while waiting longer costs a late Telegram. It still resolves far inside the
+  5-minute reconcile. Setting the deadline to 0 disables confirmation entirely and
+  re-opens this bug; that is documented at the config and in the code.
+
+2.4 WHILE WE WAIT — THE PROVISIONAL STATE
+
+  * caps see everything IMMEDIATELY, fail-closed: the hedge notional is committed
+    stake the moment it is bought, and the fill consumes one of the day's fill
+    slots up front. Only the PNL waits, and it lands via ``adjust_pnl`` — the
+    established restate-without-counting-a-fill doctrine — so one venue execution
+    can never consume two fill slots.
+  * BOTH legs count as HELD. ``_expected_shares`` now includes pending legs. This
+    is not cosmetic: without it the unwind keep-floor would read 0 and a partial
+    hedge's remainder sell would liquidate the sub-pair it was just paired with
+    (KLAMCI, again), and the account fill sweep would see a hedge nobody claimed
+    and halt on it (HANHAL, again).
+  * nothing is booked, alerted, registered in the durable expected-position file,
+    or paid out as edge.
+
+  THE EXISTING PROVISIONAL-MARKS MACHINERY WAS NOT REUSED, deliberately. That
+  machinery books a WORST-CASE PNL now for an open position and rebooks it at venue
+  truth on settlement. A pending pair has no pnl booked at all and lives ~1-90
+  seconds. Forcing it through that path would mean writing, and then reversing, a
+  number we have no reason to believe. Noted here because the prompt asked for it
+  "if it fits", and it does not.
+
+2.5 THE PHANTOM UNWIND, AND WHY THE KEEP-FLOOR MATTERS HERE
+
+  The unwind runs against the HEDGE instrument, driven through a ``dataclasses``
+  view of the order whose rest side IS that leg — so it reuses ``_verified_unwind``
+  unchanged, keep-floor and all. On SHAEGR the same Kalshi ticker also held the 109
+  contracts of the EARLIER, genuine pair: the venue reads 225, we sell 116, and the
+  keep-floor stops the reconcile-to-flat loop at 109. Without the KLAMCI fix from
+  the previous commit, this fix would have liquidated a good pair. Pinned by
+  ``test_shaegr_replay…`` (asserts positions end at exactly 109.0).
+
+  The pending record is POPPED BEFORE the unwind, so the pair being unwound is not
+  counted among the shares we hold on purpose.
+
+2.6 IDEMPOTENCE
+
+  All detectors funnel through ``_on_fill_detected``, which acts only on an
+  INCREASE over ``matched_seen``; ``_defer_pair`` runs inside that one path and
+  returns synchronously, so ``matched_seen`` still advances exactly as before and
+  no detector can re-route the same delta. The off-loop worker de-duplicates
+  confirmation reads on ``("rest_confirm", pair_id)``. ``_resolve_pending`` pops
+  before it acts, so a late duplicate result is a no-op. Pinned by
+  ``test_all_detectors_seeing_the_same_phantom_produce_ONE_hedge_and_ONE_unwind``.
+
+2.7 THE OFF-LOOP SHAPE
+
+  Confirmation is ONE venue read per pending pair per cadence, submitted to the
+  shared worker — never a blocking poll. A 90s polling loop on that thread would
+  black out the fill-poll backstop, which is the 2026-07-30 starvation incident.
+  A backstop decides a pending pair from its last read if NO confirmation result
+  ever lands (deadline + 30s grace), so a starved or abandoned worker cannot leave
+  real money hedged against nothing with nobody looking.
+
+2.8 FILES
+
+  src/genz/maker_rt/pregame_exec.py  _defer_pair, _rest_delivered,
+                                     submit_rest_confirmations, _apply_rest_confirm,
+                                     _resolve_pending, _book_pending, _pending_pnl,
+                                     _unwind_unpaired_hedge, _pending_shares,
+                                     _inplay_halt_if_bad; _record_hedge_locked
+                                     gains ``deferred``
+  src/genz/maker_rt/config.py        rest_confirm_deadline_s / _poll_s
+  src/genz/maker_rt/state.py         ``phantom_unwound`` books into lifetime + exits
+  src/genz/maker_rt/alerts.py        the red "FILL NEVER ARRIVED" template
+  src/genz/maker_rt/__main__.py      the per-tick submit hook
+
+--------------------------------------------------------------------------------
+3. T3 — THE RESTATEMENT (owner-approved), APPLIED
+--------------------------------------------------------------------------------
+RECEIPT — data/ops/maker_rt_RESTATEMENTS.json, key "shaegr-phantom-fill-20260804"
+(backup of the prior file: maker_rt_RESTATEMENTS.json.pre_shaegr.bak)
+
+      untracked_usd  +86.6789      the naked 116 that won
+      hedged_usd      -0.8218      the 109 pair, restated to venue truth
+      exits_usd        0.0000
+      cost_usd        29.3211      the naked leg's own basis
+      trades_n             1
+      effective_ts   2026-08-04T21:09:20Z   (when the Kalshi settlement cash moved)
+
+APPLIED 2026-08-05T17:22:39Z, once, keyed, in the same atomic write as its key:
+
+  17:22:39 WARNING [MAKER_RT][RESTATEMENT] applied shaegr-phantom-fill-20260804:
+           exits +0.0000, untracked +86.6789, hedged -0.8218 -> lifetime +134.0922
+           (hedged +24.7941).
+
+COUNTERS, before -> after
+      settled_pnl_lifetime            48.2351 -> 134.0922
+      settled_pnl_untracked_lifetime  33.8944 -> 120.5733
+      settled_pnl_hedged_lifetime     25.6159 ->  24.7941   <- as predicted
+      settled_pnl_exits_lifetime     -11.2752 -> -11.2752
+      settled_trades                       40 ->      41
+      settled_cost_lifetime         3558.1159 -> 3587.4370
+
+WHERE THE -$0.8218 COMES FROM, exactly (this decomposes cleanly and is worth
+recording, because it is not what the phrase "a correction to the 109 pair"
+suggests):
+      the books booked TWO hedge_locked rows on SHAEGR: $0.78 (the real 109) and
+      $0.83 (the phantom 116) = $1.61 total in the hedged bucket.
+      venue truth for the real 109 pair                            = +$0.7882
+      -0.8218  =  0.7882 - 1.6100
+               =  -0.83 (the phantom's fictitious pnl, removed)
+                  +0.0082 (the real pair was booked $0.0082 pessimistic)
+      So the correction is almost entirely "delete the pnl of a pair that never
+      existed", not a re-pricing of the good trade.
+
+--------------------------------------------------------------------------------
+4. THE BALANCE LINE — MEASURED AFTER THE DEPLOY, QUOTED VERBATIM
+--------------------------------------------------------------------------------
+BEFORE (17:18:34Z, pre-restatement — the standing alarm):
+
+    Since baseline (Aug 4): +$108.68 · bot's books say +$22.84 · 🔴 MISMATCH (diff $85.84)
+    🔴 BOOKS DISAGREE WITH THE EXCHANGES — over 'since baseline (aug 4)' the exchanges moved
+    +$108.68 but my books say +$22.84, a gap of $85.84. … Investigate.
+
+AFTER (17:27Z, post-deploy), verbatim:
+
+    💰 8h BALANCE CHECK (on demand)
+       Kalshi $4,875.42 (cash $4,875.42 + positions $0.00)
+       Polymarket $2,474.70 (cash $2,474.70 + positions $0.00; of which ours $0.00)
+       TOTAL $7,350.12
+       Since the last check (4m 24s): +$0.00 · bot's books say +$85.86 · of which +$85.86 is a one-time correction to older books, not cash that moved now · ✅ match (diff $0.00)
+          where: Kalshi cash +$0.00/positions +$0.00 · Polymarket cash +$0.00/positions +$0.00
+       Since baseline (Aug 4): +$108.68 · bot's books say +$108.70 · ✅ match (diff $0.02)
+          where: Kalshi cash +$164.14/positions +$0.00 · Polymarket cash -$55.46/positions +$0.00
+       My books: settled lifetime +$134.09 (+$24.79 from hedged pairs, +$120.57 luck, -$11.28 exit costs) · today's locked estimate -$4.00 (not settled yet — it is still in the positions above)
+       ✍️ no adjustments recorded
+       📘 +$85.86 book correction applied 2026-08-05T17:22 for cash that moved 2026-08-04 — SHAEGR phantom fill 2026-08-04: a rest-poly fill the venue REPORTED (size_matched 116) and never DELIVERED was hedged with 116 real Kalshi Over @24c ($29.3211) and announced 'profit is GUARANTEED eith
+       Open pairs at snapshot: 0 — nothing outstanding, so the numbers should agree closely
+
+  THE $85.84 ALARM IS CLEARED. Books=banks now reconciles to $0.02 since baseline
+  (predicted -$0.0168; the residual is the two conservative fee models and the
+  hand-run $0.03 smoke probe, exactly as forecast in the KLAMCI report). There is
+  no outstanding books-vs-banks discrepancy.
+
+--------------------------------------------------------------------------------
+5. --GATES, BEFORE AND AFTER — AND AN HONEST FINDING
+--------------------------------------------------------------------------------
+BEFORE and AFTER are IDENTICAL, byte for byte:
+
+    mlb        0/13        —     —     —      0.00   MEASURING  (need 13 more)
+    soccer    27/10       0.848    0.714   -0.000      9.81   EDGE-POSITIVE
+    tennis     0/33        —     —     —      0.00   MEASURING  (need 33 more)
+    ufc        0/10        —     —     —      0.00   MEASURING  (need 10 more)
+    ALL: 27 clean hedged fill(s), mean 0.848%, p50 0.714%
+
+WHY THEY DID NOT MOVE, AND WHAT THAT HIDES. ``--gates`` reads the APPEND-ONLY
+event CSVs, not the lifetime counters. A restatement corrects the LEDGER; it
+cannot rewrite the event log (gates.py says exactly this about the 2026-07-30
+case). So the -$0.8218 could not shift these numbers even in principle.
+
+That means the phantom is STILL IN THE MEASUREMENT SAMPLE. Both SHAEGR rows are
+there — I checked rather than assumed:
+
+    2026-08-04T18:36:33Z  26AUG06SHAEGR  size=109  locked_net=0.7156%  pnl=$0.78  (real)
+    2026-08-04T18:40:57Z  26AUG06SHAEGR  size=116  locked_net=0.7155%  pnl=$0.83  (PHANTOM)
+
+Recomputed with gates' own loader:
+
+    soccer AS REPORTED                n=27  mean=0.848%  p50=0.714%  $=9.81
+    soccer WITHOUT the phantom row    n=26  mean=0.853%  p50=0.707%  $=8.98
+    soccer without EITHER SHAEGR row  n=25  mean=0.859%  p50=0.700%  $=8.20
+
+THE MEAN IS NOT FLATTERED BY THE PHANTOM — removing it RAISES the mean, because
+its 0.7155% sat below the sample average. What IS overstated is the DOLLAR column:
+$0.83 of the reported $9.81 is money that never existed. No cap-raise decision
+turns on any of this (soccer is EDGE-POSITIVE at n>=10 on all three cuts), and I
+am reporting the sample contamination rather than quietly letting a byte-identical
+diff imply the measurement is clean. See §7.1 — it is not fixed.
+
+--------------------------------------------------------------------------------
+6. VERIFICATION
+--------------------------------------------------------------------------------
+  pytest      1453 passed (1437 before this work; +16 new). Full suite green.
+              NEW: tests/test_maker_rt_shaegr_phantom_fill.py (16)
+                * the SHAEGR replay: real 109 booked, phantom 116 hedged but NOT
+                  booked, hedge unwound to exactly 109 (the genuine pair survives),
+                  phantom_unwound row, red alert, no GUARANTEED
+                * the red alert names the market in plain words and leaks no
+                  ticker/order id to Telegram
+                * the exit toll reaches lifetime AND the exits bucket
+                * partial delivery: 116 claimed / 60 delivered -> a 60-share pair
+                  booked at 60-scaled pnl + 56 of hedge unwound
+                * slow confirm: four rounds with an empty wallet unwind NOTHING;
+                  a late delivery books normally
+                * delivery landing on the last read before the deadline still books
+                * an unreadable venue is UNKNOWN, never a phantom verdict
+                * MATCHED-then-FAILED driven through the REAL detector with the
+                  real payload shape; plus the string->float parse guard
+                * one hedge and one unwind across all detectors + the dedupe
+                * one fill slot and its stake taken up front; no second fill counted
+                * a pending pair's hedge is not a false orphan
+                * the no-confirmation-ever backstop
+                * LATENCY: the hedge is the FIRST event in an ordered trace, and
+                  fill -> hedge-submit stays sub-50ms
+
+              TEN existing tests had to change. Every one of them asserted a booked
+              pair while its fake wallet reported that no shares were ever
+              delivered — that fake IS the phantom. They now state that the venue
+              delivered (new shared helpers ``deliver_poly`` / ``deliver_kalshi``,
+              documented with why). No assertion was weakened.
+
+  --gates     §5. Byte-identical, with the sample-contamination finding stated.
+  --balance   §4. Run after the deploy, quoted verbatim. Alarm cleared.
+  deploy      17:22:38Z HEAD change -> 17:22:39Z restatement applied -> 17:22:39Z
+              LIVE ARMED (rest-kalshi, rest-poly; pre+inplay). runstate restarts
+              1 -> 2. At 17:26Z: feed_ok=True, 3 open quotes, halted=False, no
+              exception or CRITICAL from any new code path.
+
+--------------------------------------------------------------------------------
+7. DELIBERATELY NOT DONE
+--------------------------------------------------------------------------------
+  1. THE MEASUREMENT SAMPLE STILL CONTAINS THE PHANTOM ROW (§5). Fixing it means
+     either rewriting an append-only event log or teaching gates an exclusion list,
+     and both are decisions about the measurement system rather than about this
+     bug. Quantified above so nobody has to rediscover it: mean unaffected (in
+     fact 0.005pp conservative), dollar column overstated by $0.83.
+  2. The Poly fee-model correction — excluded by the prompt, on purpose. It is the
+     next prompt.
+  3. Pending pairs are IN-MEMORY and do not survive a restart. A restart inside the
+     1-90s window leaves the hedge registered as an EXPECTED position (persisted at
+     purchase) and the rest leg unbooked; the 5-minute reconcile and the 48h quoted
+     sweep both look at the venue, so nothing is invisible — but the pair would not
+     be auto-resolved and would need a human. Judged not worth a file the live
+     process rewrites on every fill; stated here so the gap is known, not
+     discovered.
+  4. The 109 worthless SHAEGR Under shares are still in the wallet (Under lost,
+     unredeemable). Their $80.66 cost is fully expensed. No action; noted again so
+     nobody re-discovers them.
+  5. The in-play circuit still counts a pending pair at fill time on its PROVISIONAL
+     locked net. A phantom's realized cost re-tests the halt threshold afterwards
+     (``_inplay_halt_if_bad``) without counting a second fill, but the first-fill
+     pause has already been spent by then. Correct-enough and left as is.
+  6. Two pre-existing CRITICALs fired during this session (17:07:38Z, 17:25:47Z):
+     the in-process gates job exceeding its 180s deadline, the known off-loop
+     starvation pattern. Both self-recovered and are unrelated to this work.
+================================================================================

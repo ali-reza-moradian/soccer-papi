@@ -4931,7 +4931,8 @@ class PregameLiveExecutor:
     #: Shares below this are rounding, not a position.
     UNREGISTERED_MIN_SHARES = 0.5
 
-    def _sweep_unregistered(self, now: Any, balances: Optional[dict] = None) -> list:
+    def _sweep_unregistered(self, now: Any, balances: Optional[dict] = None,
+                            now_ts: Optional[float] = None) -> list:
         """ALERT (never halt) on any venue position we hold on a market we QUOTED in the last 48h that is
         in NO registry — not the watch-set, not the expected legs, not the provisional marks.
 
@@ -4948,11 +4949,19 @@ class PregameLiveExecutor:
         wide enough to catch any position this bot could have opened, narrow enough that the owner's own
         holdings can never trigger it. It ALERTS rather than halts on purpose: an unregistered position is
         a bookkeeping failure whose right response is a human looking at it, and halting the maker over a
-        position that may well be perfectly hedged would trade one silent failure for a loud useless one."""
+        position that may well be perfectly hedged would trade one silent failure for a loud useless one.
+
+        ``now_ts`` is the clock the 48h scope and the re-alert throttle are measured against. It defaults
+        to the wall clock, which is what production wants; tests INJECT it because a fixture that pins
+        ``now`` to an incident date while the scope ages against real time is a time bomb — it does not
+        merely go red, it goes GREEN VACUOUSLY: the scope prunes itself empty and every "the sweep stays
+        quiet" assertion passes for the wrong reason, so the guard against the next KLAMCI quietly stops
+        guarding. See ``tests/test_maker_rt_klamci_partial_hedge.py`` for the control assertions that keep
+        those tests honest."""
         import time as _time
         if not self._quoted:
             return []
-        now_ts = _time.time()
+        now_ts = float(now_ts) if now_ts is not None else _time.time()
         self._prune_quoted(now_ts)
         found: list = []
         for inst, rec in sorted(self._quoted.items()):

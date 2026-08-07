@@ -1,0 +1,448 @@
+================================================================================
+WHY THE IN-PLAY ENGINE DOES NOT TRADE
+Measurement only. No trading behaviour was changed. Counters, history, proposals.
+================================================================================
+Written 2026-08-06 ~16:10Z. Counter instrumentation deployed 15:59:43Z (260bfed);
+the funnel numbers below are the first window it produced. Everything else is
+reconstructed from 2.0 GB of event CSVs (2026-07-16 .. 2026-08-06) and 3.2 GB of
+maker_rt.log.
+
+--------------------------------------------------------------------------------
+0. THE SHORT VERSION
+--------------------------------------------------------------------------------
+In-play is not being blocked by a direction restriction or the venue minimum. It
+is blocked by THREE things, in sequence — two anti-phantom rails that between them
+consume 85% of evaluations, and then a budget that refuses everything that is
+left:
+
+  1. SHOCK-FREEZE blackouts eat 48.3% of in-play evaluations. A mid move of >=5%
+     within 10s freezes a node for 30s. Only 25 freeze EVENTS fired in the window,
+     but they blacked out 45,295 evaluations — because a live match's mid moves
+     5% often, and each freeze silences the node for 30 seconds.
+
+  2. HEDGE-THIN COOLDOWN eats a further 36.3%. Three hedge_too_thin refusals
+     within 10 minutes put a node to sleep for FIFTEEN MINUTES. Pre-game hits this
+     only 13.3% of the time — a 2.7x difference, and the rule was tuned on
+     pre-game behaviour.
+
+  3. Of the 0.69% of in-play evaluations that survive to the executor, ONE
+     HUNDRED PERCENT are refused for size, and 99.2% of those refusals bind on
+     `daily_stake`. Not the venue minimum. Not book depth. The daily budget.
+
+The daily budget is not exhausted by SPENDING. Right now: $58.22 spent of $1,200.
+It is exhausted by RESERVATIONS. Every resting quote holds its full projected
+pair cost against the daily cap until it fills, cancels or ages out — and quotes
+fill 0.67% of the time. 12 slots x ~$100 of typical projected pair = ~$1,200 =
+exactly the daily cap. So the slots fill with pre-game, the budget is fully
+reserved, headroom goes to ~$0, and every later candidate — every in-play
+candidate — is sized at 0 shares and refused.
+
+THE ROOT CAUSE IN ONE LINE: `max_open_quotes` x typical-pair-reservation is
+numerically equal to `max_daily_stake_usd`, so the concurrency cap and the daily
+spend cap are the same cap, and pre-game wins it every time.
+
+AND THE THING THAT SHOULD STOP YOU RAISING ANY OF IT (section 3): across every
+in-play fill this system has ever taken, realized P&L is NEGATIVE $6.69.
+
+--------------------------------------------------------------------------------
+1. PART 1 — THE FUNNEL
+--------------------------------------------------------------------------------
+1.1 WHY THIS NEEDED NEW COUNTERS
+
+Nothing in the build could answer "where do the evaluations go", for two reasons
+that both had to be fixed to get an honest table:
+
+  * QUOTE-CONDITIONAL. ``_expire_if_open`` writes an expire row only when a quote
+    is already armed. A candidate that never arms produces NO row. A path that
+    never quotes is therefore invisible BY CONSTRUCTION — which is exactly the
+    path under investigation.
+  * UNEVENLY THROTTLED. ``below_venue_minimum`` wrote a CSV row EVERY TICK;
+    slot refusals wrote one row per 300s per node. In the all-time CSV that makes
+    below_venue_minimum (308,010 rows, 65.8%) look ~3x more common than
+    max_open_quotes (114,320 rows, 24.4%) when the throttle alone explains the
+    gap. Any funnel built from those rows is wrong and cannot be corrected after
+    the fact.
+
+So the funnel below comes from new counters: one increment per evaluation, at the
+branch that consumed it, keyed (sport, phase, stage). They are pure
+instrumentation, guarded at both call sites, and pinned by tests that assert a
+placement still places and a refusal still refuses.
+
+1.2 THE IN-PLAY FUNNEL
+Window: 2026-08-06 15:59:43Z -> 16:05:26Z (343s), 93,748 in-play node evaluations.
+Stages are EXCLUSIVE and sum to 100.0% (see the double-count note below).
+
+   stage                              count     % of eval   % of survivors
+   ---------------------------------------------------------------------------
+   in-play node evaluations          93,748      100.00%          100.00%
+     -> shock-freeze (node frozen)   45,295       48.32%   <-- THE BIGGEST KILLER
+     -> hedge_thin_cooldown          34,017       36.29%   <-- #2
+     -> now_behind (not at best)      9,929       10.59%
+     -> inplay_stale (books stale)    2,224        2.37%
+     -> no_hedge_ask                    780        0.83%
+     -> poly_leg_cap                    676        0.72%
+     -> hedge_too_thin (this tick)       80        0.09%
+     -> persistence timer (1500ms)       45        0.05%
+     -> floor_below_tick                 24        0.03%
+     -> new shock freeze fired           25        0.03%
+     -> book_gone / implausible           7        0.01%
+     ============================================================
+     -> REACHED THE EXECUTOR            646        0.69%          100.00%
+          -> size_refused                646        0.69%          100.00%
+             of which limiter=daily_stake       99.2% (all-time in-play, n=345,518)
+             of which limiter=book_depth         0.8%
+          -> PLACED                        0        0.00%            0.00%
+
+  ONE STAGE EATS NEARLY HALF: the shock-freeze blackout, 48.32%. Stated plainly
+  as requested. Two stages together eat 85%.
+
+  ONLY 25 FREEZE EVENTS produced those 45,295 blacked-out evaluations. That is
+  the shape of the problem: `shock_move: 0.05` / `shock_window_s: 10` /
+  `freeze_s: 30` means one 5% mid move silences a node for 30 seconds, and a live
+  match's mid moves 5% often.
+
+  DOUBLE-COUNT NOTE. `_rails_ok` gates the achievable LADDER on every evaluation
+  in every phase, and the in-play block gates QUOTING separately. So each frozen
+  or stale in-play evaluation is counted at both gates: `rails_gated_frozen`
+  (45,295) == `inplay_frozen` (45,295), and `rails_gated_not_fresh` (2,231) ~=
+  `inplay_stale` (2,224). They are the SAME evaluations seen twice, not 90,590.
+  The table above counts each once. For PRE-GAME the ladder rail does NOT stop
+  quoting, so `rails_gated_not_fresh` there is informational only and is excluded
+  from the pre-game funnel below.
+
+  THE SHARES MOVED BETWEEN READINGS and this is a 343-second sample: at 32,492
+  evaluations the ranking was cooldown 53.8% / frozen 21.3%; at 93,748 it is
+  frozen 48.3% / cooldown 36.3%. The ORDER of the top two is not yet settled.
+  What is stable across every reading is the bottom of the funnel: ~0.7-1.0%
+  reach the executor, 100% of those are refused on daily_stake, and PLACED is 0.
+
+1.3 THE PRE-GAME FUNNEL, SAME WINDOW (the control)
+269,155 evaluations.
+
+   -> now_behind                    218,899       81.33%
+   -> hedge_thin_cooldown            35,796       13.30%   <-- 2.7x rarer than in-play
+   -> poly_leg_cap                    3,026        1.12%
+   -> other                              62        0.02%
+   -> REACHED THE EXECUTOR           11,372        4.23%   <-- 6.1x more often than in-play
+        -> size_refused (daily_stake) 7,640        2.84%   (67% of survivors)
+        -> cap_refused:max_open_per_game   4        0.00%
+        -> PLACED                          6        0.00%
+
+  THE TWO NUMBERS THAT MATTER: in-play reaches the executor 0.69% of the time vs
+  pre-game's 4.23%, and once there in-play is refused 100% of the time vs
+  pre-game's 67%. Pre-game is not privileged by any rule — it simply gets to the
+  shared budget first and takes what is left of it.
+
+  Note pre-game placed only 6 quotes in this window against 11,372 executor
+  arrivals. Pre-game is budget-starved too; it is just starved LESS.
+
+1.4 PER SPORT
+In-play evaluation volume is overwhelmingly SOCCER; MLB/tennis/UFC in-play barely
+reach the pricing stage at all (they lose ~100% at now_behind, i.e. we are not at
+the best bid on those books).
+
+   soccer   (the overwhelming majority of in-play evaluations)
+            now_behind ~65%   hedge_thin_cooldown ~26%   frozen ~4%
+            to_executor ~4%   size_refused ~3%
+   tennis   now_behind 62.3%   poly_leg_cap 37.2%
+   mlb      now_behind 100.0%
+   ufc      now_behind 98.8%
+   (by_sport pools both phases, so these are indicative; the by_phase funnel in
+    1.2/1.3 is the authoritative split.)
+
+  All-time in-play SIZE refusals by sport (n=345,518) bind on `daily_stake`:
+  soccer 98.93%, MLB 100%, tennis 100%, UFC 100%.
+
+1.5 THE ANSWER TO "REFUSED BY DIRECTION"
+IN-PLAY MAY REST ON BOTH VENUES. The config comment claiming "rest-poly" was
+wrong, not merely stale. ``eligible()`` gates on ``maker_rt.directions``, which is
+``[rest_poly, rest_kalshi]``, and applies the identical rule to both phases.
+Venue-truth: in-play has placed 575 rest-kalshi and 375 rest-poly LIVE orders
+all-time. Direction is not a constraint and there is nothing to fix here.
+(The comment is corrected in this commit — documentation only.)
+
+--------------------------------------------------------------------------------
+2. PART 2 — IS THE EDGE REAL AT OUR SIZES?
+--------------------------------------------------------------------------------
+YES, on the hedge-depth question. The hedge book is not the problem, and it is
+not close.
+
+Method: every in-play sizing refusal logs the live hedge depth at the ask and the
+rest-book depth at the moment it refused. n = 345,518 such moments, all-time.
+
+   hedge depth at the ask   p10 = 2,707    p50 = 18,371   p90 = 303,798  shares
+   rest book depth          p10 =     5    p50 =  8,727   p90 = 1,903,758
+
+   hedge depth <   1 share :       0   (0.00%)
+   hedge depth <   5 shares:       0   (0.00%)
+   hedge depth <  25 shares:       0   (0.00%)
+   hedge depth < 100 shares:       0   (0.00%)
+   hedge depth < 500 shares:   3,892   (1.13%)
+
+Our venue minimum is 5 shares on Polymarket (or ceil($1/price), so 25 shares at
+4c) and 1 contract on Kalshi. In 345,518 in-play moments where we wanted to quote
+and could not, the hedge book NEVER had less than 100 shares at the ask. The
+median had 18,371.
+
+SO THE ANSWER TO "is in-play edge only real below the venue minimum" IS NO. The
+edge was executable at our minimum size essentially always, and at far more than
+our minimum size in the median case. The gap between "edge existed" and "edge was
+executable" is not a market-liquidity gap at all — it is entirely our own budget:
+
+   the binding limiter on in-play sizing refusals   daily_stake  99.19%
+                                                    book_depth    0.81%
+
+WHAT I COULD NOT MEASURE HERE, AND WHY: I could not tie hedge depth to the
+specific achievable samples that read >=0.5%. The achievable ladder is a reservoir
+of NET VALUES only — it does not retain depth, and the CSV `achievable_sample`
+row (throttled to 1/min/market) carries no depth column either. The depth
+distribution above is taken over the refusal moments instead, which is a superset
+of, not identical to, the >=0.5% moments. It is strong evidence that depth is
+never the binding constraint in-play; it is not a per-sample join. Adding a depth
+field to the achievable sampler would close this properly.
+
+--------------------------------------------------------------------------------
+3. PART 3 — EVERY IN-PLAY QUOTE AND FILL THIS SYSTEM HAS EVER PLACED
+--------------------------------------------------------------------------------
+3.1 LIVE IN-PLAY QUOTES BY DAY (and pre-game for scale)
+
+   day        PRE live q   IP live q   IP share   PRE fills   IP fills
+   ---------------------------------------------------------------------
+   20260721            1           9      90.0%           0          0
+   20260722           54         157      74.4%           0          0
+   20260723           51          41      44.6%           0          1
+   20260724          150           2       1.3%           1          0
+   20260725          101           9       8.2%           0          0
+   20260726          102          83      44.9%           1          1
+   20260727           52          14      21.2%           2          2
+   20260728          256          29      10.2%           3          4
+   20260729          749          72       8.8%           8          1
+   20260730          485         180      27.1%           2          1
+   20260731          836          79       8.6%           4          0
+   20260801          828          86       9.4%           2          0
+   20260802          711         174      19.7%           3          2
+   20260803          874          20       2.2%           3          0
+   20260804          543          30       5.2%          14          0
+   20260805         1020          50       4.7%           1          0
+   20260806          461           0       0.0%           3          0
+   ---------------------------------------------------------------------
+   TOTAL           ~7,274       1,035                     47         12
+
+  IN-PLAY USED TO WORK. It ran at 20-75% of pre-game's quote volume through late
+  July and collapsed to 0-5% in August. That collapse coincides with the
+  2026-08-04 caps raise (quote_usd_max 70->105, max_pair_stake 350->525, slots
+  8->12) which raised the RESERVATION per quote ~50% and the number of
+  simultaneous reservations ~50%, while `max_daily_stake_usd` stayed at $1,200.
+  Reservation over-subscription went from 8 x $350 = $2,800 (2.3x the budget) to
+  12 x $525 = $6,300 (5.25x). I am asserting the correlation and the mechanism;
+  I have not isolated it experimentally.
+
+3.2 EVERY LIVE IN-PLAY MONEY EVENT, EVER (n=12 fills)
+
+   ts                    event           dir           locked%    pnl $
+   ------------------------------------------------------------------------
+   2026-07-22T01:36:30Z  hedge_unwound   rest-poly      0.2507    0.0000
+   2026-07-23T02:28:07Z  fill_untracked  rest-kalshi         —   -1.0000
+   2026-07-23T03:18:29Z  fill_untracked  rest-kalshi         —    2.0500
+   2026-07-23T21:03:37Z  unwind_FAILED   rest-kalshi      0.65   -0.9600
+   2026-07-26T19:15:35Z  hedge_locked    rest-poly     -0.4762   -0.1000
+   2026-07-27T19:10:30Z  hedge_locked    rest-kalshi      -0.0   -0.0000
+   2026-07-27T21:03:04Z  hedge_unwound   rest-kalshi     0.895   -0.0000
+   2026-07-28T01:19:23Z  hedge_locked    rest-poly      0.6667    0.1400
+   2026-07-28T01:19:24Z  hedge_locked    rest-poly      0.6667    0.1800
+   2026-07-28T01:20:22Z  hedge_locked    rest-poly      0.6604    0.3500
+   2026-07-28T01:21:11Z  hedge_locked    rest-kalshi     -1.35   -0.3969
+   2026-07-29T01:21:06Z  hedge_locked    rest-poly     90.6657  320.0500  <-- FICTION
+   2026-07-30T17:05:08Z  hedge_locked    rest-kalshi      -0.0   -0.0000
+   2026-08-02T00:31:19Z  hedge_unwound   rest-kalshi       1.1   -2.2000
+   2026-08-02T02:45:17Z  hedge_unwound   rest-kalshi     0.502   -4.7500
+
+  THE FICTION ROW IS NOT REAL. 2026-07-29T01:21:06Z booked +$320.05 at a claimed
+  +90.67% locked net on a 353-share rest leg at 4c — a $14.12 position. It is the
+  Fortaleza booking the audit already caught and restated (caps.py names it by
+  name; it is what `implausible_fill_pnl` was built to refuse). Any in-play P&L
+  that includes it is wrong by $320.
+
+  REALIZED IN-PLAY P&L, EXCLUDING THE FICTION:      -$6.6869
+  the fiction row itself:                          +$320.0500
+  naive sum over the raw CSV (do not use):         +$313.3631
+
+  8 hedged pairs, p50 locked net +0.33%, range -1.35% .. +0.90% (excluding the
+  fiction). The pairs themselves were roughly break-even; the losses are exits —
+  -$2.20 and -$4.75 on two rest-kalshi unwinds on 2026-08-02, plus -$0.96 on an
+  unwind_FAILED. THE PAIRS DID NOT LOSE THE MONEY. THE HEDGE MISSES DID.
+
+3.3 SHADOW IN-PLAY (for completeness)
+4,417 shadow quotes / 28 shadow fills all-time, median shadow locked net around
++0.7%. Shadow fills are a QUEUE MODEL, not money, and they assume we were at the
+best bid with no adverse selection — which is precisely the assumption in-play
+breaks. They are not evidence that in-play is profitable.
+
+3.4 THE IN-PLAY CIRCUIT'S OWN HISTORY
+  * `halt_locked_net: -0.020` day-halt has fired TWICE, both real: the second was
+    2026-08-02T02:45:25Z after the -$4.75 unwind ("fill realized -2.65% <= -2.0%
+    floor"). Each one stopped in-play for the remainder of that day.
+  * `first_fill_pause_s: 120` has fired 7 times.
+  * `inplay_cooloff` has never expired a quote (0 occurrences in the log).
+
+--------------------------------------------------------------------------------
+4. PART 4 — WHAT WOULD IT TAKE (PROPOSALS ONLY — NOTHING IMPLEMENTED)
+--------------------------------------------------------------------------------
+Ranked by (expected quotes unlocked) / (risk added). Every estimate names its
+evidence. I have implemented NONE of these.
+
+READ SECTION 3.2 FIRST. In-play's entire realized record is -$6.69 across 12
+fills. Everything below buys VOLUME in a phase that has never yet made money, and
+the achievable ladder that says in-play has 4x the edge is a MODEL of joining the
+best bid — it cannot see adverse selection, which is the one thing in-play has
+more of. I have flagged which proposals trade safety for volume.
+
+--- P1. SEPARATE THE CONCURRENCY CAP FROM THE DAILY SPEND CAP ------------------
+    THE ROOT CAUSE. A resting quote reserves its full projected pair against
+    `max_daily_stake_usd` for its whole life, and quotes fill 0.67% of the time.
+    12 slots x ~$100 typical projected pair = ~$1,200 = the entire daily cap, so
+    the budget is ~150x over-reserved against expected consumption and the cap
+    that is supposed to bound the DAY's spend is actually bounding CONCURRENCY.
+    PROPOSAL: give outstanding reservations their own ceiling (a concurrent-
+    exposure cap) and let `max_daily_stake_usd` bound only money actually
+    committed (fills + hedges + unwinds), which is what its name and its
+    docstring already say it is.
+    EXPECTED: unblocks 100% of the 330-per-167s in-play executor arrivals that
+    are currently refused, and 68% of pre-game's. Historical placement rate when
+    headroom existed: 150-180 in-play quotes/day (20260730: 180, 20260802: 174,
+    20260722: 157).
+    RISK: MODERATE, AND THIS ONE TRADES SAFETY FOR VOLUME. The reservation is
+    what makes the daily cap a hard PRE-commitment; without it the cap becomes
+    soft, and a correlated burst of fills could overshoot the day's budget before
+    anything stops it. Mitigation: size the concurrent-exposure cap so that
+    worst-case (every resting quote fills at once) still lands inside the daily
+    cap — that is a real constraint, just a smaller one than 12 x $525.
+    EVIDENCE: live counters (330/330 in-play executor arrivals refused,
+    limiter=daily_stake 99.19% of 345,518 all-time refusals); live state at
+    16:02Z showing $58.22 spent of $1,200 with headroom ~$0.
+
+--- P2. SHORTEN THE TWO IN-PLAY BLACKOUTS ---------------------------------------
+    (a) SHOCK-FREEZE, 48.3% of in-play evaluations. `shock_move: 0.05` /
+        `shock_window_s: 10` / `freeze_s: 30`: one 5% mid move silences a node for
+        30s, and 25 freeze events blacked out 45,295 evaluations in 343s. Options:
+        raise `shock_move` (5% is small for a live match — a single goal moves a
+        totals mid far more than that), or cut `freeze_s`, or scale the freeze to
+        the size of the move instead of a flat 30s.
+    (b) HEDGE-THIN COOLDOWN, 36.3%. 3 hedge_too_thin refusals within 10 minutes
+        sleep a node for 15 MINUTES. In-play hits it 36.3% vs pre-game's 13.3%. A
+        15-minute blackout is enormous relative to a live market's life, and the
+        rule was tuned on pre-game behaviour. Options: make it phase-aware
+        (in-play 15min -> 2-3min) or require more refusals (3 -> 6).
+    Do NOT remove either. The freeze is the anti-phantom rail that stops us
+    quoting into a book that just gapped — which is exactly when adverse selection
+    is worst — and the cooldown stops arm-then-cancel churn. Both are real.
+    PROPOSAL: make the cooldown phase-aware — e.g. in-play 15min -> 2-3min, or
+    require more refusals (3 -> 6) before it trips. Do NOT remove it; it exists
+    to stop arm-then-cancel churn, which is real.
+    EXPECTED: together these gate ~85% of in-play evaluations, so relaxing them
+    is the difference between a trickle and a stream reaching the pricing stage.
+    BUT ON THEIR OWN THEY BUY ZERO EXTRA QUOTES — everything recovered would then
+    die at daily_stake, exactly as the 646 that already get there do. Worth doing
+    ONLY AFTER P1, and the true yield cannot be estimated until P1 lands.
+    RISK: THIS IS THE ONE THAT TRADES SAFETY FOR VOLUME, and it is the most
+    dangerous proposal here. Both rails exist to keep us OUT of the book at the
+    moments adverse selection is worst — a node that just gapped 5%, or one whose
+    hedge keeps evaporating. Section 3.2 is the warning: in-play's losses came
+    from hedge MISSES (-$2.20, -$4.75, -$0.96), not from bad pairs. Relaxing (b)
+    specifically re-admits the nodes whose hedge book was already proven
+    unreliable. If any proposal here reproduces those exits, it is this one.
+
+--- P3. GIVE IN-PLAY A RESERVED SHARE OF SLOTS AND BUDGET ----------------------
+    `reserve_per_direction: 3` guarantees slots per DIRECTION but nothing
+    guarantees them per PHASE, so pre-game (118 markets, ~93k evals/167s) beats
+    in-play (~32k evals/167s) to every slot and every dollar. At 16:02Z: 11 of 12
+    slots pre-game, 0 in-play.
+    PROPOSAL: a per-phase reservation mirroring the per-direction one — e.g.
+    guarantee in-play 2-3 of 12 slots and a slice of the exposure cap.
+    EXPECTED: bounded and predictable — 2-3 concurrent in-play quotes, which at
+    the observed in-play quote lifetime is on the order of 50-150 quotes/day.
+    RISK: LOW on its own; it REDISTRIBUTES exposure rather than adding it. But it
+    deliberately moves capital from a phase with 47 fills into a phase with 12
+    fills and -$6.69 realized. That is a strategy decision, not a plumbing one.
+
+--- P4. LEAVE THE VENUE-MINIMUM FLOOR EXACTLY WHERE IT IS ----------------------
+    NOT A CONSTRAINT. Measured, not assumed: of in-play sizing refusals, 99.19%
+    bind on daily_stake and 0.81% on book_depth — `venue_minimum` binds on 0%.
+    Among quotes that WERE successfully sized, venue_minimum was the binding
+    constraint 88 times pre-game and 0 times in-play. Lowering it would change
+    nothing and would only reduce size on quotes that already place.
+    EXPECTED EXTRA QUOTES: ZERO. Recommend NO CHANGE.
+
+--- P5. LEAVE THE IN-PLAY CIRCUIT ALONE (FOR NOW) ------------------------------
+    `first_fill_pause_s: 120` fired 7 times ever; on a day with 1-2 in-play fills
+    that is ~0.1% of the day. `halt_locked_net: -0.020` fired twice, both times
+    on genuinely bad fills (-2.65% after a $4.75 unwind). Neither is throttling
+    in-play "before it starts" — in-play is dying 1,000x earlier in the funnel,
+    at cooldown and budget.
+    EXPECTED EXTRA QUOTES from relaxing either: NEGLIGIBLE.
+    RECOMMENDATION: no change, and specifically do not relax `halt_locked_net`.
+    It is the only thing that has ever stopped an in-play losing streak, and
+    in-play's realized record is negative.
+
+--- P6. NOTHING TO DO ABOUT DIRECTIONS -----------------------------------------
+    Both rest directions are already live in-play (575 rest-kalshi / 375
+    rest-poly orders placed). The config comment saying otherwise was wrong and
+    is corrected in this commit. No behaviour change proposed.
+
+SEQUENCING. P1 is the only one that unblocks anything by itself; P2 and P3 are
+multipliers on it and are worth nothing before it. If the goal is to learn
+whether in-play edge is real, the cheapest honest experiment is P3 alone — a
+small, ring-fenced in-play allocation — because it bounds the downside to a known
+slice of capital while producing the fills that section 3.2 shows we do not yet
+have enough of to judge.
+
+--------------------------------------------------------------------------------
+5. WHAT I COULD NOT MEASURE, AND WHY
+--------------------------------------------------------------------------------
+  1. Per-sample join of hedge depth to the >=0.5% achievable moments (section 2).
+     The ladder keeps net values only and the throttled CSV sample has no depth
+     column. Would need a depth field on the achievable sampler.
+  2. The `expire_before_kickoff_s` 120s gap and `horizon_hours` were asked for as
+     funnel stages. The gap window is measured (`gap_window` counter, 0 in this
+     window because no candidate was inside it) but `horizon_hours` filters the
+     UNIVERSE upstream of the driver, so a market outside it never becomes a
+     candidate and cannot be counted at this layer at all. Measuring it needs a
+     counter in the universe builder.
+  3. `conn_fresh_s` / `node_quiet_max_s` / `stale_grace_s` are now countable
+     (`rails_gated_not_fresh`, `inplay_stale`) but read 0 in this window — the
+     sockets were healthy throughout. They are not exonerated, just not exercised
+     yet; a longer window will say.
+  4. The 24h funnel the prompt asked for is a 343-SECOND funnel. The counters did
+     not exist until 15:59:43Z today. The TOP of the funnel has not converged —
+     the #1 and #2 stages swapped between the 32k-eval and 94k-eval readings
+     (cooldown 53.8%/frozen 21.3% -> frozen 48.3%/cooldown 36.3%), so treat the
+     ORDER of those two as unsettled. The BOTTOM is stable across every reading
+     (~0.7-1.0% reach the executor, 100% refused on daily_stake, 0 placed) and
+     that is what the conclusions rest on. No absolute daily counts are presented
+     as measurements. A genuine 24h table exists tomorrow.
+  5. Whether the 2026-08-04 caps raise CAUSED the August collapse in in-play
+     quoting (section 3.1). The correlation is clean and the mechanism is
+     arithmetic, but I did not isolate it — no A/B, and other things changed.
+
+--------------------------------------------------------------------------------
+6. WHAT CHANGED IN THIS COMMIT (260bfed) — NO TRADING BEHAVIOUR
+--------------------------------------------------------------------------------
+  * Placement-funnel counters: state.record_funnel + 16 call sites in the driver
+    and executor, persisted across restarts, exposed at by_phase.<phase>.funnel
+    and by_sport.<sport>.funnel. Guarded at both call sites (this is the hottest
+    path in the process; a counter that can raise is a counter that can stop the
+    maker). The size-refusal counter carries the BINDING LIMITER, not just the
+    symptom.
+  * `_rails_ok` restructured to name WHICH rail failed. Behaviour-identical.
+  * config.yaml: deleted "DO NOT flip enabled here — this build stays shadow
+    in-play", which sat directly above `enabled: true` and had been false since
+    2026-07-30 (e660c2e).
+  * config.yaml + driver.py: corrected "rest-poly only" in-play claims — both
+    directions are live in-play and always have been under `directions`.
+  * driver.py module docstring: deleted "Live is HARD-forbidden in-play".
+  * tests/test_maker_rt_funnel_counters.py (10 new), incl. negative tests that a
+    placement still places, a refusal still refuses, a slot refusal is counted
+    every time while its CSV row stays throttled, and the executor still works
+    with no state object.
+  * 1463 tests pass (1453 before).
+================================================================================

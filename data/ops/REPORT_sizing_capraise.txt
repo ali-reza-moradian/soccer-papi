@@ -1,0 +1,230 @@
+HEDGE SIZING FIX + SOCCER CAP RAISE — 2026-08-04
+(A: stop the Polymarket hedge over-buying · B: the ~+50% soccer step · C: one booking hole)
+
+================================================================================
+PART B PRECONDITION — THE GATE, RUN FIRST
+================================================================================
+  python -m src.genz.maker_rt --gates
+
+  sport      n/need     mean%     p50%   worst%         $   verdict
+  mlb        0/13        -      -       -       0.00   MEASURING  (need 13 more)
+  soccer    25/10       0.859   0.700   -0.000   8.20   EDGE-POSITIVE
+  tennis     0/33        -      -       -       0.00   MEASURING  (need 33 more)
+  ufc        0/10        -      -       -       0.00   MEASURING  (need 10 more)
+
+  Soccer is EDGE-POSITIVE on 25 clean hedged fills since the 2026-07-30 restatement:
+  mean +0.859%, p50 +0.700%, worst -0.000%, +$8.20. PRECONDITION MET -> the raise
+  proceeded. mlb / tennis / ufc are all still MEASURING and got NOTHING; the
+  per-sport universe is untouched.
+
+================================================================================
+PART A — HEDGE SIZING: BUY SHARES, NOT PADDED DOLLARS
+================================================================================
+THE MECHANIC (venue-verified, not inferred)
+  A Polymarket market BUY is denominated in USDC. The venue spends the WHOLE maker
+  amount and hands back amount / fill_price shares, so price improvement returns as
+  EXTRA SHARES, never as a refund. Sending floor(target) x (best_ask + 2 ticks)
+  worth of dollars therefore handed the entire pad back as unhedged shares:
+
+      overshoot = 2 ticks / fill price
+      +2.1% @95c   +5.6% @36c   +6.9% @29c   +20% @10c   +40% @5c
+
+WHAT CHANGED
+  The pad STAYS on the limit (it buys marketability). The SPEND is now computed
+  from the price we expect to CLEAR at — the walk of the ask ladder that the
+  pre-hedge gate has just done for exactly this size — and the order is sent as an
+  AMOUNT, which is what the venue's own market-buy primitive takes.
+
+    src/executor/poly_exec.py
+       market_buy_spend(target_shares, expected_price) -> (usdc, expected_shares)
+           usdc = floor_to_cent(target x expected_price); shares = usdc / price
+       market_buy_price(price)      the whole-cent marketable ceiling (unchanged rule)
+       market_buy_shortfall(price)  0.01 / price — the most the cent can leave behind
+       place_market_buy(...)        now posts create_market_order(amount=...)
+    src/genz/maker_rt/hedge.py      forwards the walked clearing price; the
+                                    "did I get what I asked for" test now uses the
+                                    venue's amount precision, not 1e-9
+    src/genz/maker_rt/pregame_exec.py  passes walk_price (the gate's own re-walk)
+
+  ONE place: pre-game and in-play share hedge_poly -> place_market_buy, so both are
+  fixed by the same change. Nothing else on the trading path moved.
+
+WHY THE AMOUNT PATH IS THE VENUE-LEGAL ONE
+  The client's get_market_order_amounts does raw_maker_amt = round_down(amount, 2) —
+  which IS the rule that 400'd the CSKA hedge ("the market buy orders maker amount
+  supports a max accuracy of 2 decimals"). So the amount path enforces the Jul-28
+  rule for us instead of us quantizing a (price, size) pair against it. The old
+  quantizer is kept (its rule is still the rule) and its regression tests still pass.
+
+HARD INVARIANTS, ASSERTED BEFORE SIGNING
+  * usdc amount carries <= 2 decimals                      (property test, 20k draws)
+  * expected shares <= the rest fill count                 (property test, 20k draws)
+  * an order that would over-buy RAISES and is never signed (fail closed)
+  * undershoot <= 0.01/price of a share — the venue's own cent, nothing more
+    (0.034 sh @29c, 0.013 sh @76c). Below ~2c the cent is worth more than half a
+    share; the tolerance is clamped at 0.5 so a genuinely short hedge can never
+    hide inside it, and it falls through to the existing partial/unwind path.
+  * sub-share dust still never reaches the venue — the dust path is unchanged.
+
+PROOF OF NO OVERSHOOT
+ 1. REPLAY (tests/test_poly_hedge_sizing.py). The OLD arithmetic reproduces what the
+    venue actually gave us, to six decimals — that is what makes this evidence:
+        target   limit  filled   old shares   venue gave    excess
+        14.91    0.31    0.29    14.965517    14.965516     +0.0555
+        44.74    0.31    0.29    47.034483    47.034481     +2.2945
+        76.00    0.38    0.36    80.222222    80.222221     +4.2222   } O/U5.5: +6.5722
+        353.0    0.96    0.9567  354.2073     354.203       +1.203    } O/U1.5
+    Under the NEW sizing the O/U5.5 excess goes +6.5722 -> -0.104 sh (a SHORTFALL of
+    a tenth of a share across three hedges) and O/U1.5 +1.203 -> -0.004 sh.
+ 2. DRY SIGNING against the REAL client on 6 live markets (0.01 and 0.001 ticks,
+    neg-risk true and false): every maker amount whole cents, every expected share
+    count at or under target, all signed cleanly. Nothing posted.
+ 3. LIVE, REAL MONEY. One market BUY posted through the new path and unwound
+    immediately:
+        market  "US x Iran Effective Ceasefire by July 31?"  tick 0.01, ask 0.75
+        target  2.6667 sh -> spend $2.00 -> expect 2.6667 sh
+        VENUE   filled 2.666664 sh for $1.999998 @ 0.75, order 0x04f89fc8...
+        OVERSHOOT -0.0000 sh (-0.00%)
+        unwound back to FLAT; round-trip cost $0.0267
+    The venue ACCEPTS the shape and delivers exactly the target. That live run also
+    exposed the one thing a fake could not: 2.666664 vs a 2.6667 target is a MISS at
+    a 1e-9 tolerance, which would have sent every hedge down the unwind-or-verify
+    path. Hence market_buy_shortfall and the tolerance fix above.
+
+    THAT PROBE COST YOU $0.0267 OF REAL MONEY, and you will see it: the balance check
+    right after the deploy reads "-$0.03 ... Polymarket cash -$0.03/positions +$0.00".
+    It is the probe's spread+fee, it is not a maker trade, and it is well under the
+    $5 alert threshold. I judged $0.03 a fair price for not deploying an unproven
+    order shape onto the live hedging path; say if you would rather I had not.
+
+HOW YOU VERIFY IT LIVE, AFTER THIS DEPLOY
+  The excess shows up as [UNTRACKED naked] settled rows — one per market that had a
+  leftover. Where to look, cheapest first:
+   1. Telegram, at settlement. The new wording (shipped this morning) names it:
+        "... the UNHEDGED REMAINDER of this trade ... could not pair off"
+      If the fix works, these stop appearing for rest-kalshi pairs. A LOCKED alert
+      that says "N sh riding unhedged" is the same signal at fill time.
+   2. The ledger:
+        grep "UNTRACKED naked" data/genz/maker_rt_2026080*.csv
+      Each row's reason carries "polymarket buy <N>sh" — that N is the excess. It
+      was 18.3489 / 6.5143 / 6.5722 sh on the last three; it should now be absent for
+      rest-kalshi pairs, or under ~0.05 sh where it appears at all.
+   3. The books, at the next 8h balance check: settled_pnl_untracked_lifetime should
+      stop moving on rest-kalshi settlements. It sits at +$8.3788 now.
+  WHAT WOULD SAY IT BROKE: a burst of "hedge MISSED/PARTIAL" warnings plus unwinds
+  in maker_rt.log, or Telegram "couldn't hedge in time, sold back". That is the
+  fail-closed path (a rejected order unwinds the rest leg rather than leaving it
+  naked), so it costs unwind tolls, not naked exposure. Rollback is
+  `git revert` of the sizing commit.
+
+================================================================================
+PART B — SOCCER CAP RAISE
+================================================================================
+  cap                     old      new    x      note
+  ------------------------------------------------------------------------------
+  quote_usd_max            70      105   1.50   rest-leg notional cap
+  max_pair_stake_usd      350      525   1.50   MUST scale or the raise is inert
+  max_daily_stake_usd     800     1200   1.50   sum of all legs committed today
+  auto_flatten_max_usd    120      180   1.50   recomputed from its own rule (below)
+  ------------------------------------------------------------------------------
+  max_daily_loss_usd       50       50    -     UNCHANGED — a bad day still halts at $50
+  max_fills_per_day        20       20    -     UNCHANGED
+  max_open_per_game         3        3    -     UNCHANGED (concentration is not a size question)
+  max_open_quotes          12       12    -     UNCHANGED
+  hedge floor           -1.0%    -1.0%    -     UNCHANGED
+  sanity ceiling         5.0%     5.0%    -     UNCHANGED
+  in-play circuit           -        -    -     UNCHANGED (first-fill pause, day-halt)
+  per-sport universe        -        -    -     UNCHANGED (mlb/tennis/ufc get nothing)
+
+  derived max_game_stake = max_open_per_game x max_pair_stake_usd = 3 x 525 = $1,575
+
+  auto_flatten_max_usd, RECOMPUTED not nudged. Its own comment defines it as
+  "covers a full-size pair (quote_usd_max + slippage) without covering a runaway":
+  120 against a $70 leg is 1.714x, so $105 x 1.714 = 180 exactly. Left at 120 it
+  would cover only 1.14x the rest leg and the bounded-flatten path would have begun
+  halting on ordinary full-size positions — a cap raise quietly making the bot MORE
+  fragile. Still well under the $525 pair cap, so it is still not a runaway.
+
+NEW BINDING ORDER (computed with the REAL plan_size / can_place, deep books)
+  regime                    size sh   pair $   sized by      orders before the
+                                                             daily reservation binds
+  ---------------------------------------------------------------------------------
+  balanced   0.50 / 0.50  OLD 140     140.00   quote_usd_max        6
+                          NEW 210     210.00   quote_usd_max        6
+  typical    0.29 / 0.70  OLD 241     238.59   quote_usd_max        4
+                          NEW 362     358.38   quote_usd_max        4
+  cheap rest 0.05 / 0.94  OLD 353     349.47   pair_cap             3
+                          NEW 530     524.70   pair_cap             3
+  dear rest  0.93 / 0.06  OLD  75      74.25   quote_usd_max       11
+                          NEW 112     110.88   quote_usd_max       11
+  JEJBMU 1.5 0.96 / 0.03  OLD  72      71.28   quote_usd_max       12
+                          NEW 109     107.91   quote_usd_max       12
+
+  THE ANSWER: the binding ORDER does not change, and neither does the order COUNT at
+  which each rail binds. Because every size cap scaled by the same 1.5x, the daily
+  reservation still binds after the same number of resting quotes as before — 4 to 6
+  in the regimes the maker actually quotes (3 at a cheap rest leg, up to 12 at a dear
+  one). What changed is that each of those orders is 50% larger.
+
+  Ranking, unchanged:
+    1. max_open_per_game (3)     — first, but ONLY for quotes on the same match
+    2. daily-stake reservation   — the cross-match rail, ~4-6 resting quotes
+    3. max_open_quotes (12)      — still never reached in any price regime
+
+  So the $800 reservation used to bind at ~5 open orders; $1,200 binds at the SAME
+  ~5 open orders, each carrying ~1.5x the stake. NOTHING in the slot logic was
+  touched — this section is a measurement, as asked.
+
+================================================================================
+PART C — THE SAME-CLASS BOOKING HOLE
+================================================================================
+  auto_flattened is the bounded sweep that closes a position the first unwind could
+  not, and it books only AFTER the position reads flat — TERMINAL on exactly the same
+  terms as hedge_unwound. It was reaching neither unwind_cost_today nor
+  settled_pnl_exits_lifetime, so its cost would have vanished from lifetime exactly
+  as the three unwinds did. It has NEVER FIRED (0 rows in every CSV ever written),
+  which is precisely why it was worth closing now: nobody would have been looking.
+
+  It now books into settled_pnl_lifetime AND settled_pnl_exits_lifetime on the same
+  persist-now idempotency as hedge_unwound, and counts in the daily/lifetime unwind
+  counters (which are reporting only — nothing gates on them; verified). A sweep that
+  RECOVERED money books a positive, because lifetime has to move both ways or it is
+  not venue truth.
+
+  UNCHANGED, exactly as documented: the -$0.0994 of naked share dust from the three
+  2026-08-02 unwinds. It is not an exit cost — it is stock the unwind could not sell
+  which then expired — and sweeping it into the exits bucket would misname it.
+
+================================================================================
+VERIFICATION
+================================================================================
+  pytest                                   1399 passed (1380 + 19 new)
+  python -m src.genz.maker_rt --gates      clean (output above)
+  python -m src.genz.maker_rt --balance    clean
+  tests never write live runtime state     (existing guard intact)
+
+  Post-deploy checks to run when the supervisor restarts the maker:
+   * the ARM banner (log + Telegram) must read
+       quote<=$105, pair<=$525, daily_stake<=$1200, open<=12 (reserve/direction 3),
+       fills/day<=20, loss<=$50, sanity_ceiling 5.0%
+     It prints from the LIVE LiveCaps object, not from cfg, so it proves what
+     actually loaded.
+
+================================================================================
+WHAT I DELIBERATELY DID NOT DO
+================================================================================
+ 1. Did NOT sweep-sell the excess (option B in the earlier report). You chose the
+    sizing fix; the sweep is unnecessary if the excess is ~0, and it costs 8-19% of
+    the stake in spread+fee on exactly the cheap legs where the excess was largest.
+ 2. Did NOT change the limit-price padding. It is the marketability knob and it is
+    now decoupled from share count, which is the whole point.
+ 3. Did NOT touch the poly taker-fee model. Measuring the hedge cash exposed that
+    the venue's actual taker fee is ~0.05 x p x (1-p) per share while
+    fees_sizing.poly_fee_usd uses 0.05 x min(p, 1-p) — i.e. we OVERSTATE the Poly
+    fee (conservatively) at mid prices. Correcting it would make quoting MORE
+    aggressive, which is a risk change nobody asked for. Flagged for your call.
+ 4. Did NOT put auto_flattened's absence into the unwind-RATE denominator debate: it
+    now counts as an unwind outcome, which is the honest reading, and nothing gates
+    on that number.
+ 5. Did NOT raise anything for mlb / tennis / ufc — all three are still MEASURING.
+ 6. Left the -$0.0994 naked dust unbooked (see Part C).

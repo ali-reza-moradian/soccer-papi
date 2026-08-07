@@ -21,11 +21,34 @@ from __future__ import annotations
 
 import dataclasses
 import os
+import time
 
 import pytest
 
 from src.genz import config as gz_config
 from src.genz.maker_rt import config as mrt_config
+
+#: THE TIME-BOMB DETECTOR (opt-in; does nothing unless ``TIMESHIFT_DAYS`` is set).
+#:
+#: On 2026-08-07 two KLAMCI sweep tests went red and four more went green VACUOUSLY, because the
+#: fixtures pin ``NOW`` to the 2026-08-05 incident while the code aged its 48h scope against the WALL
+#: clock. 56.5h of real time later the scope pruned itself empty: the tests that demanded a find failed,
+#: and — far worse — the tests asserting "the sweep stays quiet" passed for the wrong reason, so the
+#: guard against the next KLAMCI silently stopped guarding.
+#:
+#: A CONSTANT offset leaves every elapsed-time delta correct, so the only thing it can break is code
+#: comparing the wall clock to a PINNED absolute date — exactly that class. Run it periodically:
+#:
+#:     TIMESHIFT_DAYS=365  python -m pytest -q        # fixtures far in the PAST
+#:     TIMESHIFT_DAYS=-365 python -m pytest -q        # fixtures far in the FUTURE
+#:
+#: KNOWN FALSE POSITIVE: anything comparing ``time.time()`` to a FILE MTIME (``catalog.file_age_hours``,
+#: e.g. test_group_markets.py::test_slug_map_cache_hit_skips_network) trips this, because the shift moves
+#: the process clock but not the filesystem. Those are self-consistent in real use and cannot age out.
+_TIMESHIFT_DAYS = float(os.environ.get("TIMESHIFT_DAYS") or 0.0)
+if _TIMESHIFT_DAYS:
+    _real_time = time.time
+    time.time = lambda: _real_time() + _TIMESHIFT_DAYS * 86400.0
 
 
 @pytest.fixture(autouse=True)
