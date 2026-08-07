@@ -320,7 +320,7 @@ async def _run(cfg: Any, log: Any) -> int:
         _armed_startup_alert(cfg, gate.armed, inplay_gate.armed, telegram, swept, log, pregame_exec.caps)
         _ensure_ctf_approval(poly_oc, log)                # SELL side needs CTF approval; set once if missing
         try:
-            orph = pregame_exec.reconcile_positions(now0)  # STARTUP reconciliation: catch a prior-run orphan
+            orph = pregame_exec.reconcile_startup(now0)    # STARTUP reconciliation: catch a prior-run orphan
             if orph:
                 log.error("[MAKER_RT][LIVE] STARTUP reconciliation found an ORPHAN: %s — live halted.", orph)
         except Exception as exc:  # noqa: BLE001

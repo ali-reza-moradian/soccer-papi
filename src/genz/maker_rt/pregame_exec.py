@@ -4803,22 +4803,47 @@ class PregameLiveExecutor:
         loop. WHAT MOVES IS THE READS. Every decision the reconcile makes — pruning the watch-set,
         flagging an unexplained holding, latching an ORPHAN halt, auto-flattening — happens on the loop
         thread in ``reconcile_positions``, exactly as before."""
-        toks, tks = list(self._traded_tokens), list(self._traded_tickers)
-        # The QUOTED-but-unregistered instruments ride the same batch. They are the whole point of the
-        # sweep and they are read off-loop for the same reason everything else here is: a per-instrument
-        # venue read on the loop thread is what froze it for four seconds every five minutes.
-        seen = set(toks) | set(tks)
-        for inst, rec in self._quoted.items():
-            if str(inst) in seen or self._is_registered(str(rec.get("venue") or ""), inst):
-                continue
-            seen.add(str(inst))
-            (toks if rec.get("venue") == "polymarket" else tks).append(str(inst))
+        toks, tks = self._reconcile_scope()
         if not (toks or tks):
             return False
         submitted = self._worker.submit(("reconcile",), lambda: self._reconcile_job(toks, tks))
         if submitted and self._reconcile_applied_ts == 0.0:
             self._reconcile_applied_ts = float(now_ts)       # start the watchdog clock at the first submit
         return submitted
+
+    def _reconcile_scope(self) -> tuple:
+        """``(poly_instruments, kalshi_instruments)`` for one reconciliation pass.
+
+        The QUOTED-but-unregistered instruments ride the same batch as the watch-set. They are the whole
+        point of the sweep, and reading them per-instrument is what made both the periodic pass and the
+        startup pass into request storms — so there is ONE scope builder and ONE batched reader."""
+        toks, tks = list(self._traded_tokens), list(self._traded_tickers)
+        seen = set(toks) | set(tks)
+        for inst, rec in self._quoted.items():
+            if str(inst) in seen or self._is_registered(str(rec.get("venue") or ""), inst):
+                continue
+            seen.add(str(inst))
+            (toks if rec.get("venue") == "polymarket" else tks).append(str(inst))
+        return toks, tks
+
+    def reconcile_startup(self, now: Any) -> Optional[dict]:
+        """STARTUP reconciliation, BATCHED exactly like the periodic one.
+
+        This used to be ``reconcile_positions(now)`` with no batch, which sends every read down the
+        per-instrument path — 581 quoted instruments on 2026-08-07, firing a burst of CLOB
+        /balance-allowance GETs of which Cloudflare 429'd 46 at 15:52:00Z. That was AFTER the periodic
+        pass had been fixed: same N+1, second entrance. A failed batch degrades to the old unbatched
+        call, which is budgeted and therefore bounded."""
+        toks, tks = self._reconcile_scope()
+        batch: Optional[dict] = None
+        if toks or tks:
+            try:
+                batch = self._reconcile_job(toks, tks)
+            except Exception as exc:  # noqa: BLE001 — a failed batch must not block startup reconcile
+                if self.log:
+                    self.log.warning("[MAKER_RT][LIVE] startup reconcile batch failed (%s) — falling "
+                                     "back to the budgeted per-instrument path.", exc)
+        return self.reconcile_positions(now, balances=batch)
 
     #: Cap on the per-token CLOB reads a single reconcile pass may fall back to. The whole point of the
     #: wallet snapshot is that the per-token path stops being the normal path; this stops a pathological
@@ -5096,18 +5121,28 @@ class PregameLiveExecutor:
         self._prune_quoted(now_ts)
         found: list = []
         reads = 0
+        # EVERY per-instrument read here is BUDGETED, including the no-batch one. This scope is the 48h
+        # quoted set — 581 instruments on 2026-08-07 — and _reconcile_read's own no-batch path reads
+        # LIVE and is not budgeted, so routing 581 instruments through it turned the STARTUP reconcile
+        # into a request burst (46 of them 429'd at 15:52:00Z, after the batched reconcile was already
+        # fixed). Callers that care about full coverage hand in a batch: see reconcile_startup.
+        # NOTE this method never fetches a wallet snapshot itself. All venue I/O for reconciliation
+        # belongs to _reconcile_job, which is the one place tests control by passing balances in.
         for inst, rec in sorted(self._quoted.items()):
             venue = str(rec.get("venue") or "")
             if self._is_registered(venue, inst):
                 continue
-            held = self._reconcile_read("polymarket" if venue == "polymarket" else "kalshi", inst,
-                                        balances)
-            # The per-instrument fallback is BUDGETED. This scope is the 48h quoted set — several hundred
-            # instruments — so an unreadable batch used to mean several hundred individual venue reads
-            # right here, which is the N+1 the batch exists to avoid, rebuilt at the worst moment.
-            if (held is _UNREAD or held is None) and reads < self.POLY_CONFIRM_MAX:
+            if balances is not None:
+                held: Any = self._reconcile_read(
+                    "polymarket" if venue == "polymarket" else "kalshi", inst, balances)
+                if (held is _UNREAD or held is None) and reads < self.POLY_CONFIRM_MAX:
+                    reads += 1
+                    held = self._sweep_read(venue, inst)
+            elif reads < self.POLY_CONFIRM_MAX:
                 reads += 1
                 held = self._sweep_read(venue, inst)
+            else:
+                held = None      # over budget -> UNKNOWN. An ALERT path must never invent a position.
             if held is None or abs(float(held)) <= self.UNREGISTERED_MIN_SHARES:
                 continue
             found.append({"instrument": inst, "venue": venue, "shares": round(abs(float(held)), 4),

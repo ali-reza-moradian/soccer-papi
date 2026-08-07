@@ -250,9 +250,11 @@ AFTER (15:23:34Z -> 15:48:56Z, 25.4 min, post-2e7d7c6):
   halted/ORPHAN     0 / 0 · sockets all three UP · 5 reconciles, 24 fill-polls,
                     19 quotes placed
 
-(a) 429s: ZERO. This is the reliable signal — the 429s were logged at ERROR by
-    py_clob_client_v2, which the httpx quieting does NOT suppress, so their
-    absence is real and not an artefact of the log change.
+(a) 429s: ZERO in this window. This is the reliable signal — the 429s were
+    logged at ERROR by py_clob_client_v2, which the httpx quieting does NOT
+    suppress, so their absence is real and not an artefact of the log change.
+    BUT SEE 6c: a burst of 46 reappeared at the NEXT restart. "Zero over the
+    measurement window" was true and was not the whole story.
 (b) Log growth: 10.64 -> 0.48 MB/hour, a 22x reduction. At this rate the 200 MB
     rotation threshold is ~17 days per file.
 (c) STALLS: zero in 25.4 min. CONSISTENT with the hypothesis that the Poly N+1
@@ -310,6 +312,41 @@ requires stopping the trading process):
   so the supervisor sees no gap. NOTE the cost: a hard kill does not let the
   maker self-cancel, so its resting quotes are briefly unmanaged until the new
   process's stray-cancel sweeps them. That is why this was not done unprompted.
+
+
+--------------------------------------------------------------------------------
+6c. THE N+1 HAD A SECOND ENTRANCE (found after the "0 429s" result — commit C)
+--------------------------------------------------------------------------------
+
+At 15:52:00Z — 17 seconds after the restart from the report commit — 46 fresh
+429s appeared, all on clob.polymarket.com/balance-allowance, all BEFORE the
+event loop's first tick. So the measurement window's zero was true but partial:
+the periodic reconcile was fixed and the STARTUP path was not.
+
+WHY. __main__ called reconcile_positions(now0) with NO batch. With balances=None
+every read goes down _reconcile_read's no-batch path, which is a LIVE per-token
+CLOB read. That path runs over the whole 48h quoted scope — 581 instruments —
+so startup fired a burst of them. The budget added in 2e7d7c6 capped only the
+FALLBACK read, never this primary one.
+
+FIX (commit C):
+  * ONE scope builder (_reconcile_scope) and ONE batched reader (_reconcile_job),
+    now shared by the periodic pass AND a new reconcile_startup.
+  * Startup builds the batch, so it makes ONE wallet snapshot instead of 581
+    per-token reads. A failed batch degrades to the unbatched path, which is
+    budgeted and therefore bounded.
+  * EVERY per-instrument read in the sweep is budgeted now, including the
+    no-batch primary. Over budget reads UNKNOWN — an ALERT path must never
+    invent a position.
+
+A WRONG TURN WORTH RECORDING. The first attempt had _sweep_unregistered fetch its
+own wallet snapshot. The full suite went red where the files passed in isolation:
+one test (test_executor.py:236) puts a signing key in the environment, and with a
+key present that snapshot became a REAL network call from inside the unit tests.
+The lesson is not "monkeypatch harder" — it is that reconciliation's venue I/O
+belongs to _reconcile_job alone, the one place callers and tests control by
+handing in `balances`. There is now a test asserting the sweep performs no wallet
+I/O of its own.
 
 
 --------------------------------------------------------------------------------

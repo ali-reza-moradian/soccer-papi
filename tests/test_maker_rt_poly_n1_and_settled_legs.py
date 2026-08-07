@@ -223,6 +223,46 @@ def test_an_unreadable_settled_leg_stays_registered(tmp_path):
     assert ex._expected_shares_any(POLY_TOKEN) == pytest.approx(SHARES)
 
 
+def _many_quoted(ex, n=200):
+    for i in range(n):
+        ex._quoted[f"tok{i}"] = {"venue": "polymarket", "game": GAME, "market_key": MARKET,
+                                 "name": "x", "ts": TS}
+
+
+def test_the_startup_reconcile_is_batched_like_the_periodic_one(tmp_path, monkeypatch):
+    """THE HALF THE FIRST FIX MISSED. Startup called reconcile_positions with NO batch, which sends every
+    read down the per-instrument path. The quoted scope was 581 instruments, so startup fired that many
+    /balance-allowance GETs in a burst and Cloudflare 429'd 46 of them at 15:52:00Z on 2026-08-07 --
+    AFTER the periodic pass had been fixed. Same N+1, second entrance."""
+    ex, poly = _rig(tmp_path)
+    _many_quoted(ex)
+    calls = _wallet(monkeypatch, {"tok3": 40.0})
+    ex.reconcile_startup(NOW)
+    assert len(calls) == 1, "ONE wallet snapshot for the whole startup pass"
+    assert poly.reads == [], "and NOT one CLOB read per quoted market"
+
+
+def test_the_sweep_never_fetches_a_wallet_snapshot_itself(tmp_path, monkeypatch):
+    """All reconciliation venue I/O belongs to _reconcile_job -- the one place a caller (and a test)
+    controls by handing in `balances`. A sweep that fetched its own snapshot reached the network from
+    inside the unit tests the moment another test happened to leave a signing key in the environment."""
+    ex, _poly = _rig(tmp_path)
+    _many_quoted(ex, 5)
+    calls = _wallet(monkeypatch, {"tok1": 9.0})
+    ex._sweep_unregistered(NOW, now_ts=TS)
+    assert calls == [], "the sweep does no wallet I/O of its own"
+
+
+def test_the_unbatched_sweep_stays_bounded(tmp_path, monkeypatch):
+    """With no batch there is no way to know except live reads, so they are BUDGETED: a bounded blind
+    spot beats a request storm, and over budget reads UNKNOWN rather than inventing a position."""
+    ex, poly = _rig(tmp_path)
+    _many_quoted(ex)
+    found = ex._sweep_unregistered(NOW, now_ts=TS)
+    assert len(poly.reads) <= ex.POLY_CONFIRM_MAX, "bounded, not 200"
+    assert found == [], "nothing held -> nothing invented"
+
+
 def test_a_genuinely_naked_position_still_screams(tmp_path):
     """THE CONTROL, and the reason this alarm exists. Quieting the false positive must not quiet the true
     one: a position on a market we quoted, in NO registry, is still a red alert naming the market."""
