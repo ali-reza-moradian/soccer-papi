@@ -299,19 +299,22 @@ SELF-LIMITING BUT NOISY: once Polymarket resolves and the shares redeem, the
 balance goes to 0 and the alarm stops on its own; failing that, the 48h _quoted
 scope ages it out around 08-09. Until then it re-alerts roughly hourly.
 
-RECOMMENDED REPAIR (NOT DONE — needs a call, because it edits live books and
-requires stopping the trading process):
-  Re-register the leg as an expected position (venue polymarket, 295 sh, game
-  26AUG07AVLBMU, market_key total_goals|4.5). It is then explained rather than a
-  surprise, and _release_settled_expected drops it automatically the moment it
-  redeems — the new machinery handles the exit without further intervention.
+RESOLVED BY ITSELF at ~16:06Z — no repair needed, nothing was done to it.
 
-  Per the established procedure, a data/ops edit needs the process DOWN or the
-  ~30s persist clobbers it: kill ONLY the python child (cmdline match
-  '*genz.maker*'), apply, let the wrapper restart it — the wrapper is untouched
-  so the supervisor sees no gap. NOTE the cost: a hard kill does not let the
-  maker self-cancel, so its resting quotes are briefly unmanaged until the new
-  process's stray-cancel sweeps them. That is why this was not done unprompted.
+Polymarket resolved the market and the shares redeemed: the token is GONE from
+the wallet (size 0), and the alarm has not fired since. This is exactly the
+self-limiting path predicted above, and it is worth recording that the wait was
+the right call — the repair under consideration (re-register the leg, which
+needs the trading process DOWN because a data/ops edit is clobbered by the ~30s
+persist, and a hard kill leaves resting quotes briefly unmanaged) would have
+been operational risk taken for a position that was about to settle itself.
+
+  15:24:59Z  alarm fires (295 sh, redeemable=false, curPrice 0.9995)
+  ~16:06Z    Polymarket resolves + redeems -> wallet size 0
+  16:05-16:07Z  no further alarm
+
+The class of bug is still fixed for the NEXT one: 2e7d7c6 stops a still-held leg
+being deregistered at settlement in the first place.
 
 
 --------------------------------------------------------------------------------
