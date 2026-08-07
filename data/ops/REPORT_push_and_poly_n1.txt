@@ -255,8 +255,8 @@ AFTER (15:23:34Z -> 15:48:56Z, 25.4 min, post-2e7d7c6):
     suppress, so their absence is real and not an artefact of the log change.
     BUT SEE 6c: a burst of 46 reappeared at the NEXT restart. "Zero over the
     measurement window" was true and was not the whole story.
-(b) Log growth: 10.64 -> 0.48 MB/hour, a 22x reduction. At this rate the 200 MB
-    rotation threshold is ~17 days per file.
+(b) Log growth: 10.64 -> 0.48 MB/hour IN THAT WINDOW. **That figure is not
+    representative and the 22x reading of it was wrong — see 6d.**
 (c) STALLS: zero in 25.4 min. CONSISTENT with the hypothesis that the Poly N+1
     was starving the shared worker, but NOT proof — the four stalls today were
     6, 22 and 26 minutes apart, so a 25-minute clean window is roughly ONE
@@ -350,6 +350,61 @@ The lesson is not "monkeypatch harder" — it is that reconciliation's venue I/O
 belongs to _reconcile_job alone, the one place callers and tests control by
 handing in `balances`. There is now a test asserting the sweep performs no wallet
 I/O of its own.
+
+
+--------------------------------------------------------------------------------
+6d. CORRECTION — THE LOG IS NOT FIXED. httpx was not the biggest writer.
+--------------------------------------------------------------------------------
+
+A later 8.9-minute window measured 14.85 MB/hour — HIGHER than the 10.64 MB/hour
+baseline, with httpx already at zero. So the 0.48 MB/hour reading was a quiet
+window, not a result, and the "22x reduction" I reported from it was wrong.
+
+WHAT IS ACTUALLY WRITING THE LOG: REFUSE lines.
+
+  REFUSE volume   553 lines/min (before)  ->  1,329 lines/min (later window)
+  worst single    "REFUSE 26AUG07CLAJUV rest-poly" 2,170 times in 8.9 min
+                  — about four per second, for ONE market
+  bytes per line  116 (before)  ->  191 (after)
+
+That last row is the whole story: the httpx quieting removed thousands of SHORT
+lines and left the LONG ones. Lines/min actually fell (1,597 -> 1,357) while
+bytes/hour rose, because REFUSE traffic is market-dependent and happened to be
+2.4x heavier in the second window. My change removed a real, permanent ~89
+lines/min; it did not touch the 553-1,329 lines/min that dominate.
+
+WHAT IS DURABLY FIXED, and worth separating from what is not:
+  * the 429 storm (both entrances) — 6,466/day -> 0
+  * ~55 MB/day of Cloudflare HTML bodies — capped at 800 chars
+  * httpx per-request logging — gone
+WHAT IS NOT:
+  * REFUSE spam, now the dominant writer by a wide margin. The obvious next step
+    is a per-(market, reason) throttle: the same market refused for the same
+    reason four times a second is one fact, not 2,170.
+
+The rotation ceiling still holds regardless (200 MB x 5), and at 14.85 MB/hour
+that is ~13 days per file — but rotation is a bound, not a fix, and it is not
+armed until the supervisor restarts.
+
+
+--------------------------------------------------------------------------------
+6e. PRE-EXISTING, NOT CAUSED BY THIS WORK — the gates job abandons the worker
+--------------------------------------------------------------------------------
+
+  16:08:09Z / 16:11:52Z  off-loop job [('gates',)] exceeded the 180s deadline —
+                         ABANDONING the worker thread
+
+This is NOT new: the same event occurred at 15:13:44Z, before any of today's
+maker changes. It is the designed protection working — the measurement-gates
+report scans ~2 GB of CSVs on the shared off-loop worker, blows its deadline, and
+the worker is abandoned and replaced rather than allowed to block the fill-poll
+backstop. No fill-poll STALL was recorded in the same window, so the protection
+held.
+
+Still worth naming: it fired twice in nine minutes, against once in the previous
+hour, and the CSVs only grow. Two of my own read-only `--gates` / `--balance`
+CLI runs were competing for the same disk in that window, which likely
+contributed. Flagged, not chased.
 
 
 --------------------------------------------------------------------------------
